@@ -1,8 +1,8 @@
 from logging.config import fileConfig
 
-from alembic import context
 from sqlalchemy import engine_from_config, pool
 
+from alembic import context
 from app.core.config import get_settings
 from app.models import Base
 
@@ -15,6 +15,9 @@ target_metadata = Base.metadata
 
 
 def get_url() -> str:
+    configured = config.get_main_option("sqlalchemy.url")
+    if configured and not configured.startswith("postgresql://placeholder"):
+        return configured
     return get_settings().database_url_sync
 
 
