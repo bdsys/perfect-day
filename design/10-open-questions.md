@@ -6,7 +6,9 @@ All OQ-1 through OQ-11 are locked decisions.
 
 ## OQ-1: Deployment — Docker Compose ✅
 
-Docker Compose for both local and production. K8s is not appropriate at current scale — it solves problems (horizontal scaling, multi-cluster orchestration, rolling deployments) the NUC doesn't have. `restart: always` handles container recovery. Migration path when ready: Docker Compose → Docker Swarm (multi-machine) → K8s (cloud-scale). `kompose convert` turns the Compose file into K8s manifests when needed.
+Docker Compose for both local and production. K8s is not appropriate at current scale — it solves problems (horizontal scaling, multi-cluster orchestration, rolling deployments) that the app doesn't have at launch. `restart: always` handles container recovery.
+
+Compose works for single-host deployment (home-lab or VPS). For multi-machine cloud, target ECS / Fly / Render / Railway directly — skip Swarm.
 
 Local dev: native Python venv + local Postgres/Redis is also fully supported. `uvicorn --reload` for hot-reload during backend development. A `docker-compose.dev.yml` variant runs the full stack for testing worker behavior.
 
@@ -90,7 +92,7 @@ App stays unverified for PoC. Hard cap: **100 users** on consent screen with "un
 
 ## OQ-10: NUC reliability and future deployment ✅
 
-Lab host for now; expected to migrate to other hardware or cloud as needed. Docker Compose makes migration straightforward.
+Two supported deployment targets are documented in [`deploy/nuc.md`](../deploy/nuc.md) (home-lab single-host) and `deploy/cloud.md` (cloud VPS / managed services). Choose at deploy time. The application code does not depend on the choice. Docker Compose makes migration straightforward.
 
 **Test a full restore from backup at least once** before relying on the app for real data.
 
@@ -98,4 +100,4 @@ Lab host for now; expected to migrate to other hardware or cloud as needed. Dock
 
 ## OQ-11: Photo storage ✅
 
-Additional storage available on the NUC; not a concern. MinIO storage path can be remounted to a larger drive without application changes.
+Photo storage scales with object-store capacity. Single-host deployments use MinIO; cloud deployments use S3 / R2 / B2 directly. The `boto3` S3 client makes the swap a config change — no application code changes needed.

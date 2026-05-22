@@ -12,8 +12,8 @@ All endpoints prefixed `/v1/`. JSON. Auth via `Authorization: Bearer <jwt>` unle
 | POST | `/v1/auth/social/facebook` | Same, for Facebook. |
 | POST | `/v1/auth/social/apple` | Same, for Apple (required for iOS App Store). |
 | POST | `/v1/auth/magic-link/request` | Send magic link email. |
-| GET | `/v1/auth/magic-link/consume` | Consume token from magic link URL; returns JWTs. |
-| POST | `/v1/auth/refresh` | Rotate refresh token; return new access token. |
+| GET | `/v1/auth/magic-link/consume` | Exchanges token, sets refresh-token cookie, then `302`-redirects to a clean URL (token stripped from query string). The redirect target sets `Referrer-Policy: no-referrer`. `consumed_at` protects against retry leaks. |
+| POST | `/v1/auth/refresh` | Rotate refresh token; return new access token. Reuse of a just-rotated token within a 30-second grace window is treated as a client retry (returns the same new token), not a theft signal. Reuse outside the window revokes the entire token family. Revocation rate is recorded for monitoring. |
 | POST | `/v1/auth/logout` | Revoke current refresh token. |
 | POST | `/v1/auth/logout-all` | Revoke all of the user's refresh tokens. |
 | GET | `/v1/auth/me` | Current user profile, tier, OAuth scopes granted. |
@@ -22,6 +22,16 @@ All endpoints prefixed `/v1/`. JSON. Auth via `Authorization: Bearer <jwt>` unle
 | POST | `/v1/auth/reauth` | Confirm password to elevate session for sensitive admin actions (15-min window). |
 | DELETE | `/v1/auth/account` | Mark account for deletion; sets `hard_delete_after = now() + 7 days`. |
 | POST | `/v1/auth/account/restore` | Cancel deletion within grace window. |
+
+### Account linking rules
+
+**Email-as-link-key (Google, Facebook):** when a social login arrives with an email that already exists on a different account, the API returns `409 link_required` instead of auto-linking. The frontend must guide the user through verification (existing-credentials login OR a verification email click-through) before `POST /v1/auth/social/{provider}/link` performs the merge. Auto-linking without verification enables account takeover.
+
+**Apple Sign In (relay-aware):** Apple identities are keyed by `sub` (the durable `provider_user_id`), never by email. Apple Private Relay may rotate the relay address, and users can revoke it entirely. The relay address is stored separately in `social_identities.relay_email` for reference only and is never used as a lookup key. Apple users who sign in through multiple paths may end up with separate accounts; the design accepts this outcome rather than risking email-based takeover.
+
+**`POST /v1/auth/social/{provider}/link`** — merges a verified social identity into an existing account. Requires active session of the target account; rejects if the `provider_user_id` is already linked to a different account.
+
+**Deletion note:** Phase 1 ships `DELETE /v1/diaries/{id}` and `DELETE /v1/auth/account`. The `process_hard_deletes` Celery beat task is therefore promoted from Phase 2 to Phase 1 — see [09-poc-scope.md](09-poc-scope.md). Without it, soft-deleted rows accumulate indefinitely.
 
 ## OAuth integrations
 
@@ -85,9 +95,19 @@ All endpoints prefixed `/v1/`. JSON. Auth via `Authorization: Bearer <jwt>` unle
 | GET | `/v1/photos/{id}/thumbnail` | Decrypt-and-stream thumbnail. |
 | DELETE | `/v1/photos/{id}` | Soft delete. |
 
-Upload pattern: signed URLs to `media.diary.perfectday.bdsys.net`. FortiGate WAF restricts to PUT only, rate-limited. Object keys non-guessable: `{user_id}/{uuid}.enc`. **Downloads always proxied through the API** — no MinIO signed URLs for reads.
+Upload pattern: signed URLs to `media.diary.perfectday.bdsys.net`. The edge proxy restricts to PUT only, rate-limited. Object keys non-guessable: `{user_id}/{uuid}.enc`. **Downloads always proxied through the API** — no MinIO signed URLs for reads.
 
 Orphan sweeper runs every 6h via Celery beat; deletes `photos` rows where `finalized_at IS NULL AND created_at < now() - interval '24 hours'` plus the MinIO objects.
+
+### Photo authorization
+
+A caller may read photo P (full-size via `GET /v1/photos/{id}` or thumbnail via `GET /v1/photos/{id}/thumbnail`) iff one of the following is true:
+
+- **(a) Owner:** `photo.user_id = caller.id`
+- **(b) Shared viewer:** the photo is attached via `entry_photos` to an entry E where `E.status = 'published'`, `E.deleted_at IS NULL`, the diary is not soft-deleted, and the caller has any role (owner / editor / viewer) on that diary.
+- **Draft entries:** only owners and editors of the diary may read photos attached exclusively to draft entries.
+
+Photos attached to a deleted diary are inaccessible even to the photo owner until the cross-diary check confirms no other diary links them (in which case the photo row and MinIO object are deleted by `process_hard_deletes`).
 
 ## Scan worker
 
@@ -155,6 +175,14 @@ Gated by `users.is_admin = true`. Destructive actions require recent re-auth (mu
 |---|---|---|
 | GET | `/healthz` | Liveness. |
 | GET | `/readyz` | Readiness — Postgres, Redis, MinIO checks. |
+
+## Auth middleware checks
+
+Every authenticated request runs middleware that:
+
+1. Verifies the JWT signature and expiry. Returns `401 unauthorized` on failure.
+2. Loads the `users` row. Returns `401 account_unavailable` if `users.deleted_at IS NOT NULL` or `users.hard_delete_after IS NOT NULL`. A valid access token issued before account deletion must not grant further access.
+3. For diary-scoped endpoints: returns `404` if `diaries.deleted_at IS NOT NULL`. Callers without any role on the diary also get `404` (existence leak prevention — both cases look the same to the caller).
 
 ## Cross-cutting concerns
 

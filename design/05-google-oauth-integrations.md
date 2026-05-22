@@ -24,7 +24,9 @@ All login providers covered for PoC:
 | **Apple** | Sign In with Apple ID token; backend verifies against Apple JWKS. **Required for iOS App Store** (Guideline 4.8). | `POST /v1/auth/social/apple` |
 | **Magic link email** | User enters email; backend sends signed link with 15-min token | `POST /v1/auth/magic-link/request`, `GET /v1/auth/magic-link/consume?token=...` |
 
-Account linking: existing user found by email gets linked to the new social identity; new user + `social_identity` row created otherwise.
+Account linking is **not automatic** when an existing user matches by email. The login returns a `link_required` signal; the frontend must prompt the user to confirm ownership (existing-credentials login OR a verification email click-through) before `POST /v1/auth/social/{provider}/link` performs the merge. Without this step, a new Google account for an email already registered with a password allows an attacker to take over the existing account.
+
+**Apple identities** are keyed by `sub` (the durable `provider_user_id`), never by email. Apple Private Relay rotates relay addresses, and users can revoke them entirely — email is not a stable join key. The `social_identities.relay_email` column stores the relay address for reference only. The system accepts the multi-account-per-Apple-user reality rather than risking email-based takeover.
 
 No `oauth_tokens` row is created for login flows — login is a one-time identity check; no API calls are made on the user's behalf.
 

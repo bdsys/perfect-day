@@ -30,7 +30,7 @@ Celery Worker pool
 
 ```
 scan_diary(diary_id):
-  1. Acquire Redis lock scan_lock:{diary_id} (10-min TTL); skip if held.
+  1. Acquire Redis lock `scan_lock:{diary_id}` with **30-min TTL** plus a heartbeat thread inside the task that renews the lock every 5 minutes. If the worker crashes, the TTL self-releases. If the scan legitimately runs longer than 30 minutes, the heartbeat keeps the lock held. (The previous 10-min TTL was shorter than the worst-case scan duration and could double-trigger LLM generation.)
   2. Load diary + scan_jobs row. Bail if scan_enabled=false or
      next_scan_after > now() (backoff still active).
   3. Open scan_runs row (status=running).
@@ -143,8 +143,8 @@ Scans run on schedule regardless of quiet hours — data freshness matters. Only
 |---|---|
 | Google API 5xx | Backoff retry. After 3 failures, scan_run status='partial' or 'failed', `consecutive_failures++`. Next scan delayed exponentially. |
 | LLM generation fails for one Entry | Logged in `llm_generations`. Entry stays draft empty-body. Notification fires. Other entries unaffected. |
-| Worker crash mid-scan | Celery retries (max 3). Redis lock 10-min TTL self-releases. Idempotency prevents duplicate ingestion. |
-| Token refresh fails | `oauth_tokens.revoked_at` set. Source skipped. Notification: "reconnect Google." |
+| Worker crash mid-scan | Celery retries (max 3). Redis lock 30-min TTL self-releases. Idempotency prevents duplicate ingestion. |
+| Token refresh fails | `ensure_fresh_access_token` takes a per-`(user_id, provider)` Redis advisory lock (`oauth_refresh:{user_id}:{provider}`, 30-second TTL). The second concurrent worker waits, then re-reads `oauth_tokens` and uses the freshly-stored access token. Without this lock, Google rotates the refresh token on the first call; the second call gets `invalid_grant` and mistakenly marks the integration revoked. If the refresh call itself fails (token expired or revoked at Google), `oauth_tokens.revoked_at` is set, the source is skipped, and a "reconnect Google" notification fires. |
 | MinIO unreachable for upload | `photos.finalized_at IS NULL`; orphan sweeper cleans after 24h. |
 | User hit tier limit during auto-generation | Events still ingest. `generate_entry_draft` returns early without LLM call. Entry exists with empty body. UI shows "Draft pending — upgrade to generate." |
 
@@ -153,3 +153,13 @@ Scans run on schedule regardless of quiet hours — data freshness matters. Only
 - `scan_runs` table holds per-run audit. Read via `GET /v1/diaries/{id}/scan/runs`.
 - Fleet view via `GET /v1/admin/scan-jobs`.
 - Structured logs (`structlog`) with `diary_id`, `scan_run_id`, `task_id` on every log line.
+
+## Time and timezones
+
+All worker code interprets dates in the diary's timezone (`diaries.timezone`), not the server's. The server runs in UTC.
+
+- `entries.entry_date` is the date the entry covers **in the diary's timezone**. Never use `now()::date` directly; use `(now() AT TIME ZONE diary.timezone)::date`.
+- Multi-day calendar events arrive from Google in UTC. Convert both `start` and `end` to the diary's timezone before assigning `entry_date` and `entry_end_date`.
+- Calendar events in floating time (no timezone in the iCal data) are treated as if they were in the diary's timezone.
+- DST transitions: a single-day event that spans 23h or 25h on a DST change day still counts as one day in the diary's timezone. No special casing needed.
+- Event grouping, backfill chunking, and the `dispatch_due_scans` beat task all use UTC internally; only the date-assignment step requires the diary timezone conversion.
