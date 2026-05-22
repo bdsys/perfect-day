@@ -1,0 +1,222 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Lint: ruff + eslint + tsc + mypy
+  # ---------------------------------------------------------------------------
+  lint:
+    name: Lint
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install API deps
+        working-directory: apps/api
+        run: pip install -e ".[dev]"
+
+      - name: Ruff lint
+        working-directory: apps/api
+        run: ruff check app tests
+
+      - name: mypy
+        working-directory: apps/api
+        env:
+          MASTER_SECRET: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+          OAUTH_TOKEN_SECRET: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+          SECRET_KEY: test-secret-key
+          DATABASE_URL: postgresql+asyncpg://x:x@localhost/x
+          DATABASE_URL_SYNC: postgresql://x:x@localhost/x
+          ENV: test
+        run: mypy app --ignore-missing-imports || true  # informational until stubs are complete
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: apps/web/package.json
+
+      - name: Install web deps
+        working-directory: apps/web
+        run: npm install
+
+      - name: ESLint
+        working-directory: apps/web
+        run: npx next lint --max-warnings 0
+
+      - name: TypeScript check
+        working-directory: apps/web
+        run: npx tsc --noEmit
+
+  # ---------------------------------------------------------------------------
+  # Unit tests
+  # ---------------------------------------------------------------------------
+  test-unit:
+    name: Unit tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install deps
+        working-directory: apps/api
+        run: pip install -e ".[dev]"
+
+      - name: Run unit tests
+        working-directory: apps/api
+        env:
+          SECRET_KEY: test-secret-key-for-ci
+          MASTER_SECRET: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+          OAUTH_TOKEN_SECRET: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+          DATABASE_URL: postgresql+asyncpg://placeholder:placeholder@localhost/placeholder
+          DATABASE_URL_SYNC: postgresql://placeholder:placeholder@localhost/placeholder
+          ENV: test
+        run: pytest tests/unit -q
+
+  # ---------------------------------------------------------------------------
+  # Integration tests (testcontainers)
+  # ---------------------------------------------------------------------------
+  test-integration:
+    name: Integration tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install deps
+        working-directory: apps/api
+        run: pip install -e ".[dev]"
+
+      - name: Run integration tests
+        working-directory: apps/api
+        env:
+          SECRET_KEY: test-secret-key-for-ci
+          MASTER_SECRET: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+          OAUTH_TOKEN_SECRET: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+          # testcontainers will start real Postgres/Redis containers
+          DATABASE_URL: postgresql+asyncpg://placeholder:placeholder@localhost/placeholder
+          DATABASE_URL_SYNC: postgresql://placeholder:placeholder@localhost/placeholder
+          ENV: test
+          # Docker socket is available on ubuntu-24.04 runners
+          DOCKER_HOST: unix:///var/run/docker.sock
+        run: pytest tests/integration -q --timeout=120
+
+  # ---------------------------------------------------------------------------
+  # Web build + typecheck
+  # ---------------------------------------------------------------------------
+  test-web:
+    name: Web build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: apps/web/package.json
+
+      - name: Install deps
+        working-directory: apps/web
+        run: npm install
+
+      - name: TypeScript check
+        working-directory: apps/web
+        run: npx tsc --noEmit
+
+      - name: Build
+        working-directory: apps/web
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:8000
+        run: npm run build
+
+  # ---------------------------------------------------------------------------
+  # Security scan (informational — non-blocking)
+  # ---------------------------------------------------------------------------
+  security-scan:
+    name: Security scan
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: pip-audit
+        working-directory: apps/api
+        run: |
+          pip install pip-audit
+          pip-audit --requirement <(pip install -e . --dry-run 2>/dev/null | grep -oP '(?<=Collecting )\S+' || echo "") || true
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: apps/web/package.json
+
+      - name: pnpm audit
+        working-directory: apps/web
+        run: |
+          npm install
+          npm audit --prod || true
+
+  # ---------------------------------------------------------------------------
+  # Docker build (no push — verify images build cleanly)
+  # ---------------------------------------------------------------------------
+  docker-build:
+    name: Docker build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build API image
+        uses: docker/build-push-action@v6
+        with:
+          context: apps/api
+          push: false
+          tags: perfect-day-api:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build web image
+        uses: docker/build-push-action@v6
+        with:
+          context: apps/web
+          push: false
+          tags: perfect-day-web:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

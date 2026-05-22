@@ -1,0 +1,49 @@
+# Git history
+.git
+.gitignore
+
+# Secrets / env
+.env
+.env.*
+apps/api/.env
+apps/api/.env.*
+
+# Python artifacts
+__pycache__
+*.pyc
+*.pyo
+*.egg-info
+.mypy_cache
+.ruff_cache
+.pytest_cache
+.coverage
+htmlcov
+.venv
+venv
+
+# Node artifacts
+node_modules
+.next
+out
+playwright-report
+test-results
+
+# Docs / design
+design/
+deploy/
+*.md
+!apps/*/README.md
+
+# Tests (not needed in prod images)
+apps/api/tests/
+apps/web/e2e/
+
+# IDE
+.idea
+.vscode
+*.swp
+
+# Docker volumes
+data/
+postgres_data/
+minio_data/

@@ -1,0 +1,89 @@
+name: E2E Tests
+
+on:
+  pull_request:
+    types: [labeled]
+  workflow_dispatch:
+
+jobs:
+  e2e:
+    name: Playwright E2E
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.pull_request.labels.*.name, 'run-e2e')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ---- Set up API secrets (test values only) ----
+      - name: Write test .env
+        run: |
+          cat > apps/api/.env << 'EOF'
+          ENV=test
+          SECRET_KEY=ci-secret-key-for-e2e-testing-only
+          MASTER_SECRET=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+          OAUTH_TOKEN_SECRET=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+          DATABASE_URL=postgresql+asyncpg://perfectday:perfectday@postgres:5432/perfectday_test
+          DATABASE_URL_SYNC=postgresql://perfectday:perfectday@postgres:5432/perfectday_test
+          REDIS_URL=redis://redis:6379/0
+          CELERY_BROKER_URL=redis://redis:6379/0
+          CELERY_RESULT_BACKEND=redis://redis:6379/1
+          S3_ENDPOINT_URL=http://minio:9000
+          S3_ACCESS_KEY=minioadmin
+          S3_SECRET_KEY=minioadmin
+          S3_BUCKET_PHOTOS=photos
+          GOOGLE_CLIENT_ID=
+          GOOGLE_CLIENT_SECRET=
+          ANTHROPIC_API_KEY=
+          CORS_ORIGINS=["http://localhost:3000"]
+          EOF
+
+      # ---- Start compose stack with test overlay ----
+      - name: Start infrastructure
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.test.yml up -d
+          sleep 5
+
+      - name: Wait for API readiness
+        run: ./scripts/wait-for-healthy.sh http://localhost:8000/readyz 90
+
+      - name: Seed MinIO bucket
+        run: ./scripts/seed-minio-bucket.sh || true  # photos bucket (Phase 2)
+
+      # ---- Install Node + Playwright ----
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: apps/web/package.json
+
+      - name: Install deps + Playwright browsers
+        working-directory: apps/web
+        run: |
+          npm install
+          npx playwright install chromium --with-deps
+
+      # ---- Run Playwright ----
+      - name: Run Playwright tests
+        working-directory: apps/web
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:8000
+          CI: "true"
+        run: npx playwright test
+
+      # ---- Artifacts ----
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: apps/web/playwright-report/
+          retention-days: 7
+
+      # ---- Teardown ----
+      - name: Tear down stack
+        if: always()
+        run: docker compose -f docker-compose.yml -f docker-compose.test.yml down -v
