@@ -75,3 +75,5 @@ Not in PoC. Leave breadcrumbs (schema columns, commented router stubs) as noted.
 ## Resource estimates
 
 Single-host resource estimates and the Celery-concurrency cap are deployment-target dependent — see [`deploy/nuc.md`](../deploy/nuc.md).
+
+> **Hybrid deployment timing:** the hybrid topology (NUC + Hetzner CX21 cloud edge) is a Phase 1.5 / Phase 2 deployment switch — designed now, adopted later. The Phase 1 PoC builds NUC-only per the scope above. The host-agnostic architecture (`design/01-architecture.md` § Deployment targets) supports the hybrid switch without application code rewrites. See [`deploy/hybrid.md`](../deploy/hybrid.md) for the full hybrid design.

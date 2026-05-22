@@ -57,23 +57,23 @@ users ──┬──< social_identities
 - `id` UUID PK
 - `owner_user_id` UUID FK → users
 - `name` text NOT NULL
-- `slug` text UNIQUE NOT NULL  *(derived from name; used in display URLs)*
+- `slug` text NOT NULL  *(derived from name; used in display URLs; UNIQUE per owner — see M17)*
 - `subject_name` text NULL  *(e.g., child's name; used in LLM prompt)*
 - `subject_relation` text NOT NULL DEFAULT `'self'`  *(CHECK: `self | child | family | other_person`)*
 - `voice_override` text NULL  *(CHECK: `first_singular | first_plural | second | third`; overrides derivation)*
 - `tone_hint` text NOT NULL DEFAULT `'warm, narrative'`
-- `timezone` text NOT NULL  *(IANA tz — all `entry_date` values in this diary are interpreted in this timezone; see [06-scan-worker.md](06-scan-worker.md) § Time and timezones)*
+- `timezone` text NOT NULL  *(IANA tz — all `entry_date` values in this diary are interpreted in this timezone; see [design/time-and-tz.md](time-and-tz.md))*
 - `scan_interval_minutes` int NOT NULL DEFAULT 60
 - `scan_enabled` boolean NOT NULL DEFAULT true
 - `cover_photo_id` UUID FK → photos NULL
 - `notifications_muted` boolean NOT NULL DEFAULT false
-- `photos_backfill_days_max` int NOT NULL DEFAULT 90
+- `photos_backfill_days_max` int NOT NULL DEFAULT 90  *(per-diary override; effective limit is user-tier config — Phase 2 will move this to tier config)*
 - `deleted_at` timestamptz NULL
 - `hard_delete_after` timestamptz NULL  *(set on diary deletion request; 30-day grace)*
 
 App-layer check: per-user diary count vs tier (free=1, tier1=2, tier2=4).
 
-Display URLs: `diary.perfectday.bdsys.net/d/{slug}/entries/{entry_date}`. Internal IDs remain UUIDs.
+Display URLs: `diary.perfectday.bdsys.net/d/{slug}/entries/{entry_date}`. Internal IDs remain UUIDs. Slugs are UNIQUE per `(owner_user_id, slug)` — not globally unique. A global slug uniqueness constraint leaks diary existence across users (if a slug is taken, an attacker can enumerate whether a user with a given diary name exists).
 
 ### `diary_permissions`
 - `id` UUID PK
@@ -96,12 +96,12 @@ Display URLs: `diary.perfectday.bdsys.net/d/{slug}/entries/{entry_date}`. Intern
 ### `entries`
 - `id` UUID PK
 - `diary_id` UUID FK → diaries
-- `entry_date` date NOT NULL  *(start date, interpreted in `diaries.timezone` — never in server/UTC time)*
+- `entry_date` date NOT NULL  *(start date, interpreted in `diaries.timezone` — never in server/UTC time; see [design/time-and-tz.md](time-and-tz.md))*
 - `entry_end_date` date NULL  *(NULL = single-day; non-null = multi-day span)*
 - `parent_entry_id` UUID FK → entries NULL  *(reserved; not used in PoC — supports future nesting/merge UX)*
 - `title` text
 - `body_markdown` text  *(narrative)*
-- `status` text NOT NULL  *(`draft | published | archived`)*
+- `status` text NOT NULL  *(`draft | published`)*  *(`archived` removed — no endpoint sets it, and fewer states means fewer test paths)*
 - `created_by` text NOT NULL  *(`auto | manual`)*
 - `published_at` timestamptz NULL
 - `deleted_at` timestamptz NULL
@@ -112,7 +112,7 @@ INDEX on (`diary_id`, `entry_date` DESC) for timeline. Timeline order: `entry_da
 *(raw source data tied to an entry — what the LLM prompt is built from)*
 - `id` UUID PK
 - `entry_id` UUID FK → entries
-- `source` text NOT NULL  *(`google_calendar | google_photos | manual | weather | spotify`)*
+- `source` text NOT NULL  *(`google_calendar | google_photos | manual | spotify`)*  *(`weather` removed — weather is an enrichment, not an event)*
 - `external_id` text NULL  *(provider's id; for dedup)*
 - `occurred_at` timestamptz NULL  *(used for ordering events within an entry)*
 - `payload` jsonb NOT NULL  *(provider-specific normalized data)*
@@ -155,7 +155,7 @@ INDEX on (`diary_id`, `entry_date` DESC) for timeline. Timeline order: `entry_da
 - `entry_id` UUID FK → entries
 - `kind` text NOT NULL  *(`weather | music | location | …`)*
 - `payload` jsonb NOT NULL  *(shape depends on kind)*
-- `source` text  *(`open_meteo | spotify | google_photos_exif`)*
+- `source` text  *(`open_meteo | spotify | google_photos_exif`)*  *(`openweather` removed — Open-Meteo is the chosen weather provider)*
 - `captured_for_at` timestamptz NULL  *(the moment the enrichment describes)*
 - `fetched_at` timestamptz NOT NULL
 - UNIQUE (`entry_id`, `kind`)  *(PoC: one row per kind; relax later for multi-day per-day weather)*
@@ -206,7 +206,7 @@ INDEX on (`diary_id`, `entry_date` DESC) for timeline. Timeline order: `entry_da
 - `entries_created` int NOT NULL DEFAULT 0
 - `entries_updated` int NOT NULL DEFAULT 0
 - `llm_calls_made` int NOT NULL DEFAULT 0
-- `errors` jsonb NULL  *(per-source error details)*
+- `errors` jsonb NULL  *(per-source error details — schema: `[{source, error_class, message, retried_count}]`)*
 
 ### `backfill_runs`
 - `id` UUID PK
@@ -270,7 +270,7 @@ INDEX on (`diary_id`, `entry_date` DESC) for timeline. Timeline order: `entry_da
 - `user_id` UUID FK → users
 - `token_hash` text NOT NULL UNIQUE
 - `family_id` UUID NOT NULL  *(all rotations of same token share this; used for theft detection)*
-- `device_hint` text NULL  *(user-agent or device name)*
+- `device_hint` text NULL  *(user-agent or device name; set at login/register time when the token is first issued, not at refresh time)*
 - `expires_at` timestamptz NOT NULL
 - `revoked_at` timestamptz NULL
 - `created_at` timestamptz NOT NULL DEFAULT now()
@@ -299,3 +299,11 @@ INDEX on (`diary_id`, `entry_date` DESC) for timeline. Timeline order: `entry_da
   - Account: soft on request, hard delete after 7-day grace.
   - Diary: soft on request, hard delete after 30-day grace.
   - Single entries: soft indefinitely; recoverable from UI.
+- **`entry_edit_diffs` limitation (PoC):** Only the last LLM generation → published diff is captured per publish event. All intermediate regenerations between two publish events are not stored. This is a known PoC limitation — if fine-tuning data quality matters, we would store all generations. Revisit post-launch.
+- **Slug uniqueness:** UNIQUE per `(owner_user_id, slug)`, not global. Global uniqueness leaks diary existence; per-owner uniqueness is sufficient for URL routing.
+- **Table retention (Celery beat daily job):**
+  - `notifications`: delete rows where `created_at < now() - 90 days AND read_at IS NOT NULL`
+  - `audit_log`: retain for 1 year (legal/compliance signal)
+  - `scan_runs`: retain for 90 days
+  - `llm_generations`: retain for 1 year (cost + fine-tuning signal)
+- **Subscription tier downgrade mid-cycle:** extra diaries beyond the new tier limit become read-only immediately (scans disabled; entries still readable). The user must delete diaries to re-enable scans. Diary count over the new limit: all over-limit diaries sorted by `created_at ASC` become read-only; the oldest diary is always the active one. Document this behaviour in the UI before allowing tier changes.

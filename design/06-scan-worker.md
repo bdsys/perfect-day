@@ -4,6 +4,8 @@
 
 Celery + Redis. Beat scheduler triggers periodic dispatch tasks; workers process them. Celery `group`/`chain` for fan-out.
 
+**Worker placement (hybrid deployment):** in the hybrid topology (NUC + CX21 cloud edge), the Celery worker and beat scheduler stay on the NUC. This is required because: (1) all task writes go to the Postgres primary, which is on the NUC; (2) photo ingestion writes encrypted chunks to Cloudflare R2 and must update `photos.dek_ciphertext` in the primary; (3) LLM generation reads photo DEKs via `master_secret`, which is only on the NUC in default mode. The CX21 hosts only the API public ingress and read-replica — no Celery worker runs there. See `deploy/hybrid.md` for the full hybrid topology.
+
 ```
 Celery Beat (master scheduler)
   ├── every 5 min:  dispatch_due_scans()
@@ -24,7 +26,7 @@ Celery Worker pool
 
 ## Beat dispatch
 
-`dispatch_due_scans()` runs every **5 minutes**. Enqueues `scan_diary(diary_id)` for each diary whose `next_scan_after <= now()`. Hourly default scans drift up to 5 minutes; users wanting tighter timing use manual `/scan/run`.
+`dispatch_due_scans()` runs every **5 minutes**. Enqueues `scan_diary(diary_id)` for each diary whose `next_scan_after <= now()`. Worst-case dispatch latency for a 60-minute scan interval is 65 minutes (scan interval + up to one dispatch cycle). This is acceptable; document it so on-call isn't surprised when "1 hour" scans arrive up to 65 minutes apart.
 
 ## Scan loop
 
@@ -76,7 +78,13 @@ group_events_into_entries(diary_id, scan_run_id):
   Return entries_to_regenerate (those that gained content this scan).
 ```
 
-`upsert_entry` reuses an existing draft entry for the diary on that date (or matching multi-day external_id) before creating new.
+`upsert_entry` reuses an existing **draft** entry for the diary on that date (or matching multi-day `external_id`) before creating new. Three cases:
+
+1. **No existing entry for this date:** create a new draft.
+2. **Existing draft for this date:** reuse it — attach the new event/photo, mark the entry for regeneration.
+3. **Existing published entry for this date:** do NOT modify the published entry. Attach new events to a new sibling draft entry. The user can review and manually merge if desired.
+
+Photo grouping uses a total ordering to avoid non-deterministic tie-breaking: `entry_date ASC, created_at ASC, id ASC`. Given two entries both equally close to a photo, the earlier-dated one wins; ties on date break on `created_at`; ties on `created_at` break on `id`.
 
 ## Idempotency
 
@@ -121,7 +129,7 @@ backfill_diary(diary_id, from_date, to_date, sources):
 
 Hard cap: 365 days. Default cap from OAuth doc is 90 days (`photos_backfill_days_max`). Backfill takes the same `scan_lock:{diary_id}` so it can't collide with scheduled scans.
 
-Cancellation: `DELETE /v1/diaries/{id}/scan/backfill/{runId}` sets `backfill_runs.status='cancelled'`. Worker checks at each weekly chunk boundary and exits cleanly. Already-ingested events stay (idempotent re-runs are safe).
+Cancellation: `DELETE /v1/diaries/{id}/scan/backfill/{runId}` sets `backfill_runs.status='cancelled'`. Worker checks at each **weekly chunk boundary** and exits cleanly — it does not abort mid-week or roll back a partially-completed week. Already-ingested events stay (idempotent re-runs are safe). If a week was already started when cancellation arrives, that week completes before the worker stops.
 
 ## Concurrency
 
@@ -134,8 +142,9 @@ Scans run on schedule regardless of quiet hours — data freshness matters. Only
 ## Photo handling edge cases
 
 - Photos with no GPS still ingest and attach via timestamp-only matching.
-- The metadata-first filter keeps screenshots/selfies out via "rear camera OR has location" check.
+- The metadata-first filter keeps screenshots/selfies out via "rear camera OR has location" check. **This filter applies to Google Photos auto-ingest only.** User-uploaded photos (via `POST /v1/photos/upload-url` → `POST /v1/photos/{id}/finalize`) bypass the filter entirely — the user has explicitly chosen to upload them.
 - Photo-only entries (no calendar event) are still **drafts** requiring user review. No exception to the "always drafts first" rule.
+- Open-Meteo weather enrichment (per `enrichments` table): before fetching weather for an `entry_date`, the worker checks `enrichments` for an existing row with `kind='weather'` and `entry_id` matching the entry. If found, skip the Open-Meteo API call. This prevents redundant fetches during backfill and retries.
 
 ## Failure modes
 
@@ -156,10 +165,10 @@ Scans run on schedule regardless of quiet hours — data freshness matters. Only
 
 ## Time and timezones
 
-All worker code interprets dates in the diary's timezone (`diaries.timezone`), not the server's. The server runs in UTC.
+Full rules are in [`design/time-and-tz.md`](time-and-tz.md). Summary for worker code:
 
-- `entries.entry_date` is the date the entry covers **in the diary's timezone**. Never use `now()::date` directly; use `(now() AT TIME ZONE diary.timezone)::date`.
-- Multi-day calendar events arrive from Google in UTC. Convert both `start` and `end` to the diary's timezone before assigning `entry_date` and `entry_end_date`.
-- Calendar events in floating time (no timezone in the iCal data) are treated as if they were in the diary's timezone.
-- DST transitions: a single-day event that spans 23h or 25h on a DST change day still counts as one day in the diary's timezone. No special casing needed.
-- Event grouping, backfill chunking, and the `dispatch_due_scans` beat task all use UTC internally; only the date-assignment step requires the diary timezone conversion.
+- All date assignment uses `(now() AT TIME ZONE diary.timezone)::date` — never bare `now()::date`.
+- Google Calendar events arrive in UTC; convert both `start` and `end` to the diary's timezone before assigning `entry_date` and `entry_end_date`.
+- Floating-time events (no TZ in the iCal data) are treated as if they were in the diary's timezone.
+- DST: a single-day event spanning 23h or 25h still counts as one day. No special casing.
+- Event grouping, backfill chunking, and `dispatch_due_scans` use UTC internally; only the date-assignment step requires diary-timezone conversion.

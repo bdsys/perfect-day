@@ -40,7 +40,37 @@ The runtime never persists the unwrapped secret to disk.
 - Key version prefix in `dek_ciphertext` supports future master_secret rotation (re-wrap DEKs in Postgres; ciphertext in MinIO unchanged).
 - OAuth tokens use a **separate** `master_secret` (different secret store entry) and the same AES-256-GCM pattern.
 
-## JWT lifecycle
+## Hybrid deployment: secret and DEK boundaries
+
+In hybrid mode (NUC + CX21), the key hierarchy boundaries change. This section documents what is and is not present on the CX21 cloud edge.
+
+**Default mode (NUC reachable):**
+- `master_secret` lives exclusively on the NUC (sops+YubiKey). The CX21 never holds it.
+- The CX21 cannot decrypt photos on its own. For each photo download, the CX21 calls the NUC's internal DEK-unwrap RPC (`POST https://10.42.0.1:8443/internal/unwrap-dek`) over a WireGuard tunnel with mutual TLS.
+- The NUC derives the per-user KEK from `master_secret`, decrypts the wrapped DEK, and returns only the raw DEK.
+- The CX21 caches the DEK in process memory with a 15-minute TTL. On user logout, cached DEKs for that user are invalidated. The DEK is never written to disk on the CX21.
+- OAuth token decryption still runs on the NUC (Celery worker) — no change from the NUC-only deployment.
+
+**Escalation (operator promotes CX21 to primary):**
+- The operator pastes `master_secret` into the CX21 process environment from a sops-encrypted backup stored in 1Password.
+- This is a documented, accepted privacy degradation: `master_secret` is now present on a cloud VPS, not just the home-lab host.
+- Recovery requires `master_secret` rotation (generate new 32-byte secret, re-wrap all `dek_ciphertext` rows) and removal of `master_secret` from the CX21 environment.
+- The promotion event and recovery are both recorded in the audit log.
+- See `deploy/hybrid.md` § Escalation runbook and `design/secrets.md` § Hybrid escalation for the full procedure.
+
+**What the CX21 holds at all times (even in default mode):**
+- Postgres replica password
+- Cloudflare R2 access key + secret key
+- WireGuard private key
+- JWT verification key (public or symmetric for HMAC — used to verify tokens, not to sign them)
+- mTLS client certificate (for DEK-unwrap RPC)
+
+**What the CX21 never holds in default mode:**
+- `master_secret`
+- `oauth_token_secret`
+- JWT signing key (CX21 verifies tokens only; the NUC FastAPI signs them)
+
+
 
 | Token | TTL | Storage |
 |---|---|---|
@@ -112,11 +142,13 @@ Cross-diary photo check: `photos` row and MinIO object deleted only when the las
 
 ## Magic link tokens
 
-32-byte random (URL-safe base64). Hash-only storage in `magic_link_tokens`. 15-min TTL. Single-use (`consumed_at` set on first use).
+32-byte random (URL-safe base64). Hash-only storage in `magic_link_tokens`. 15-min TTL. Single-use (`consumed_at` set on first use). The `email` field is lowercased on insert (`LOWER(email)`) — `citext` handles case-insensitive comparison, but storing in canonical lowercase prevents display inconsistencies in the admin UI.
 
 ## CSRF
 
-`HttpOnly SameSite=Strict` cookie on refresh tokens. Custom `Authorization` header on API calls (not form-submittable). No additional CSRF token needed.
+`HttpOnly SameSite=Strict` cookie on refresh tokens. Custom `Authorization` header on API calls (not form-submittable). No additional CSRF token needed for the API in general.
+
+**`/v1/auth/refresh` CSRF protection:** this endpoint accepts the refresh token from the HttpOnly cookie without an Authorization header. The `SameSite=Strict` attribute prevents cross-origin POSTs from including the cookie, which is the primary defense. As an additional layer, the endpoint also validates an `Origin` header check — requests must originate from `diary.perfectday.bdsys.net` or `api.diary.perfectday.bdsys.net`. Requests with an absent or mismatched Origin header (that are not from the same origin) are rejected with `403 forbidden_origin`. This defense-in-depth covers browsers that do not yet fully enforce SameSite=Strict.
 
 ## MinIO access controls
 
@@ -133,3 +165,15 @@ Celery beat task daily:
 2. The encrypted dump is synced to a local MinIO object and to an external cloud bucket (S3 or Backblaze B2).
 
 Backup destinations and operator-separation specifics are deployment concerns — see [`deploy/nuc.md`](../deploy/nuc.md) and `deploy/cloud.md`. This is irreplaceable family data.
+
+## Subscription tier downgrade
+
+When a user's tier is downgraded (by the operator via admin, or by expiry of a paid plan):
+
+- Diaries over the new tier limit become **read-only**: scan disabled, new entries blocked, existing entries and photos still readable.
+- Selection: diaries sorted by `created_at ASC` — the oldest diary stays active; newest over-limit diaries are downgraded.
+- The user is shown a banner: "You have [N] diaries over your plan limit. Delete [N] diaries to restore scanning."
+- No data is deleted on downgrade. The user can restore access by upgrading or by deleting diaries to get back under the limit.
+- This behaviour is communicated in the plan-change confirmation screen before the downgrade is applied.
+
+**Email delivery note (SendGrid free tier):** verify the current free-tier limit at account provisioning — historically 100 emails/day but terms change. If the limit is exhausted, consider Postmark (reliable deliverability) or AWS SES (~$0.10/1k emails). For a personal/family diary at PoC scale, 100/day is more than sufficient. Review annually.
