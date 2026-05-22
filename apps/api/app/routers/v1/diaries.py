@@ -183,6 +183,7 @@ async def create_diary(
 
     # Create 1:1 scan job
     db.add(ScanJob(diary_id=diary.id))
+    await db.refresh(diary)
     return diary
 
 

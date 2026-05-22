@@ -145,6 +145,8 @@ async def create_entry(
         created_by="manual",
     )
     db.add(entry)
+    await db.flush()
+    await db.refresh(entry)
     return entry
 
 

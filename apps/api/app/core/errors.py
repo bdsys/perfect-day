@@ -39,12 +39,16 @@ async def http_exception_handler(request: Request, exc) -> JSONResponse:
 
 
 async def request_validation_handler(request: Request, exc) -> JSONResponse:
-
+    errors = []
+    for e in exc.errors(include_url=False):
+        # pydantic v2 puts the original exception object in ctx — strip it to keep JSON-serializable
+        ctx = {k: str(v) for k, v in e.get("ctx", {}).items()} if e.get("ctx") else None
+        errors.append({**{k: v for k, v in e.items() if k != "ctx"}, **({"ctx": ctx} if ctx else {})})
     return error_response(
         code="validation_error",
         message="Request validation failed",
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        details={"errors": exc.errors()},
+        details={"errors": errors},
     )
 
 
