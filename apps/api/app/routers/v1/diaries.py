@@ -61,6 +61,7 @@ class DiaryOut(BaseModel):
     scan_enabled: bool
     scan_interval_minutes: int
     deleted_at: datetime | None
+    hard_delete_after: datetime | None
     created_at: datetime
 
     model_config = {"from_attributes": True}

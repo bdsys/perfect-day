@@ -38,13 +38,13 @@ class TestScanTrigger:
 
         r = get_redis()
         lock_key = f"scan_lock:{diary['id']}"
-        r.set(lock_key, "1", ex=1800)
+        await r.set(lock_key, "1", ex=1800)
 
         try:
             result = await client.post(f"/v1/diaries/{diary['id']}/scan/run", headers=auth)
             assert result.status_code == 409
         finally:
-            r.delete(lock_key)
+            await r.delete(lock_key)
 
     async def test_scan_runs_list(self, client):
         token, diary = await _setup(client, "scanruns@example.com")
