@@ -1,9 +1,9 @@
 """Unit tests: LLM citation validator."""
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-import pytest
 from app.workers.llm import validate_citation
 
 

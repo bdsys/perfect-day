@@ -1,9 +1,10 @@
 """Main Celery tasks: scan_diary, ingest_calendar_event, group_events_into_entries, generate_entry_draft."""
+
 from __future__ import annotations
 
 import re
 import uuid
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
 import structlog
 
@@ -19,6 +20,7 @@ CHUNK_NONCE_NFKC = 1_048_576  # 1 MiB per chunk for photo encryption
 # Ping — confirms Celery pipeline works
 # ---------------------------------------------------------------------------
 
+
 @celery_app.task(name="app.workers.tasks.ping")
 def ping() -> str:
     return "pong"
@@ -27,6 +29,7 @@ def ping() -> str:
 # ---------------------------------------------------------------------------
 # scan_diary
 # ---------------------------------------------------------------------------
+
 
 @celery_app.task(
     name="app.workers.tasks.scan_diary",
@@ -40,12 +43,14 @@ def scan_diary(self, diary_id: str) -> None:
 
 async def _scan_diary(diary_id_str: str) -> None:
     import asyncio
+
     from sqlalchemy import select
+
     from app.core.dependencies import get_redis
-    from app.models import Diary, ScanJob, ScanRun, OAuthToken
+    from app.models import Diary, OAuthToken, ScanJob, ScanRun
+    from app.workers.calendar_sync import sync_calendar
     from app.workers.token_refresh import ensure_fresh_access_token
     from app.workers.utils import db_session
-    from app.workers.calendar_sync import sync_calendar
 
     diary_id = uuid.UUID(diary_id_str)
     r = get_redis()
@@ -73,8 +78,8 @@ async def _scan_diary(diary_id_str: str) -> None:
             if scan_job is None:
                 return
 
-            now = datetime.now(tz=timezone.utc)
-            if scan_job.next_scan_after and scan_job.next_scan_after.replace(tzinfo=timezone.utc) > now:
+            now = datetime.now(tz=UTC)
+            if scan_job.next_scan_after and scan_job.next_scan_after.replace(tzinfo=UTC) > now:
                 return
 
             # Open scan run
@@ -102,7 +107,11 @@ async def _scan_diary(diary_id_str: str) -> None:
         calendar_events_count = 0
 
         # Calendar sync
-        if oauth_token and oauth_token.revoked_at is None and "calendar.readonly" in (oauth_token.scopes_granted or []):
+        if (
+            oauth_token
+            and oauth_token.revoked_at is None
+            and "calendar.readonly" in (oauth_token.scopes_granted or [])
+        ):
             try:
                 async with db_session() as db:
                     token_result = await db.execute(
@@ -122,7 +131,14 @@ async def _scan_diary(diary_id_str: str) -> None:
                     )
             except Exception as e:
                 log.error("calendar_sync_error", diary_id=diary_id_str, error=str(e))
-                errors.append({"source": "google_calendar", "error_class": type(e).__name__, "message": str(e), "retried_count": 0})
+                errors.append(
+                    {
+                        "source": "google_calendar",
+                        "error_class": type(e).__name__,
+                        "message": str(e),
+                        "retried_count": 0,
+                    }
+                )
 
         # Group events into entries and queue LLM generation
         new_entry_ids: list[uuid.UUID] = []
@@ -139,7 +155,7 @@ async def _scan_diary(diary_id_str: str) -> None:
             job_result = await db.execute(select(ScanJob).where(ScanJob.diary_id == diary_id))
             scan_job_update = job_result.scalar_one()
 
-            completed = datetime.now(tz=timezone.utc)
+            completed = datetime.now(tz=UTC)
             scan_run_update.completed_at = completed
             scan_run_update.events_calendar = calendar_events_count
             scan_run_update.entries_created = len(new_entry_ids)
@@ -150,7 +166,10 @@ async def _scan_diary(diary_id_str: str) -> None:
             scan_job_update.last_scan_status = scan_run_update.status
             scan_job_update.consecutive_failures = 0
             from datetime import timedelta
-            scan_job_update.next_scan_after = completed + timedelta(minutes=diary.scan_interval_minutes)
+
+            scan_job_update.next_scan_after = completed + timedelta(
+                minutes=diary.scan_interval_minutes
+            )
 
     except Exception as e:
         log.error("scan_diary_error", diary_id=diary_id_str, error=str(e))
@@ -161,8 +180,9 @@ async def _scan_diary(diary_id_str: str) -> None:
                 scan_job_update.consecutive_failures += 1
                 failures = scan_job_update.consecutive_failures
                 from datetime import timedelta
-                backoff = min(60 * (2 ** failures), 86400)
-                scan_job_update.next_scan_after = datetime.now(tz=timezone.utc) + timedelta(seconds=backoff)
+
+                backoff = min(60 * (2**failures), 86400)
+                scan_job_update.next_scan_after = datetime.now(tz=UTC) + timedelta(seconds=backoff)
         raise
     finally:
         heartbeat_task.cancel()
@@ -171,6 +191,7 @@ async def _scan_diary(diary_id_str: str) -> None:
 
 async def _heartbeat(r, lock_key: str) -> None:
     import asyncio
+
     while True:
         await asyncio.sleep(300)  # renew every 5 minutes
         await r.expire(lock_key, 1800)
@@ -180,17 +201,21 @@ async def _heartbeat(r, lock_key: str) -> None:
 # ingest_calendar_event
 # ---------------------------------------------------------------------------
 
+
 @celery_app.task(name="app.workers.tasks.ingest_calendar_event", bind=True, max_retries=3)
 def ingest_calendar_event(self, event_data: dict, diary_id: str, diary_timezone: str) -> str | None:
     """Upsert a single calendar event; return entry_id string or None."""
     return run_sync(_ingest_calendar_event(event_data, uuid.UUID(diary_id), diary_timezone))
 
 
-async def _ingest_calendar_event(event_data: dict, diary_id: uuid.UUID, diary_timezone: str) -> str | None:
+async def _ingest_calendar_event(
+    event_data: dict, diary_id: uuid.UUID, diary_timezone: str
+) -> str | None:
     from sqlalchemy import select
-    from app.models import Entry, Event
-    from app.workers.utils import db_session
+
+    from app.models import Event
     from app.workers.tz_utils import google_event_to_entry_date
+    from app.workers.utils import db_session
 
     external_id = event_data.get("id", "")
     source = "google_calendar"
@@ -266,28 +291,34 @@ async def _upsert_entry(
 ) -> uuid.UUID:
     """Find existing draft entry for this date or create a new one."""
     from sqlalchemy import select
+
     from app.models import Entry
 
     # Check for multi-day entry match by external_id first
     if external_id and entry_end_date:
-        existing_result = await db.execute(
-            select(Entry).where(
+        await db.execute(
+            select(Entry)
+            .where(
                 Entry.diary_id == diary_id,
                 Entry.status == "draft",
                 Entry.deleted_at.is_(None),
-            ).order_by(Entry.created_at.asc())
+            )
+            .order_by(Entry.created_at.asc())
         )
         # Look for entry with same external event id already attached
         # (handled by event dedup above)
 
     # Single-day: find existing draft for this exact date
     result = await db.execute(
-        select(Entry).where(
+        select(Entry)
+        .where(
             Entry.diary_id == diary_id,
             Entry.entry_date == entry_date,
             Entry.status == "draft",
             Entry.deleted_at.is_(None),
-        ).order_by(Entry.created_at.asc()).limit(1)
+        )
+        .order_by(Entry.created_at.asc())
+        .limit(1)
     )
     existing = result.scalar_one_or_none()
     if existing is not None:
@@ -312,6 +343,7 @@ async def _upsert_entry(
 # group_events_into_entries
 # ---------------------------------------------------------------------------
 
+
 @celery_app.task(name="app.workers.tasks.group_events_into_entries")
 def group_events_into_entries(diary_id: str, scan_run_id: str) -> list[str]:
     return run_sync(_group_events_into_entries_task(uuid.UUID(diary_id), uuid.UUID(scan_run_id)))
@@ -319,6 +351,7 @@ def group_events_into_entries(diary_id: str, scan_run_id: str) -> list[str]:
 
 async def _group_events_into_entries_task(diary_id: uuid.UUID, scan_run_id: uuid.UUID) -> list[str]:
     from app.workers.utils import db_session
+
     async with db_session() as db:
         ids = await group_events_into_entries_async(diary_id, scan_run_id, db)
     return [str(i) for i in ids]
@@ -329,6 +362,7 @@ async def group_events_into_entries_async(
 ) -> list[uuid.UUID]:
     """Returns list of entry IDs that need LLM generation."""
     from sqlalchemy import select
+
     from app.models import Entry, Event
 
     # Find all draft entries for this diary that have events but no LLM body yet
@@ -344,9 +378,7 @@ async def group_events_into_entries_async(
 
     entries_with_events = []
     for entry in entries_needing_llm:
-        event_result = await db.execute(
-            select(Event).where(Event.entry_id == entry.id).limit(1)
-        )
+        event_result = await db.execute(select(Event).where(Event.entry_id == entry.id).limit(1))
         if event_result.scalar_one_or_none() is not None:
             entries_with_events.append(entry.id)
 
@@ -356,6 +388,7 @@ async def group_events_into_entries_async(
 # ---------------------------------------------------------------------------
 # generate_entry_draft (LLM)
 # ---------------------------------------------------------------------------
+
 
 @celery_app.task(
     name="app.workers.tasks.generate_entry_draft",
@@ -369,4 +402,5 @@ def generate_entry_draft(self, entry_id: str) -> None:
 
 async def _generate_entry_draft(entry_id_str: str) -> None:
     from app.workers.llm import generate_draft_for_entry
+
     await generate_draft_for_entry(uuid.UUID(entry_id_str))

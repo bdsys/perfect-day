@@ -1,16 +1,19 @@
 """Integration tests: scan trigger — lock contention 409, task queued."""
+
 from __future__ import annotations
 
-import pytest
-from httpx import AsyncClient
 from unittest.mock import patch
+
+from httpx import AsyncClient
 
 
 async def _setup(client: AsyncClient, email: str = "scan@example.com") -> tuple[str, dict]:
     r = await client.post("/v1/auth/register", json={"email": email, "password": "Password1!"})
     token = r.json()["access_token"]
     auth = {"Authorization": f"Bearer {token}"}
-    diary = (await client.post("/v1/diaries", json={"name": "D", "timezone": "UTC"}, headers=auth)).json()
+    diary = (
+        await client.post("/v1/diaries", json={"name": "D", "timezone": "UTC"}, headers=auth)
+    ).json()
     return token, diary
 
 
@@ -32,6 +35,7 @@ class TestScanTrigger:
 
         # Simulate a lock being held by adding to Redis
         from app.core.dependencies import get_redis
+
         r = get_redis()
         lock_key = f"scan_lock:{diary['id']}"
         r.set(lock_key, "1", ex=1800)

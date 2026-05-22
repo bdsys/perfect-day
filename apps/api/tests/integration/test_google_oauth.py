@@ -1,12 +1,7 @@
 """Integration tests: Google OAuth authorize URL, callback (mocked), token storage, revoke."""
+
 from __future__ import annotations
 
-import json
-import uuid
-from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
-import responses as responses_lib
 from httpx import AsyncClient
 
 
@@ -53,9 +48,7 @@ class TestGoogleAuthorize:
 class TestGoogleCallback:
     async def test_callback_with_invalid_state_returns_400(self, client):
         # No auth needed for callback — state carries user identity
-        r = await client.get(
-            "/v1/integrations/google/callback?code=fake-code&state=bad-state"
-        )
+        r = await client.get("/v1/integrations/google/callback?code=fake-code&state=bad-state")
         assert r.status_code in (302, 400)  # redirect with error or direct 400
 
     async def test_revoke_integration(self, client):
@@ -64,10 +57,6 @@ class TestGoogleCallback:
         auth = {"Authorization": f"Bearer {token}"}
 
         # Can only revoke if a token exists — seed one via the DB bypass
-        from sqlalchemy import insert
-        from datetime import datetime, timezone
-        from app.core.security import encrypt_oauth_token
-        from app.models import OAuthToken
 
         # We can't easily call the real callback in unit test (no real Google),
         # but we can verify the revoke endpoint returns 404 when no token exists.

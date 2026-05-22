@@ -4,11 +4,11 @@ import hashlib
 import os
 import secrets
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
-from jose import JWTError, jwt
+from jose import jwt
 
 from app.core.config import get_settings
 
@@ -18,6 +18,7 @@ _ph = PasswordHasher()
 # ---------------------------------------------------------------------------
 # Password hashing
 # ---------------------------------------------------------------------------
+
 
 def hash_password(plain: str) -> str:
     return _ph.hash(plain)
@@ -38,9 +39,10 @@ def needs_rehash(hashed: str) -> bool:
 # JWT
 # ---------------------------------------------------------------------------
 
+
 def create_access_token(user_id: uuid.UUID, is_admin: bool = False) -> str:
     settings = get_settings()
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now(tz=UTC)
     payload = {
         "sub": str(user_id),
         "iat": now,
@@ -60,6 +62,7 @@ def decode_access_token(token: str) -> dict:
 # Refresh tokens
 # ---------------------------------------------------------------------------
 
+
 def generate_refresh_token() -> tuple[str, str]:
     """Return (raw_token, token_hash)."""
     raw = secrets.token_urlsafe(48)
@@ -74,6 +77,7 @@ def hash_token(raw: str) -> str:
 # ---------------------------------------------------------------------------
 # OAuth token encryption (AES-256-GCM)
 # ---------------------------------------------------------------------------
+
 
 def _get_oauth_key() -> bytes:
     return bytes.fromhex(get_settings().oauth_token_secret)

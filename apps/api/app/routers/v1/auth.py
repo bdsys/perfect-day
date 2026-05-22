@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
 from google.auth.transport import requests as google_requests
@@ -33,6 +33,7 @@ GRACE_SECONDS = 30  # reuse grace window for rotation
 # Schemas
 # ---------------------------------------------------------------------------
 
+
 class RegisterRequest(BaseModel):
     email: EmailStr
     password: str
@@ -50,12 +51,13 @@ class GoogleLoginRequest(BaseModel):
 
 class TokenResponse(BaseModel):
     access_token: str
-    token_type: str = "bearer"
+    token_type: str = "bearer"  # noqa: S105
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 async def _issue_tokens(
     user: User,
@@ -73,7 +75,7 @@ async def _issue_tokens(
         token_hash=token_hash,
         family_id=family_id,
         device_hint=device_hint,
-        expires_at=datetime.now(tz=timezone.utc) + timedelta(days=settings.refresh_token_expire_days),
+        expires_at=datetime.now(tz=UTC) + timedelta(days=settings.refresh_token_expire_days),
     )
     db.add(rt)
     await db.flush()
@@ -97,6 +99,7 @@ def _set_refresh_cookie(response: Response, raw_token: str, expire_days: int) ->
 # ---------------------------------------------------------------------------
 # Register
 # ---------------------------------------------------------------------------
+
 
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
 @auth_limiter.limit("10/minute")
@@ -130,6 +133,7 @@ async def register(
 # Login
 # ---------------------------------------------------------------------------
 
+
 @router.post("/login", response_model=TokenResponse)
 @auth_limiter.limit("10/minute")
 async def login(
@@ -141,7 +145,11 @@ async def login(
     result = await db.execute(select(User).where(User.email == body.email.lower()))
     user = result.scalar_one_or_none()
 
-    if user is None or user.password_hash is None or not verify_password(body.password, user.password_hash):
+    if (
+        user is None
+        or user.password_hash is None
+        or not verify_password(body.password, user.password_hash)
+    ):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid_credentials")
 
     if user.deleted_at is not None or user.hard_delete_after is not None:
@@ -155,6 +163,7 @@ async def login(
 # ---------------------------------------------------------------------------
 # Google social login
 # ---------------------------------------------------------------------------
+
 
 @router.post("/social/google", response_model=TokenResponse)
 async def social_google(
@@ -190,8 +199,12 @@ async def social_google(
         user_result = await db.execute(select(User).where(User.id == identity.user_id))
         user = user_result.scalar_one_or_none()
         if user is None or user.deleted_at is not None:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="account_unavailable")
-        return await _issue_tokens(user, response, db, device_hint=request.headers.get("User-Agent", "")[:200])
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="account_unavailable"
+            )
+        return await _issue_tokens(
+            user, response, db, device_hint=request.headers.get("User-Agent", "")[:200]
+        )
 
     # Check if email already exists on a different account → require explicit link
     if email:
@@ -207,24 +220,29 @@ async def social_google(
     user = User(
         email=email,
         display_name=id_info.get("name"),
-        email_verified_at=datetime.now(tz=timezone.utc) if email_verified else None,
+        email_verified_at=datetime.now(tz=UTC) if email_verified else None,
     )
     db.add(user)
     await db.flush()
 
-    db.add(SocialIdentity(
-        user_id=user.id,
-        provider="google",
-        provider_user_id=provider_user_id,
-    ))
+    db.add(
+        SocialIdentity(
+            user_id=user.id,
+            provider="google",
+            provider_user_id=provider_user_id,
+        )
+    )
     db.add(NotificationPreferences(user_id=user.id))
 
-    return await _issue_tokens(user, response, db, device_hint=request.headers.get("User-Agent", "")[:200])
+    return await _issue_tokens(
+        user, response, db, device_hint=request.headers.get("User-Agent", "")[:200]
+    )
 
 
 # ---------------------------------------------------------------------------
 # Refresh
 # ---------------------------------------------------------------------------
+
 
 @router.post("/refresh", response_model=TokenResponse)
 async def refresh(
@@ -235,7 +253,11 @@ async def refresh(
 ) -> TokenResponse:
     # Origin check for CSRF defence-in-depth
     origin = request.headers.get("origin", "")
-    allowed = {"https://diary.perfectday.bdsys.net", "https://api.diary.perfectday.bdsys.net", "http://localhost:3000"}
+    allowed = {
+        "https://diary.perfectday.bdsys.net",
+        "https://api.diary.perfectday.bdsys.net",
+        "http://localhost:3000",
+    }
     if origin and origin not in allowed:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="forbidden_origin")
 
@@ -243,23 +265,21 @@ async def refresh(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="unauthorized")
 
     token_hash = hash_token(refresh_token)
-    result = await db.execute(
-        select(RefreshToken).where(RefreshToken.token_hash == token_hash)
-    )
+    result = await db.execute(select(RefreshToken).where(RefreshToken.token_hash == token_hash))
     rt = result.scalar_one_or_none()
 
     if rt is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="unauthorized")
 
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now(tz=UTC)
 
     # Expired
-    if rt.expires_at.replace(tzinfo=timezone.utc) < now:
+    if rt.expires_at.replace(tzinfo=UTC) < now:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="token_expired")
 
     # Revoked — check for theft signal or grace window
     if rt.revoked_at is not None:
-        revoked_age = (now - rt.revoked_at.replace(tzinfo=timezone.utc)).total_seconds()
+        revoked_age = (now - rt.revoked_at.replace(tzinfo=UTC)).total_seconds()
         if revoked_age <= GRACE_SECONDS:
             # Within grace window: return the successor token (the one with same family, newer)
             # Find the newest non-revoked token in this family
@@ -274,7 +294,9 @@ async def refresh(
                 user_result = await db.execute(select(User).where(User.id == rt.user_id))
                 user = user_result.scalar_one_or_none()
                 if user is None:
-                    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="unauthorized")
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED, detail="unauthorized"
+                    )
                 access = create_access_token(user.id, is_admin=user.is_admin)
                 return TokenResponse(access_token=access)
 
@@ -313,6 +335,7 @@ async def refresh(
 # Logout
 # ---------------------------------------------------------------------------
 
+
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
 async def logout(
     response: Response,
@@ -324,7 +347,7 @@ async def logout(
         result = await db.execute(select(RefreshToken).where(RefreshToken.token_hash == token_hash))
         rt = result.scalar_one_or_none()
         if rt is not None and rt.revoked_at is None:
-            rt.revoked_at = datetime.now(tz=timezone.utc)
+            rt.revoked_at = datetime.now(tz=UTC)
     response.delete_cookie(REFRESH_COOKIE, path="/v1/auth")
 
 
@@ -337,7 +360,7 @@ async def logout_all(
     await db.execute(
         update(RefreshToken)
         .where(RefreshToken.user_id == user.id, RefreshToken.revoked_at.is_(None))
-        .values(revoked_at=datetime.now(tz=timezone.utc))
+        .values(revoked_at=datetime.now(tz=UTC))
     )
     response.delete_cookie(REFRESH_COOKIE, path="/v1/auth")
 
@@ -345,6 +368,7 @@ async def logout_all(
 # ---------------------------------------------------------------------------
 # Me
 # ---------------------------------------------------------------------------
+
 
 class UserProfile(BaseModel):
     id: uuid.UUID
@@ -366,13 +390,14 @@ async def me(user: User = Depends(get_current_user)) -> User:
 # Account deletion
 # ---------------------------------------------------------------------------
 
+
 @router.delete("/account", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_account(
     response: Response,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now(tz=UTC)
     user.deleted_at = now
     user.hard_delete_after = now + timedelta(days=7)
 

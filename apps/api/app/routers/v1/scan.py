@@ -1,8 +1,9 @@
 """Scan API endpoints."""
+
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
@@ -12,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import get_current_user
 from app.core.database import get_db
 from app.core.dependencies import get_redis
-from app.models import Diary, ScanJob, ScanRun, User
+from app.models import ScanJob, ScanRun, User
 from app.routers.v1.diaries import _get_diary_or_404
 
 router = APIRouter(tags=["scan"])
@@ -67,6 +68,7 @@ async def trigger_scan(
         )
 
     from app.workers.tasks import scan_diary
+
     # Reset backoff so the on-demand scan isn't suppressed
     result = await db.execute(select(ScanJob).where(ScanJob.diary_id == diary_id))
     job = result.scalar_one_or_none()

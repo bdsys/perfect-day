@@ -1,4 +1,5 @@
 """LLM draft generation: prompt builder, citation validator, Anthropic call."""
+
 from __future__ import annotations
 
 import hashlib
@@ -6,7 +7,7 @@ import json
 import re
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import anthropic
 import structlog
@@ -68,6 +69,7 @@ def _derive_voice(diary) -> tuple[str, str]:
 # Prompt builder
 # ---------------------------------------------------------------------------
 
+
 def build_prompt(diary, entry, events, enrichments) -> tuple[str, str]:
     """Return (diary_context_message, per_entry_message)."""
     voice, pronoun = _derive_voice(diary)
@@ -112,6 +114,7 @@ def build_prompt(diary, entry, events, enrichments) -> tuple[str, str]:
 # Citation validator
 # ---------------------------------------------------------------------------
 
+
 def validate_citation(output: dict, events: list) -> tuple[bool, str]:
     facts_used = output.get("facts_used", [])
     title_facts = output.get("title_facts_used", [])
@@ -130,7 +133,27 @@ def validate_citation(output: dict, events: list) -> tuple[bool, str]:
     )
     tokens = re.findall(r"\b[A-Z][a-z]{2,}\b", body + " " + title)
     for token in tokens:
-        if token not in cited_event_texts and token not in ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday", "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"):
+        if token not in cited_event_texts and token not in (
+            "Monday",
+            "Tuesday",
+            "Wednesday",
+            "Thursday",
+            "Friday",
+            "Saturday",
+            "Sunday",
+            "January",
+            "February",
+            "March",
+            "April",
+            "May",
+            "June",
+            "July",
+            "August",
+            "September",
+            "October",
+            "November",
+            "December",
+        ):
             # Soft warning — don't hard reject, just flag
             pass
 
@@ -141,13 +164,17 @@ def validate_citation(output: dict, events: list) -> tuple[bool, str]:
 # Main generation function
 # ---------------------------------------------------------------------------
 
+
 async def generate_draft_for_entry(entry_id: uuid.UUID) -> None:
     from sqlalchemy import select, selectinload
-    from app.models import Diary, Entry, Enrichment, Event, LLMGeneration
+
+    from app.models import Diary, Entry, LLMGeneration
 
     async with db_session() as db:
         entry_result = await db.execute(
-            select(Entry).where(Entry.id == entry_id).options(
+            select(Entry)
+            .where(Entry.id == entry_id)
+            .options(
                 selectinload(Entry.events),
                 selectinload(Entry.enrichments),
             )
@@ -165,7 +192,9 @@ async def generate_draft_for_entry(entry_id: uuid.UUID) -> None:
         if diary is None:
             return
 
-        events = sorted(entry.events, key=lambda e: (e.occurred_at or datetime.min.replace(tzinfo=timezone.utc)))
+        events = sorted(
+            entry.events, key=lambda e: e.occurred_at or datetime.min.replace(tzinfo=UTC)
+        )
         enrichments = entry.enrichments
 
         if not events:
@@ -195,7 +224,11 @@ async def generate_draft_for_entry(entry_id: uuid.UUID) -> None:
                     {
                         "role": "user",
                         "content": [
-                            {"type": "text", "text": diary_context, "cache_control": {"type": "ephemeral"}},
+                            {
+                                "type": "text",
+                                "text": diary_context,
+                                "cache_control": {"type": "ephemeral"},
+                            },
                             {"type": "text", "text": entry_data},
                         ],
                     }
@@ -221,9 +254,10 @@ async def generate_draft_for_entry(entry_id: uuid.UUID) -> None:
             break
         except anthropic.APIError as e:
             import asyncio
+
             log.error("anthropic_error", entry_id=str(entry_id), attempt=attempt, error=str(e))
             if attempt < 2:
-                await asyncio.sleep(4 ** attempt)
+                await asyncio.sleep(4**attempt)
             else:
                 error_msg = str(e)
                 llm_result = None
@@ -243,8 +277,8 @@ async def generate_draft_for_entry(entry_id: uuid.UUID) -> None:
         if llm_result:
             entry_update.title = llm_result.get("title")
             entry_update.body_markdown = llm_result.get("body_markdown")
-            # Note if citation validation had warnings
-            citation_warning = not validate_citation(llm_result, events)[0]
+            # Note if citation validation had warnings (unused but intentional guard)
+            validate_citation(llm_result, events)
 
             gen = LLMGeneration(
                 entry_id=entry_id,

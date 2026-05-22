@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import asyncio
-
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
@@ -15,9 +13,9 @@ async def liveness() -> JSONResponse:
 
 @router.get("/readyz")
 async def readiness() -> JSONResponse:
+    from app.core.config import get_settings
     from app.core.database import get_engine
     from app.core.dependencies import get_redis
-    from app.core.config import get_settings
 
     checks: dict[str, str] = {}
     healthy = True
@@ -45,7 +43,9 @@ async def readiness() -> JSONResponse:
     try:
         import asyncio
         import concurrent.futures
+
         from app.core.dependencies import get_s3
+
         settings = get_settings()
 
         loop = asyncio.get_event_loop()
@@ -61,4 +61,6 @@ async def readiness() -> JSONResponse:
         # on startup (bucket may not exist yet before first upload)
 
     status_code = 200 if healthy else 503
-    return JSONResponse({"status": "ok" if healthy else "degraded", "checks": checks}, status_code=status_code)
+    return JSONResponse(
+        {"status": "ok" if healthy else "degraded", "checks": checks}, status_code=status_code
+    )

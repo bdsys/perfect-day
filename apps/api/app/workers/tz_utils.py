@@ -1,15 +1,14 @@
 """Timezone conversion utilities for scan worker."""
+
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date
 
 import pytz
 from dateutil import parser as dateutil_parser
 
 
-def google_event_to_entry_date(
-    event: dict, diary_timezone: str
-) -> tuple[date | None, date | None]:
+def google_event_to_entry_date(event: dict, diary_timezone: str) -> tuple[date | None, date | None]:
     """Convert a Google Calendar event dict to (entry_date, entry_end_date) in diary timezone."""
     tz = pytz.timezone(diary_timezone)
     start = event.get("start", {})
@@ -22,6 +21,7 @@ def google_event_to_entry_date(
             end_date = date.fromisoformat(end["date"])
             # Google Calendar end is exclusive for all-day; subtract one day
             from datetime import timedelta
+
             end_date = end_date - timedelta(days=1)
             if end_date == start_date:
                 return start_date, None

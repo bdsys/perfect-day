@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -59,8 +58,9 @@ async def get_current_admin(user: User = Depends(get_current_user)) -> User:
 
 def require_reauth(request: Request) -> None:
     """Check that admin has re-authed within 15 min for destructive ops."""
-    from app.core.dependencies import get_redis
     import asyncio
+
+    from app.core.dependencies import get_redis
 
     user = getattr(request.state, "user", None)
     if user is None:

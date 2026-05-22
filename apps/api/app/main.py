@@ -8,7 +8,11 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
 from app.core.config import get_settings
-from app.core.errors import http_exception_handler, request_validation_handler, unhandled_exception_handler
+from app.core.errors import (
+    http_exception_handler,
+    request_validation_handler,
+    unhandled_exception_handler,
+)
 from app.core.logging import configure_logging
 from app.middleware.rate_limit import limiter
 from app.middleware.request_id import RequestIDMiddleware

@@ -1,4 +1,5 @@
 """Hard delete cascade logic for diaries and users."""
+
 from __future__ import annotations
 
 import uuid
@@ -12,6 +13,9 @@ log = structlog.get_logger()
 
 async def hard_delete_diary(diary_id: uuid.UUID) -> None:
     from sqlalchemy import delete, select
+
+    from app.core.config import get_settings
+    from app.core.dependencies import get_s3
     from app.models import (
         AuditLog,
         BackfillRun,
@@ -19,10 +23,10 @@ async def hard_delete_diary(diary_id: uuid.UUID) -> None:
         DiaryCalendarFilter,
         DiaryPermission,
         DiaryPhoto,
+        Enrichment,
         Entry,
         EntryEditDiff,
         EntryPhoto,
-        Enrichment,
         Event,
         Invitation,
         LLMGeneration,
@@ -30,8 +34,6 @@ async def hard_delete_diary(diary_id: uuid.UUID) -> None:
         ScanJob,
         ScanRun,
     )
-    from app.core.config import get_settings
-    from app.core.dependencies import get_s3
 
     log.info("hard_delete_diary_start", diary_id=str(diary_id))
 
@@ -51,18 +53,18 @@ async def hard_delete_diary(diary_id: uuid.UUID) -> None:
             # Check which photos exist in other diaries (via diary_photos)
             for photo_id in list(photo_ids_in_diary):
                 other_result = await db.execute(
-                    select(DiaryPhoto).where(
+                    select(DiaryPhoto)
+                    .where(
                         DiaryPhoto.photo_id == photo_id,
                         DiaryPhoto.diary_id != diary_id,
-                    ).limit(1)
+                    )
+                    .limit(1)
                 )
                 if other_result.scalar_one_or_none() is None:
                     # Safe to delete
                     try:
                         settings = get_settings()
-                        photo_result = await db.execute(
-                            select(Photo).where(Photo.id == photo_id)
-                        )
+                        photo_result = await db.execute(select(Photo).where(Photo.id == photo_id))
                         photo = photo_result.scalar_one_or_none()
                         if photo:
                             s3 = get_s3()
@@ -73,7 +75,9 @@ async def hard_delete_diary(diary_id: uuid.UUID) -> None:
                                     except Exception:
                                         pass
                     except Exception as e:
-                        log.warning("hard_delete_photo_s3_error", photo_id=str(photo_id), error=str(e))
+                        log.warning(
+                            "hard_delete_photo_s3_error", photo_id=str(photo_id), error=str(e)
+                        )
 
                     await db.execute(delete(Photo).where(Photo.id == photo_id))
 
@@ -89,23 +93,30 @@ async def hard_delete_diary(diary_id: uuid.UUID) -> None:
         await db.execute(delete(DiaryPhoto).where(DiaryPhoto.diary_id == diary_id))
         await db.execute(delete(ScanRun).where(ScanRun.diary_id == diary_id))
         await db.execute(delete(BackfillRun).where(BackfillRun.diary_id == diary_id))
-        await db.execute(delete(DiaryCalendarFilter).where(DiaryCalendarFilter.diary_id == diary_id))
+        await db.execute(
+            delete(DiaryCalendarFilter).where(DiaryCalendarFilter.diary_id == diary_id)
+        )
         await db.execute(delete(DiaryPermission).where(DiaryPermission.diary_id == diary_id))
         await db.execute(delete(Invitation).where(Invitation.diary_id == diary_id))
         await db.execute(delete(ScanJob).where(ScanJob.diary_id == diary_id))
         await db.execute(delete(Diary).where(Diary.id == diary_id))
 
-        db.add(AuditLog(
-            action="diary.hard_delete",
-            target_type="diary",
-            target_id=diary_id,
-        ))
+        db.add(
+            AuditLog(
+                action="diary.hard_delete",
+                target_type="diary",
+                target_id=diary_id,
+            )
+        )
 
     log.info("hard_delete_diary_done", diary_id=str(diary_id))
 
 
 async def hard_delete_user(user_id: uuid.UUID) -> None:
     from sqlalchemy import delete, select, update
+
+    from app.core.config import get_settings
+    from app.core.dependencies import get_s3
     from app.models import (
         AuditLog,
         Diary,
@@ -117,8 +128,6 @@ async def hard_delete_user(user_id: uuid.UUID) -> None:
         SocialIdentity,
         User,
     )
-    from app.core.config import get_settings
-    from app.core.dependencies import get_s3
 
     log.info("hard_delete_user_start", user_id=str(user_id))
 
@@ -133,12 +142,16 @@ async def hard_delete_user(user_id: uuid.UUID) -> None:
     async with db_session() as db:
         # Delete user-level data
         await db.execute(delete(Notification).where(Notification.user_id == user_id))
-        await db.execute(delete(NotificationPreferences).where(NotificationPreferences.user_id == user_id))
+        await db.execute(
+            delete(NotificationPreferences).where(NotificationPreferences.user_id == user_id)
+        )
         await db.execute(delete(OAuthToken).where(OAuthToken.user_id == user_id))
         await db.execute(delete(RefreshToken).where(RefreshToken.user_id == user_id))
-        await db.execute(delete(MagicLinkToken).where(
-            # Can't FK to user_id on magic_link_tokens but clean up by matching email
-        ))
+        await db.execute(
+            delete(MagicLinkToken).where(
+                # Can't FK to user_id on magic_link_tokens but clean up by matching email
+            )
+        )
         await db.execute(delete(SocialIdentity).where(SocialIdentity.user_id == user_id))
 
         # Scrub MinIO: delete everything under {user_id}/ prefix
@@ -154,9 +167,7 @@ async def hard_delete_user(user_id: uuid.UUID) -> None:
             log.warning("hard_delete_user_s3_error", user_id=str(user_id), error=str(e))
 
         # Anonymize audit_log (null user_id, keep action/timestamp)
-        await db.execute(
-            update(AuditLog).where(AuditLog.user_id == user_id).values(user_id=None)
-        )
+        await db.execute(update(AuditLog).where(AuditLog.user_id == user_id).values(user_id=None))
 
         await db.execute(delete(User).where(User.id == user_id))
 

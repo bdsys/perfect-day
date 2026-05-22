@@ -1,4 +1,5 @@
 """Beat tasks: periodic dispatch jobs."""
+
 from __future__ import annotations
 
 import structlog
@@ -15,7 +16,6 @@ def dispatch_due_scans() -> None:
 
 
 async def _dispatch_due_scans() -> None:
-    from datetime import timezone
 
     from sqlalchemy import func, select
 
@@ -47,7 +47,6 @@ def process_hard_deletes() -> None:
 
 
 async def _process_hard_deletes() -> None:
-    from datetime import timezone
 
     from sqlalchemy import func, select
 
@@ -91,7 +90,6 @@ def sweep_orphaned_photos() -> None:
 
 
 async def _sweep_orphaned_photos() -> None:
-    from datetime import timedelta, timezone
 
     from sqlalchemy import func, select
 
@@ -99,7 +97,9 @@ async def _sweep_orphaned_photos() -> None:
     from app.workers.utils import db_session
 
     async with db_session() as db:
-        cutoff = func.now() - func.cast("24 hours", __import__("sqlalchemy", fromlist=["text"]).text("interval"))
+        cutoff = func.now() - func.cast(
+            "24 hours", __import__("sqlalchemy", fromlist=["text"]).text("interval")
+        )
         result = await db.execute(
             select(Photo).where(
                 Photo.finalized_at.is_(None),
@@ -112,8 +112,9 @@ async def _sweep_orphaned_photos() -> None:
     log.info("sweep_orphaned_photos", count=len(photos))
     for photo in photos:
         try:
-            from app.core.dependencies import get_s3
             from app.core.config import get_settings
+            from app.core.dependencies import get_s3
+
             settings = get_settings()
             get_s3().delete_object(Bucket=settings.s3_bucket_photos, Key=photo.s3_key)
         except Exception as e:
@@ -121,9 +122,12 @@ async def _sweep_orphaned_photos() -> None:
 
         async with db_session() as db2:
             import datetime
+
             from sqlalchemy import select as sel
+
             from app.models import Photo as P
+
             r = await db2.execute(sel(P).where(P.id == photo.id))
             p = r.scalar_one_or_none()
             if p:
-                p.deleted_at = datetime.datetime.now(tz=datetime.timezone.utc)
+                p.deleted_at = datetime.datetime.now(tz=datetime.UTC)

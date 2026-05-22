@@ -1,9 +1,9 @@
 """Unit tests: google_event_to_entry_date for all-day, timed, and floating events."""
+
 from __future__ import annotations
 
 from datetime import date
 
-import pytest
 from app.workers.tz_utils import google_event_to_entry_date
 
 

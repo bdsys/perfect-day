@@ -1,8 +1,9 @@
 """Google Calendar incremental sync."""
+
 from __future__ import annotations
 
 import uuid
-from datetime import timezone
+from datetime import UTC
 
 import httpx
 import structlog
@@ -20,7 +21,8 @@ async def sync_calendar(
     diary_timezone: str,
 ) -> int:
     from sqlalchemy import select
-    from app.models import ScanJob, DiaryCalendarFilter
+
+    from app.models import DiaryCalendarFilter, ScanJob
     from app.workers.tasks import ingest_calendar_event
 
     async with db_session() as db:
@@ -75,7 +77,8 @@ async def _fetch_events(
     else:
         # Full sync — last 90 days
         from datetime import datetime, timedelta
-        since = (datetime.now(tz=timezone.utc) - timedelta(days=90)).isoformat()
+
+        since = (datetime.now(tz=UTC) - timedelta(days=90)).isoformat()
         params["timeMin"] = since
         params["orderBy"] = "startTime"
 
@@ -95,7 +98,8 @@ async def _fetch_events(
 
                     if resp.status_code == 429:
                         import asyncio
-                        retry_after = int(resp.headers.get("Retry-After", str(2 ** attempt)))
+
+                        retry_after = int(resp.headers.get("Retry-After", str(2**attempt)))
                         log.warning("calendar_rate_limited", retry_after=retry_after)
                         await asyncio.sleep(min(retry_after, 16))
                         continue
@@ -112,10 +116,11 @@ async def _fetch_events(
                         next_sync_token = data.get("nextSyncToken")
                         break
             break
-        except httpx.HTTPStatusError as e:
+        except httpx.HTTPStatusError:
             if attempt == max_retries - 1:
                 raise
             import asyncio
-            await asyncio.sleep(4 ** attempt)
+
+            await asyncio.sleep(4**attempt)
 
     return all_events, next_sync_token

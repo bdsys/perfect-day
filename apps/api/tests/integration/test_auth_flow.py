@@ -1,9 +1,8 @@
 """Integration tests: full auth flow — register, login, refresh, logout, account lifecycle."""
+
 from __future__ import annotations
 
-import pytest
 from httpx import AsyncClient
-
 
 REG_URL = "/v1/auth/register"
 LOGIN_URL = "/v1/auth/login"
@@ -13,7 +12,7 @@ ME_URL = "/v1/auth/me"
 ACCOUNT_URL = "/v1/auth/account"
 
 
-async def _register(client: AsyncClient, email: str, password: str = "Password1!") -> dict:
+async def _register(client: AsyncClient, email: str, password: str = "Password1!") -> dict:  # noqa: S107
     r = await client.post(REG_URL, json={"email": email, "password": password})
     assert r.status_code == 200, r.text
     return r.json()
@@ -37,7 +36,9 @@ class TestRegister:
 class TestLogin:
     async def test_correct_credentials_return_token(self, client):
         await _register(client, "login@example.com")
-        r = await client.post(LOGIN_URL, json={"email": "login@example.com", "password": "Password1!"})
+        r = await client.post(
+            LOGIN_URL, json={"email": "login@example.com", "password": "Password1!"}
+        )
         assert r.status_code == 200
         assert "access_token" in r.json()
 
@@ -52,7 +53,9 @@ class TestLogin:
 
     async def test_case_insensitive_email(self, client):
         await _register(client, "Case@example.com")
-        r = await client.post(LOGIN_URL, json={"email": "CASE@EXAMPLE.COM", "password": "Password1!"})
+        r = await client.post(
+            LOGIN_URL, json={"email": "CASE@EXAMPLE.COM", "password": "Password1!"}
+        )
         assert r.status_code == 200
 
 
@@ -76,10 +79,15 @@ class TestRefreshAndLogout:
     async def test_logout_invalidates_refresh_cookie(self, client):
         await _register(client, "logout@example.com")
         # Login sets the httponly refresh cookie
-        login = await client.post(LOGIN_URL, json={"email": "logout@example.com", "password": "Password1!"})
+        login = await client.post(
+            LOGIN_URL, json={"email": "logout@example.com", "password": "Password1!"}
+        )
         assert login.status_code == 200
 
-        logout = await client.post(LOGOUT_URL, headers={"Authorization": f"Bearer {login.json()['access_token']}"})
+        logout = await client.post(
+            LOGOUT_URL,
+            headers={"Authorization": f"Bearer {login.json()['access_token']}"},
+        )
         assert logout.status_code == 200
 
         # After logout, refresh should fail

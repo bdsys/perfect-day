@@ -23,12 +23,13 @@ def error_response(
 ) -> JSONResponse:
     return JSONResponse(
         status_code=status_code,
-        content={"error": {"code": code, "message": message, **({"details": details} if details else {})}},
+        content={
+            "error": {"code": code, "message": message, **({"details": details} if details else {})}
+        },
     )
 
 
 async def http_exception_handler(request: Request, exc) -> JSONResponse:
-    from fastapi.exceptions import HTTPException
 
     return error_response(
         code="http_error",
@@ -38,7 +39,6 @@ async def http_exception_handler(request: Request, exc) -> JSONResponse:
 
 
 async def request_validation_handler(request: Request, exc) -> JSONResponse:
-    from fastapi.exceptions import RequestValidationError
 
     return error_response(
         code="validation_error",

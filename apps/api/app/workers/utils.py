@@ -4,9 +4,6 @@ import asyncio
 from contextlib import asynccontextmanager
 from typing import TypeVar
 
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
 T = TypeVar("T")
 
 
@@ -25,6 +22,7 @@ def run_sync(coro):
 @asynccontextmanager
 async def db_session():
     from app.core.database import get_session_factory
+
     factory = get_session_factory()
     async with factory() as session:
         try:

@@ -1,8 +1,9 @@
 """Factory functions for creating test fixtures in the database."""
+
 from __future__ import annotations
 
 import uuid
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,7 +14,7 @@ from app.models import Diary, Entry, Event, ScanJob, User
 async def make_user(
     db: AsyncSession,
     email: str | None = None,
-    password: str = "Password1!",
+    password: str = "Password1!",  # noqa: S107
     display_name: str | None = None,
     subscription_tier: str = "free",
 ) -> User:
@@ -89,7 +90,7 @@ async def make_event(
         source=source,
         external_id=external_id or uuid.uuid4().hex,
         payload=payload or {"summary": "Test event", "location": ""},
-        occurred_at=occurred_at or datetime.now(tz=timezone.utc),
+        occurred_at=occurred_at or datetime.now(tz=UTC),
     )
     db.add(ev)
     await db.commit()

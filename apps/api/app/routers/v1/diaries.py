@@ -2,17 +2,16 @@ from __future__ import annotations
 
 import re
 import uuid
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from app.core.auth import get_current_user
 from app.core.database import get_db
-from app.models import AuditLog, Diary, DiaryPermission, Entry, ScanJob, User
+from app.models import AuditLog, Diary, DiaryPermission, ScanJob, User
 
 router = APIRouter(prefix="/diaries", tags=["diaries"])
 
@@ -28,6 +27,7 @@ def _slugify(name: str) -> str:
 # ---------------------------------------------------------------------------
 # Schemas
 # ---------------------------------------------------------------------------
+
 
 class DiaryCreate(BaseModel):
     name: str
@@ -70,6 +70,7 @@ class DiaryOut(BaseModel):
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 async def _get_diary_or_404(
     diary_id: uuid.UUID,
     user: User,
@@ -106,6 +107,7 @@ async def _get_diary_or_404(
 # Endpoints
 # ---------------------------------------------------------------------------
 
+
 @router.get("", response_model=list[DiaryOut])
 async def list_diaries(
     user: User = Depends(get_current_user),
@@ -134,18 +136,23 @@ async def create_diary(
 
     # Advisory lock to prevent check-then-create race
     await db.execute(
-        __import__("sqlalchemy", fromlist=["text"]).text(f"SELECT pg_advisory_xact_lock({hash(str(user.id)) & 0x7FFFFFFF})")
+        __import__("sqlalchemy", fromlist=["text"]).text(
+            f"SELECT pg_advisory_xact_lock({hash(str(user.id)) & 0x7FFFFFFF})"
+        )
     )
     count_result = await db.execute(
-        select(func.count()).select_from(Diary).where(
-            Diary.owner_user_id == user.id, Diary.deleted_at.is_(None)
-        )
+        select(func.count())
+        .select_from(Diary)
+        .where(Diary.owner_user_id == user.id, Diary.deleted_at.is_(None))
     )
     current = count_result.scalar_one()
     if current >= limit:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail={"code": "tier_limit", "details": {"limit": limit, "current": current, "required_tier": "tier1"}},
+            detail={
+                "code": "tier_limit",
+                "details": {"limit": limit, "current": current, "required_tier": "tier1"},
+            },
         )
 
     slug = _slugify(body.name)
@@ -211,11 +218,13 @@ async def delete_diary(
     db: AsyncSession = Depends(get_db),
 ) -> None:
     diary, _ = await _get_diary_or_404(diary_id, user, db, require_owner=True)
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now(tz=UTC)
     diary.deleted_at = now
     diary.hard_delete_after = now + timedelta(days=30)
     diary.scan_enabled = False
-    db.add(AuditLog(user_id=user.id, action="diary.delete", target_type="diary", target_id=diary.id))
+    db.add(
+        AuditLog(user_id=user.id, action="diary.delete", target_type="diary", target_id=diary.id)
+    )
 
 
 @router.post("/{diary_id}/restore", status_code=status.HTTP_204_NO_CONTENT)
@@ -225,11 +234,13 @@ async def restore_diary(
     db: AsyncSession = Depends(get_db),
 ) -> None:
     # Fetch even soft-deleted diaries for restore
-    result = await db.execute(select(Diary).where(Diary.id == diary_id, Diary.owner_user_id == user.id))
+    result = await db.execute(
+        select(Diary).where(Diary.id == diary_id, Diary.owner_user_id == user.id)
+    )
     diary = result.scalar_one_or_none()
     if diary is None:
         raise HTTPException(status_code=404, detail="not_found")
-    if diary.hard_delete_after and diary.hard_delete_after < datetime.now(tz=timezone.utc):
+    if diary.hard_delete_after and diary.hard_delete_after < datetime.now(tz=UTC):
         raise HTTPException(status_code=410, detail="grace_period_expired")
     diary.deleted_at = None
     diary.hard_delete_after = None

@@ -1,8 +1,9 @@
 """Google OAuth token refresh with per-(user, provider) advisory lock."""
+
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import structlog
@@ -12,7 +13,7 @@ from app.core.security import decrypt_oauth_token, encrypt_oauth_token
 
 log = structlog.get_logger()
 
-GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"  # noqa: S105
 
 
 async def ensure_fresh_access_token(oauth_token, db) -> str | None:
@@ -20,12 +21,15 @@ async def ensure_fresh_access_token(oauth_token, db) -> str | None:
     if oauth_token.revoked_at is not None:
         return None
 
-    now = datetime.now(tz=timezone.utc)
-    if oauth_token.expires_at and oauth_token.expires_at.replace(tzinfo=timezone.utc) > now + timedelta(seconds=60):
+    now = datetime.now(tz=UTC)
+    if oauth_token.expires_at and oauth_token.expires_at.replace(tzinfo=UTC) > now + timedelta(
+        seconds=60
+    ):
         return decrypt_oauth_token(oauth_token.access_token_ciphertext)
 
     # Needs refresh — take advisory lock to prevent double-refresh (token rotation)
     from app.core.dependencies import get_redis
+
     r = get_redis()
     lock_key = f"oauth_refresh:{oauth_token.user_id}:{oauth_token.provider}"
 
@@ -38,7 +42,9 @@ async def ensure_fresh_access_token(oauth_token, db) -> str | None:
     else:
         # Could not acquire; re-read the token in case another worker refreshed it
         from sqlalchemy import select
+
         from app.models import OAuthToken
+
         result = await db.execute(
             select(OAuthToken).where(
                 OAuthToken.user_id == oauth_token.user_id,
@@ -69,8 +75,10 @@ async def ensure_fresh_access_token(oauth_token, db) -> str | None:
             )
 
         if resp.status_code != 200:
-            log.error("token_refresh_failed", status=resp.status_code, user_id=str(oauth_token.user_id))
-            oauth_token.revoked_at = datetime.now(tz=timezone.utc)
+            log.error(
+                "token_refresh_failed", status=resp.status_code, user_id=str(oauth_token.user_id)
+            )
+            oauth_token.revoked_at = datetime.now(tz=UTC)
             return None
 
         token_data = resp.json()
@@ -78,7 +86,7 @@ async def ensure_fresh_access_token(oauth_token, db) -> str | None:
         expires_in = token_data.get("expires_in", 3600)
 
         oauth_token.access_token_ciphertext = encrypt_oauth_token(new_access)
-        oauth_token.expires_at = datetime.now(tz=timezone.utc) + timedelta(seconds=expires_in)
+        oauth_token.expires_at = datetime.now(tz=UTC) + timedelta(seconds=expires_in)
         # Google may issue a new refresh token
         if "refresh_token" in token_data:
             oauth_token.refresh_token_ciphertext = encrypt_oauth_token(token_data["refresh_token"])

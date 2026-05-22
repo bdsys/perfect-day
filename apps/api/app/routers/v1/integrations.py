@@ -5,7 +5,7 @@ import hmac
 import json
 import secrets
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from urllib.parse import urlencode
 
 import httpx
@@ -19,13 +19,13 @@ from app.core.auth import get_current_user
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.dependencies import get_redis
-from app.core.security import decrypt_oauth_token, encrypt_oauth_token
+from app.core.security import encrypt_oauth_token
 from app.models import OAuthToken, User
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
 
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
-GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"  # noqa: S105
 
 SCOPE_CALENDAR = "https://www.googleapis.com/auth/calendar.readonly"
 SCOPE_PHOTOS = "https://www.googleapis.com/auth/photoslibrary.readonly"
@@ -37,6 +37,7 @@ NONCE_TTL = 600  # 10 minutes
 # ---------------------------------------------------------------------------
 # Schemas
 # ---------------------------------------------------------------------------
+
 
 class IntegrationOut(BaseModel):
     provider: str
@@ -50,6 +51,7 @@ class IntegrationOut(BaseModel):
 # ---------------------------------------------------------------------------
 # State HMAC helpers
 # ---------------------------------------------------------------------------
+
 
 def _sign_state(payload: dict, secret: str) -> str:
     data = json.dumps(payload, sort_keys=True)
@@ -71,6 +73,7 @@ def _verify_state(state: str, secret: str) -> dict:
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
+
 
 @router.get("", response_model=list[IntegrationOut])
 async def list_integrations(
@@ -165,7 +168,9 @@ async def google_callback(
             },
         )
         if resp.status_code != 200:
-            return RedirectResponse(f"{web_base}/settings?google=denied&reason=token_exchange_failed")
+            return RedirectResponse(
+                f"{web_base}/settings?google=denied&reason=token_exchange_failed"
+            )
         token_data = resp.json()
 
     access_token = token_data.get("access_token", "")
@@ -179,8 +184,9 @@ async def google_callback(
     if SCOPE_PHOTOS in granted_scope_str:
         granted_scopes.append("photoslibrary.readonly")
 
-    expires_at = datetime.now(tz=timezone.utc).replace(microsecond=0)
+    expires_at = datetime.now(tz=UTC).replace(microsecond=0)
     from datetime import timedelta
+
     expires_at = expires_at + timedelta(seconds=expires_in)
 
     # Upsert oauth_tokens
@@ -197,14 +203,18 @@ async def google_callback(
         existing.expires_at = expires_at
         existing.revoked_at = None
     else:
-        db.add(OAuthToken(
-            user_id=user_id,
-            provider="google",
-            access_token_ciphertext=encrypt_oauth_token(access_token),
-            refresh_token_ciphertext=encrypt_oauth_token(refresh_token) if refresh_token else None,
-            scopes_granted=granted_scopes,
-            expires_at=expires_at,
-        ))
+        db.add(
+            OAuthToken(
+                user_id=user_id,
+                provider="google",
+                access_token_ciphertext=encrypt_oauth_token(access_token),
+                refresh_token_ciphertext=encrypt_oauth_token(refresh_token)
+                if refresh_token
+                else None,
+                scopes_granted=granted_scopes,
+                expires_at=expires_at,
+            )
+        )
     await db.commit()
 
     # Determine result query param
@@ -232,4 +242,4 @@ async def revoke_google(
     )
     token = result.scalar_one_or_none()
     if token is not None:
-        token.revoked_at = datetime.now(tz=timezone.utc)
+        token.revoked_at = datetime.now(tz=UTC)

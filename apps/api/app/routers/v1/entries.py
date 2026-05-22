@@ -1,26 +1,31 @@
 from __future__ import annotations
 
 import uuid
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user
 from app.core.database import get_db
-from app.models import AuditLog, Diary, DiaryPermission, Entry, EntryEditDiff, LLMGeneration, User
+from app.models import Diary, Entry, LLMGeneration, User
 from app.routers.v1.diaries import _get_diary_or_404
 
 router = APIRouter(tags=["entries"])
 
-TIER_ENTRY_LIMITS = {"free": {"manual": 5, "auto": 3}, "tier1": {"manual": None, "auto": None}, "tier2": {"manual": None, "auto": None}}
+TIER_ENTRY_LIMITS = {
+    "free": {"manual": 5, "auto": 3},
+    "tier1": {"manual": None, "auto": None},
+    "tier2": {"manual": None, "auto": None},
+}
 
 
 # ---------------------------------------------------------------------------
 # Schemas
 # ---------------------------------------------------------------------------
+
 
 class EntryCreate(BaseModel):
     entry_date: date
@@ -56,15 +61,14 @@ class EntryOut(BaseModel):
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 async def _get_entry_or_404(
     entry_id: uuid.UUID,
     user: User,
     db: AsyncSession,
     require_editor: bool = False,
 ) -> tuple[Entry, Diary, str | None]:
-    result = await db.execute(
-        select(Entry).where(Entry.id == entry_id, Entry.deleted_at.is_(None))
-    )
+    result = await db.execute(select(Entry).where(Entry.id == entry_id, Entry.deleted_at.is_(None)))
     entry = result.scalar_one_or_none()
     if entry is None:
         raise HTTPException(status_code=404, detail="not_found")
@@ -84,6 +88,7 @@ async def _get_entry_or_404(
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
+
 
 @router.get("/diaries/{diary_id}/entries", response_model=list[EntryOut])
 async def list_entries(
@@ -117,7 +122,9 @@ async def list_entries(
     return list(result.scalars())
 
 
-@router.post("/diaries/{diary_id}/entries", response_model=EntryOut, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/diaries/{diary_id}/entries", response_model=EntryOut, status_code=status.HTTP_201_CREATED
+)
 async def create_entry(
     diary_id: uuid.UUID,
     body: EntryCreate,
@@ -189,7 +196,7 @@ async def publish_entry(
         pass
 
     entry.status = "published"
-    entry.published_at = datetime.now(tz=timezone.utc)
+    entry.published_at = datetime.now(tz=UTC)
     return entry
 
 
@@ -212,7 +219,7 @@ async def delete_entry(
     db: AsyncSession = Depends(get_db),
 ) -> None:
     entry, _, _ = await _get_entry_or_404(entry_id, user, db, require_editor=True)
-    entry.deleted_at = datetime.now(tz=timezone.utc)
+    entry.deleted_at = datetime.now(tz=UTC)
 
 
 @router.post("/entries/{entry_id}/restore", response_model=EntryOut)
@@ -238,5 +245,6 @@ async def regenerate_entry(
 ) -> Entry:
     entry, _, _ = await _get_entry_or_404(entry_id, user, db, require_editor=True)
     from app.workers.tasks import generate_entry_draft
+
     generate_entry_draft.delay(str(entry.id))
     return entry
