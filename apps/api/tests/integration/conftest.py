@@ -150,7 +150,11 @@ async def client(db_url, redis_container) -> AsyncGenerator[AsyncClient, None]:
 
         import app.middleware.rate_limit as _rl
 
-        with patch.object(_rl.auth_limiter, "_key_func", new=lambda *_: "test-ip-disabled"):
+        async def _noop_check(*args, **kwargs):
+            pass
+
+        with patch.object(_rl.auth_limiter, "_check_request_limit", new=_noop_check), \
+             patch.object(_rl.limiter, "_check_request_limit", new=_noop_check):
             from app.main import create_app
 
             app_instance = create_app()

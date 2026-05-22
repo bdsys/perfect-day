@@ -36,7 +36,8 @@ def create_app() -> FastAPI:
 
     # Middleware (outermost first)
     app.add_middleware(RequestIDMiddleware)
-    app.add_middleware(SlowAPIMiddleware)
+    if settings.env != "test":
+        app.add_middleware(SlowAPIMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
