@@ -44,9 +44,9 @@ class TestCreateDiary:
         r2 = await client.post("/v1/diaries", json={"name": "D2", "timezone": "UTC"}, headers=auth)
         assert r2.status_code == 403
 
-    async def test_unauthenticated_returns_403(self, client):
+    async def test_unauthenticated_returns_401(self, client):
         r = await client.post("/v1/diaries", json={"name": "D", "timezone": "UTC"})
-        assert r.status_code == 403
+        assert r.status_code == 401
 
 
 class TestListAndGet:

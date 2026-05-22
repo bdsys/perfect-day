@@ -14,7 +14,7 @@ ACCOUNT_URL = "/v1/auth/account"
 
 async def _register(client: AsyncClient, email: str, password: str = "Password1!") -> dict:  # noqa: S107
     r = await client.post(REG_URL, json={"email": email, "password": password})
-    assert r.status_code == 200, r.text
+    assert r.status_code == 201, r.text
     return r.json()
 
 
@@ -68,7 +68,7 @@ class TestMe:
 
     async def test_me_without_token_returns_401(self, client):
         r = await client.get(ME_URL)
-        assert r.status_code == 403  # HTTPBearer returns 403 when no creds
+        assert r.status_code == 401  # no credentials → 401
 
     async def test_me_with_garbage_token_returns_401(self, client):
         r = await client.get(ME_URL, headers={"Authorization": "Bearer garbage.token.here"})
@@ -88,7 +88,7 @@ class TestRefreshAndLogout:
             LOGOUT_URL,
             headers={"Authorization": f"Bearer {login.json()['access_token']}"},
         )
-        assert logout.status_code == 200
+        assert logout.status_code == 204
 
         # After logout, refresh should fail
         refresh = await client.post(REFRESH_URL)
@@ -101,7 +101,7 @@ class TestSoftDeleteAccount:
         auth = {"Authorization": f"Bearer {tokens['access_token']}"}
 
         r = await client.delete(ACCOUNT_URL, headers=auth)
-        assert r.status_code == 200
+        assert r.status_code == 204
 
         # Can no longer call /me (account_unavailable)
         me = await client.get(ME_URL, headers=auth)
@@ -113,4 +113,4 @@ class TestSoftDeleteAccount:
 
         await client.delete(ACCOUNT_URL, headers=auth)
         r = await client.post("/v1/auth/account/restore", headers=auth)
-        assert r.status_code == 200
+        assert r.status_code == 204

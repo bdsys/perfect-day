@@ -31,9 +31,9 @@ class TestGoogleAuthorize:
         assert r.status_code == 200
         assert "state=" in r.json()["url"]
 
-    async def test_authorize_unauthenticated_returns_403(self, client):
+    async def test_authorize_unauthenticated_returns_401(self, client):
         r = await client.get("/v1/integrations/google/authorize?scopes=calendar")
-        assert r.status_code == 403
+        assert r.status_code == 401
 
     async def test_list_integrations_empty_initially(self, client):
         token = await _register(client, "nointegration@example.com")
