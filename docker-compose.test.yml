@@ -1,0 +1,29 @@
+services:
+  # Override volumes to ephemeral for test isolation
+  postgres:
+    volumes:
+      - /tmp/pd-test-postgres:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: perfectday_test
+      POSTGRES_USER: perfectday
+      POSTGRES_PASSWORD: perfectday
+
+  redis:
+    volumes: []
+
+  minio:
+    volumes:
+      - /tmp/pd-test-minio:/data
+
+  api:
+    environment:
+      ENV: test
+      DATABASE_URL: postgresql+asyncpg://perfectday:perfectday@postgres:5432/perfectday_test
+      DATABASE_URL_SYNC: postgresql://perfectday:perfectday@postgres:5432/perfectday_test
+      PYTHONHASHSEED: "42"
+
+  worker:
+    environment:
+      ENV: test
+      DATABASE_URL: postgresql+asyncpg://perfectday:perfectday@postgres:5432/perfectday_test
+      PYTHONHASHSEED: "42"

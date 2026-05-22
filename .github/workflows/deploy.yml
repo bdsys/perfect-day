@@ -1,0 +1,148 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      target_sha:
+        description: "Git SHA to deploy (leave blank for HEAD)"
+        required: false
+        default: ""
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Gate: disabled by default until DEPLOY_ENABLED repo variable is set to 'true'
+  # To enable: gh variable set DEPLOY_ENABLED --body true
+  # Then provision secrets: GHCR_TOKEN, NUC_SSH_PRIVATE_KEY, NUC_HOST, NUC_USER
+  # See POC_PHASE1_DEPLOYMENT.md § "Activating CD" for full instructions.
+  # ---------------------------------------------------------------------------
+  gate:
+    name: Deployment gate
+    runs-on: ubuntu-24.04
+    outputs:
+      enabled: ${{ steps.check.outputs.enabled }}
+    steps:
+      - name: Check DEPLOY_ENABLED variable
+        id: check
+        run: |
+          if [ "${{ vars.DEPLOY_ENABLED }}" = "true" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "✓ DEPLOY_ENABLED=true — proceeding with deployment"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "ℹ deploy disabled — DEPLOY_ENABLED is not set to 'true'"
+            echo "  See POC_PHASE1_DEPLOYMENT.md § Activating CD to enable"
+          fi
+
+  # ---------------------------------------------------------------------------
+  # Build + push images to GHCR
+  # ---------------------------------------------------------------------------
+  build-and-push:
+    name: Build & push images
+    needs: gate
+    if: needs.gate.outputs.enabled == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image_tag: ${{ steps.meta.outputs.short_sha }}
+
+    steps:
+      - name: Resolve target SHA
+        id: sha
+        run: |
+          SHA="${{ inputs.target_sha || github.sha }}"
+          echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${SHA:0:7}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.sha.outputs.sha }}
+
+      - id: meta
+        run: echo "short_sha=${{ steps.sha.outputs.short_sha }}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_TOKEN }}
+
+      - name: Build + push API
+        uses: docker/build-push-action@v6
+        with:
+          context: apps/api
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/perfect-day-api:sha-${{ steps.meta.outputs.short_sha }}
+            ghcr.io/${{ github.repository_owner }}/perfect-day-api:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build + push web
+        uses: docker/build-push-action@v6
+        with:
+          context: apps/web
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/perfect-day-web:sha-${{ steps.meta.outputs.short_sha }}
+            ghcr.io/${{ github.repository_owner }}/perfect-day-web:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ---------------------------------------------------------------------------
+  # Deploy to NUC
+  # ---------------------------------------------------------------------------
+  deploy-nuc:
+    name: Deploy to NUC
+    needs: [gate, build-and-push]
+    if: needs.gate.outputs.enabled == 'true'
+    runs-on: ubuntu-24.04
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.NUC_HOST }}
+          username: ${{ secrets.NUC_USER }}
+          key: ${{ secrets.NUC_SSH_PRIVATE_KEY }}
+          script: |
+            set -euo pipefail
+            cd /opt/perfect-day
+
+            # Pull latest images
+            docker compose pull api worker beat web
+
+            # Run migrations (forward-only; abort on non-zero)
+            docker compose run --rm api alembic upgrade head
+
+            # Rolling restart of app services only
+            docker compose up -d --no-deps api worker beat web
+
+            # Wait for healthy
+            ./scripts/wait-for-healthy.sh https://api.diary.perfectday.bdsys.net/readyz 90
+
+            # Record deployed SHA for rollback
+            echo "${{ needs.build-and-push.outputs.image_tag }}" > /opt/perfect-day/last-deployed-sha
+
+      - name: Smoke test (external)
+        run: |
+          ./scripts/smoke-test.sh https://api.diary.perfectday.bdsys.net
+
+      - name: Sentry release marker (optional)
+        if: secrets.SENTRY_AUTH_TOKEN != ''
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+        run: |
+          pip install sentry-cli
+          sentry-cli releases new "${{ needs.build-and-push.outputs.image_tag }}"
+          sentry-cli releases finalize "${{ needs.build-and-push.outputs.image_tag }}"
