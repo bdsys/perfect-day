@@ -52,6 +52,8 @@ ANTHROPIC_API_KEY=...       # Required for LLM draft generation
 ```
 These can be left blank to test auth, diary CRUD, and entry management without the integrations.
 
+See **[Obtaining API Keys](#obtaining-api-keys)** below for step-by-step instructions on creating these credentials.
+
 ---
 
 ## Running the Stack
@@ -217,6 +219,123 @@ export MASTER_SECRET=$(python3 -c "import secrets; print(secrets.token_hex(32))"
 
 **`docker compose up web` fails with `dockerfile not found`**
 `apps/web/Dockerfile` is required. It was created as part of this repo's Phase 1 setup and should exist at `apps/web/Dockerfile`. If it's missing, check git status.
+
+---
+
+## Obtaining API Keys
+
+### Google Cloud — Project Strategy
+
+The plan uses **three separate GCP projects** to keep credentials isolated and avoid accidentally hitting production quotas during development:
+
+| GCP Project | Purpose | OAuth redirect URIs |
+|---|---|---|
+| `perfect-day-dev` | Local development | `http://localhost:8000/v1/integrations/google/callback` |
+| `perfect-day-test` | CI / automated testing | (same as dev) |
+| `perfect-day-prod` | NUC production | `https://api.diary.perfectday.bdsys.net/v1/integrations/google/callback` |
+
+For local testing, create and use `perfect-day-dev`.
+
+---
+
+### Step 1 — Create a GCP project
+
+1. Go to [console.cloud.google.com](https://console.cloud.google.com).
+2. Click the project dropdown at the top → **New Project**.
+3. Name: `perfect-day-dev` → **Create**.
+4. Make sure the new project is selected in the dropdown before continuing.
+
+---
+
+### Step 2 — Enable APIs
+
+1. In the left sidebar: **APIs & Services → Library**.
+2. Search for and enable each of the following:
+   - **Google Calendar API**
+   - *(Phase 2, skip for now)* Google Photos Library API
+
+---
+
+### Step 3 — Configure OAuth consent screen
+
+1. **APIs & Services → OAuth consent screen**.
+2. User type: **External** → **Create**.
+3. Fill in required fields:
+   - App name: `Perfect Day (dev)`
+   - User support email: your Google account email
+   - Developer contact email: same
+4. Click **Save and Continue** through Scopes (add none here — they're requested at runtime).
+5. On the **Test users** step, add your own Google account email address.  
+   *(This keeps the app in "testing" mode — only listed test users can authorize. You won't need to go through Google's verification process for local dev.)*
+6. **Save and Continue** → **Back to Dashboard**.
+
+---
+
+### Step 4 — Create OAuth 2.0 credentials
+
+1. **APIs & Services → Credentials → + Create Credentials → OAuth client ID**.
+2. Application type: **Web application**.
+3. Name: `Perfect Day dev web`.
+4. Under **Authorized redirect URIs**, click **Add URI** and enter:
+   ```
+   http://localhost:8000/v1/integrations/google/callback
+   ```
+5. Click **Create**.
+6. A dialog shows your **Client ID** and **Client secret** — copy both now (you can retrieve them again later from the Credentials page).
+
+---
+
+### Step 5 — Add Google credentials to `.env`
+
+Open `apps/api/.env` and set:
+```
+GOOGLE_CLIENT_ID=<your Client ID from step 4>
+GOOGLE_CLIENT_SECRET=<your Client secret from step 4>
+```
+
+---
+
+### Anthropic API Key
+
+1. Go to [console.anthropic.com](https://console.anthropic.com).
+2. Sign in (or create an account).
+3. In the left sidebar: **API Keys → + Create Key**.
+4. Name: `perfect-day-dev` → **Create Key**.
+5. Copy the key immediately — it is only shown once.
+6. Open `apps/api/.env` and set:
+   ```
+   ANTHROPIC_API_KEY=sk-ant-...
+   ```
+
+> **Note:** LLM draft generation is only triggered when a scan completes and finds calendar events. If you just want to test auth and diary CRUD, you can leave `ANTHROPIC_API_KEY` blank.
+
+---
+
+### Verifying credentials work
+
+After setting the keys and restarting the API (`make api`):
+
+**Google OAuth:**
+```bash
+# Register and get a token
+TOKEN=$(curl -s -X POST http://localhost:8000/v1/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"email":"test@example.com","password":"Password1!"}' | jq -r .access_token)
+
+# Get the Google authorize URL
+curl -s http://localhost:8000/v1/integrations/google/authorize?scopes=calendar \
+  -H "Authorization: Bearer $TOKEN" | jq .url
+# Should return a URL starting with https://accounts.google.com/...
+# Open that URL in a browser and complete the flow with your test user account
+```
+
+**Anthropic:**
+```bash
+# LLM is invoked automatically during scan — check worker logs after triggering a scan:
+curl -s -X POST http://localhost:8000/v1/diaries/<diary_id>/scan/run \
+  -H "Authorization: Bearer $TOKEN"
+# Then: make logs | grep llm
+```
 
 ---
 
