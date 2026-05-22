@@ -9,8 +9,8 @@ from unittest.mock import patch
 
 import pytest
 import pytest_asyncio
+import sqlalchemy as sa
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from testcontainers.postgres import PostgresContainer
 from testcontainers.redis import RedisContainer
@@ -76,12 +76,19 @@ def run_migrations(db_url_sync):
 # ---------------------------------------------------------------------------
 
 
-@pytest_asyncio.fixture(loop_scope="session", autouse=True)
-async def truncate_tables(db_engine):
+@pytest.fixture(scope="session")
+def sync_engine(db_url_sync):
+    engine = sa.create_engine(db_url_sync)
+    yield engine
+    engine.dispose()
+
+
+@pytest.fixture(autouse=True)
+def truncate_tables(sync_engine, run_migrations):
     yield
-    async with db_engine.connect() as conn:
-        await conn.execute(
-            text(
+    with sync_engine.connect() as conn:
+        conn.execute(
+            sa.text(
                 "TRUNCATE TABLE users, diaries, entries, events, scan_jobs, "
                 "oauth_tokens, refresh_tokens, audit_log, llm_generations, "
                 "entry_edit_diffs, diary_permissions, invitations, scan_runs, "
@@ -90,7 +97,7 @@ async def truncate_tables(db_engine):
                 "RESTART IDENTITY CASCADE"
             )
         )
-        await conn.commit()
+        conn.commit()
 
 
 # ---------------------------------------------------------------------------
