@@ -1,6 +1,8 @@
 # Perfect Day — Design Documents
 
-All 10 planning deliverables for the PoC. These are authoritative — use them as the implementation specification.
+All planning deliverables for the PoC. These are authoritative — use them as the implementation specification.
+
+## Core design (10 docs)
 
 | File | Topic |
 |---|---|
@@ -14,6 +16,31 @@ All 10 planning deliverables for the PoC. These are authoritative — use them a
 | [08-security-privacy.md](08-security-privacy.md) | Photo encryption, JWT lifecycle, deletion flows, GDPR posture |
 | [09-poc-scope.md](09-poc-scope.md) | Phase 1 / 2 / 3 build order; resource estimates in `deploy/nuc.md` |
 | [10-open-questions.md](10-open-questions.md) | All OQ-1 through OQ-11 resolved decisions |
+
+## Topic docs (6 docs)
+
+| File | Topic |
+|---|---|
+| [time-and-tz.md](time-and-tz.md) | Authoritative timezone rules, DST handling, worker date conventions |
+| [secrets.md](secrets.md) | Secret inventory, storage backends, rotation procedures, compromise response |
+| [dns-and-email.md](dns-and-email.md) | DNS topology, SPF/DKIM/DMARC setup, SendGrid sender identity |
+| [observability.md](observability.md) | Logs/metrics/alerts stack (Sentry + Grafana Cloud + Better Stack) |
+| [testing.md](testing.md) | Test pyramid, mocking policy, fixtures, coverage targets, CI integration |
+| [ci-cd.md](ci-cd.md) | GitHub Actions pipelines, image registry, NUC deploy procedure |
+
+## Deployment docs (3 docs)
+
+| File | Topic |
+|---|---|
+| [../deploy/nuc.md](../deploy/nuc.md) | Single-host home-lab (Intel NUC): resource budget, edge config, backup, SPoF |
+| [../deploy/cloud.md](../deploy/cloud.md) | Cloud VPS / managed services: decision criteria, candidate shortlist (TBD) |
+| [../deploy/hybrid.md](../deploy/hybrid.md) | Hybrid (NUC + Hetzner CX21): topology, WireGuard, PG replication, R2, degraded-mode contract, escalation runbook |
+
+## Security
+
+| File | Topic |
+|---|---|
+| [THREATMODEL.md](THREATMODEL.md) | STRIDE-flavored threat surfaces, mitigations, residual risks |
 
 ---
 

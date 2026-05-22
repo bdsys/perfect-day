@@ -95,7 +95,32 @@ Without coalescing, a 50-entry backfill generates 50 push notifications. Mitigat
 - Max one push + one email per window. Both channels coalesce together (not independently).
 - `email_digest_only=true` batches to a single daily email at 09:00.
 
-## Entry-published notification
+**Coalescing is atomic.** The dispatcher acquires a Redis key `coalesce:{user_id}:{kind}` using `SETNX` (set-if-not-exists) with a 5-minute TTL. If `SETNX` returns 0 (key already held), the incoming notification is appended to the pending payload instead of triggering a new send. The first setter is the designated sender for that window — it reads the accumulated payload and dispatches at window close. This replaces the previous read-then-write approach, which had a race condition where two concurrent notifications could both see an empty window and send independently.
+
+## Quiet hours — release storm mitigation
+
+When a batch of notifications are deferred until `quiet_hours_end`, they all become eligible at the same moment. To prevent a burst of simultaneous sends:
+
+- At dispatch time, add a random jitter of 0–15 minutes to the `eta` of each notification in the quiet-hours queue: `eta = quiet_hours_end + random(0, 900 seconds)`.
+- At the `eta` fire time, re-check the coalescing key. If another notification in the same `(user, kind)` window already fired, add this notification's payload to the in-flight batch instead.
+
+This spreads the post-quiet-hours send over a 15-minute window and gives coalescing a second bite at batching.
+
+## Notification payload schemas
+
+Each `notifications.payload` jsonb field has a fixed shape per `kind`:
+
+| Kind | Payload fields |
+|---|---|
+| `draft_ready` | `{diary_id, diary_name, entry_ids: [uuid], entry_dates: [date], count: int}` |
+| `draft_failed` | `{diary_id, diary_name, entry_id, entry_date, error_summary: string}` |
+| `integration_revoked` | `{provider: "google", diary_ids: [uuid], scope: string}` |
+| `entry_published` | `{diary_id, diary_name, entry_id, entry_date, entry_title: string}` |
+| `invite_received` | `{diary_id, diary_name, inviter_display_name: string, role: "viewer|editor", invitation_token: string}` |
+| `tier_limit` | `{diary_id, limit_type: "diary_count|entry_count", current: int, limit: int, required_tier: string}` |
+| `deletion_grace` | `{target_type: "account|diary", target_id: uuid, hard_delete_after: datetime, days_remaining: int}` |
+
+Payload is stored in the `notifications` row and also passed to push/email channels. Email and push templates consume the same payload struct.
 
 When owner calls `POST /v1/entries/{id}/publish`:
 - Fires `entry_published` to all users with `diary_permissions` rows for that diary (editors + viewers — not the owner).

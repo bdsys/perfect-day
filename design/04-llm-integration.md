@@ -81,7 +81,7 @@ Calendar event titles, descriptions, and locations are user-controlled text — 
 2. **Stripping on ingest.** Before inserting into the `events.payload`, strip obvious injection markers: bare `SYSTEM:` / `ASSISTANT:` / `USER:` role prefixes and fenced code blocks that contain those role tokens.
 3. **Citation validator.** Because the model must cite every fact, steered output that invents content not traceable to an event will fail validation and trigger a regenerate.
 
-Residual risk is documented in `design/THREATMODEL.md` (TBD) and will be re-evaluated before any non-family-only diary sharing is enabled.
+Residual risk is documented in [`design/THREATMODEL.md`](THREATMODEL.md) § Prompt injection and will be re-evaluated before any non-family-only diary sharing is enabled.
 
 ## Storage and review
 
@@ -96,7 +96,7 @@ Residual risk is documented in `design/THREATMODEL.md` (TBD) and will be re-eval
 - **Primary:** Claude Sonnet 4.6.
 - **Fallback:** Gemini 2.x Pro. Triggered only on Anthropic 5xx or hard rate-limit after retries. Backend abstracts both behind a single `LLMClient` interface.
 - **Caching:** Anthropic prompt caching enabled on Parts 1 + 2. First call in a scan misses; subsequent entries in same scan hit on cached prefix.
-- **Rough cost per entry:** $0.005–$0.015 on Sonnet. Hourly scans, 1–3 entries each = ~$0.05–$0.30/diary/day.
+- **Rough cost per entry:** $0.005–$0.015 on Sonnet. Hourly scans, 1–3 entries each = ~$0.05–$0.30/diary/day. **These estimates assume ~500 input tokens/entry and ~70% prompt-cache hit rate after the first entry in a scan.** Verify with real prompt sizes and actual cache-hit rates before relying on these numbers for tier pricing. Run `make test-live` with a realistic calendar dataset and check `llm_generations.input_tokens` + `output_tokens` to calibrate.
 
 ## Failure handling
 

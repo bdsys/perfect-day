@@ -51,7 +51,7 @@ All endpoints prefixed `/v1/`. JSON. Auth via `Authorization: Bearer <jwt>` unle
 | GET | `/v1/diaries` | Diaries the user owns or has access to. |
 | POST | `/v1/diaries` | Create diary. Tier check (free=1 / tier1=2 / tier2=4). |
 | GET | `/v1/diaries/{id}` | Details + permissions + scan config. |
-| PATCH | `/v1/diaries/{id}` | Owner only. |
+| PATCH | `/v1/diaries/{id}` | Owner only. Patchable fields: `name`, `slug`, `subject_name`, `subject_relation`, `voice_override`, `tone_hint`, `timezone`, `scan_interval_minutes`, `scan_enabled`, `cover_photo_id` (must be a photo owned by the diary owner), `notifications_muted`. |
 | DELETE | `/v1/diaries/{id}` | Soft delete + 30-day hard-delete schedule. Owner only. |
 | POST | `/v1/diaries/{id}/restore` | Restore within grace window. |
 
@@ -140,7 +140,7 @@ Gated by `users.is_admin = true`. Destructive actions require recent re-auth (mu
 | GET | `/v1/admin/users` | List with tier, last-login, deletion-pending. |
 | GET | `/v1/admin/users/{id}` | Full user detail. |
 | PATCH | `/v1/admin/users/{id}` | Override tier, mark email verified, force logout. |
-| POST | `/v1/admin/users/{id}/impersonate` | Short-lived token to view as user. Re-auth required. |
+| POST | `/v1/admin/users/{id}/impersonate` | Short-lived 1-hour token to view as user. Re-auth required. Writes audit_log. Sends in-app + email notification to the impersonated user: "An admin viewed your account on [timestamp] — contact support if unexpected." |
 | DELETE | `/v1/admin/users/{id}` | Force account deletion (skips grace). Re-auth required. |
 | GET | `/v1/admin/diaries` | All diaries across users. |
 | GET | `/v1/admin/diaries/{id}` | Diary detail incl. owner + members. |
@@ -175,6 +175,8 @@ Gated by `users.is_admin = true`. Destructive actions require recent re-auth (mu
 |---|---|---|
 | GET | `/healthz` | Liveness. |
 | GET | `/readyz` | Readiness — Postgres, Redis, MinIO checks. |
+| GET | `/metrics` | Prometheus exposition format. Bound to localhost or requires admin token. |
+| GET | `/v1/admin/system/celery` | Admin-gated. Queue depth, worker count, oldest pending task. Re-auth not required. |
 
 ## Auth middleware checks
 
@@ -186,9 +188,13 @@ Every authenticated request runs middleware that:
 
 ## Cross-cutting concerns
 
-- **Tier enforcement:** every entry-create, diary-create, integration-toggle endpoint runs entitlement check. On block: HTTP 403 with `{error: {code: 'tier_limit', details: {limit, current, required_tier}}}`. Frontend disambiguates auth-failure / role-failure / tier-failure by `code`.
+- **Tier enforcement:** every entry-create, diary-create, integration-toggle endpoint runs entitlement check. On block: HTTP 403 with `{error: {code: 'tier_limit', details: {limit, current, required_tier}}}`. Frontend disambiguates auth-failure / role-failure / tier-failure by `code`. Race condition mitigation: diary-create and entry-create use a per-user advisory lock in Postgres to prevent check-then-create races. For diary create (rare): acquire `pg_advisory_xact_lock(user_id)` within the transaction; count diaries and fail if at limit. For entry create (hot path): post-insert count verify with rollback if over limit (avoids holding a lock for LLM call duration).
+- **Scan lock vs `/scan/run`:** `POST /v1/diaries/{id}/scan/run` returns `409 scan_in_progress` with a `Retry-After` header if the `scan_lock:{diary_id}` Redis lock is already held. Never silently skips — the caller always gets a clear signal.
 - **Visibility/role enforcement:** owner / editor / viewer enforced on every diary-scoped endpoint. Viewers cannot see drafts. Editors cannot delete diary or manage permissions.
-- **Idempotency:** manual entry creation and on-demand scan triggers accept `Idempotency-Key` header.
+- **Idempotency:** manual entry creation and on-demand scan triggers accept `Idempotency-Key` header. Implementation: Redis 24h TTL keyed on `{idempotency_key}:{sha256(request_body)}`. On match: return the original response. On key match + body-hash mismatch: return `409 idempotency_conflict`.
 - **API rate limiting:** per-user budget at FastAPI layer (100 req/min), independent of Google API quota handling in worker. Auth endpoints: 10 req/min per IP on login/register/magic-link.
 - **Soft delete:** `DELETE` sets `deleted_at`. Hard-delete background jobs per security doc. `restore` endpoints work within grace.
 - **Webhooks:** explicitly out of scope for PoC.
+- **XSS on `body_markdown`:** server-side rendered via `unified` + `remark-parse` + `remark-rehype` + `rehype-sanitize` (GitHub schema). The frontend never uses `dangerouslySetInnerHTML` with raw HTML — only with the sanitized string produced by this pipeline. `body_markdown` is stored raw; sanitization happens at render time. This preserves the source-of-truth markdown as re-renderable while ensuring no script injection reaches the browser.
+- **`email_verified_at` set when:** email/password = on confirmation link click; magic link = on first successful `GET /v1/auth/magic-link/consume`; Google = if provider's ID token contains `email_verified: true`; Facebook = if `email_verified` field is true in the Graph API response (treat as unverified if absent — Facebook does not guarantee this field); Apple = treat as verified per Apple TOS (Apple only grants access to the email when the account is verified).
+- **Email change flow:** a user changing their email via `PATCH /v1/auth/me` must complete re-auth first. Both the old and new addresses receive confirmation emails: old address gets a "your email was changed — click to revert within 24h" email; new address gets a confirmation link. New email is not active until the new-address confirmation is clicked. `email_verified_at` is set to null until the new address is confirmed.
