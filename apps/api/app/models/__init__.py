@@ -693,7 +693,7 @@ class AuditLog(Base):
     action: Mapped[str] = mapped_column(Text, nullable=False)
     target_type: Mapped[str | None] = mapped_column(Text)
     target_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
-    metadata: Mapped[dict | None] = mapped_column(JSONB)
+    meta: Mapped[dict | None] = mapped_column("metadata", JSONB)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
