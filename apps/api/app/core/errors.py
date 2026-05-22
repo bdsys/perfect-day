@@ -40,10 +40,13 @@ async def http_exception_handler(request: Request, exc) -> JSONResponse:
 
 async def request_validation_handler(request: Request, exc) -> JSONResponse:
     errors = []
-    for e in exc.errors(include_url=False):
-        # pydantic v2 puts the original exception object in ctx — strip it to keep JSON-serializable
+    for e in exc.errors():
+        # pydantic v2 puts the original exception object in ctx — strip url and convert to strings
         ctx = {k: str(v) for k, v in e.get("ctx", {}).items()} if e.get("ctx") else None
-        errors.append({**{k: v for k, v in e.items() if k != "ctx"}, **({"ctx": ctx} if ctx else {})})
+        entry = {k: v for k, v in e.items() if k not in ("ctx", "url")}
+        if ctx:
+            entry["ctx"] = ctx
+        errors.append(entry)
     return error_response(
         code="validation_error",
         message="Request validation failed",
