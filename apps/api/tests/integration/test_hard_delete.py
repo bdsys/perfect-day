@@ -101,7 +101,7 @@ class TestHardDeleteUser:
         auth = {"Authorization": f"Bearer {token}"}
 
         r = await client.delete("/v1/auth/account", headers=auth)
-        assert r.status_code == 200
+        assert r.status_code == 204
 
         # Account unavailable immediately
         me = await client.get("/v1/auth/me", headers=auth)

@@ -59,6 +59,6 @@ class TestGoogleCallback:
         # Can only revoke if a token exists — seed one via the DB bypass
 
         # We can't easily call the real callback in unit test (no real Google),
-        # but we can verify the revoke endpoint returns 404 when no token exists.
+        # but we can verify the revoke endpoint is idempotent (204) when no token exists.
         r = await client.delete("/v1/integrations/google", headers=auth)
-        assert r.status_code == 404
+        assert r.status_code == 204

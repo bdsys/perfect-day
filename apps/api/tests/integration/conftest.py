@@ -153,8 +153,10 @@ async def client(db_url, redis_container) -> AsyncGenerator[AsyncClient, None]:
         def _noop_check(request, *args, **kwargs):
             request.state.view_rate_limit = None
 
-        with patch.object(_rl.auth_limiter, "_check_request_limit", new=_noop_check), \
-             patch.object(_rl.limiter, "_check_request_limit", new=_noop_check):
+        with (
+            patch.object(_rl.auth_limiter, "_check_request_limit", new=_noop_check),
+            patch.object(_rl.limiter, "_check_request_limit", new=_noop_check),
+        ):
             from app.main import create_app
 
             app_instance = create_app()
@@ -168,3 +170,6 @@ async def client(db_url, redis_container) -> AsyncGenerator[AsyncClient, None]:
         await engine.dispose()
         db_module._engine = None
         db_module._session_factory = None
+        from app.core.dependencies import close_redis_for_current_loop
+
+        await close_redis_for_current_loop()

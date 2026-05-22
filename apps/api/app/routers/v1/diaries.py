@@ -212,12 +212,12 @@ async def patch_diary(
     return diary
 
 
-@router.delete("/{diary_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{diary_id}", response_model=DiaryOut)
 async def delete_diary(
     diary_id: uuid.UUID,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> None:
+) -> Diary:
     diary, _ = await _get_diary_or_404(diary_id, user, db, require_owner=True)
     now = datetime.now(tz=UTC)
     diary.deleted_at = now
@@ -226,14 +226,15 @@ async def delete_diary(
     db.add(
         AuditLog(user_id=user.id, action="diary.delete", target_type="diary", target_id=diary.id)
     )
+    return diary
 
 
-@router.post("/{diary_id}/restore", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/{diary_id}/restore", response_model=DiaryOut)
 async def restore_diary(
     diary_id: uuid.UUID,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> None:
+) -> Diary:
     # Fetch even soft-deleted diaries for restore
     result = await db.execute(
         select(Diary).where(Diary.id == diary_id, Diary.owner_user_id == user.id)
@@ -246,3 +247,4 @@ async def restore_diary(
     diary.deleted_at = None
     diary.hard_delete_after = None
     diary.scan_enabled = True
+    return diary
