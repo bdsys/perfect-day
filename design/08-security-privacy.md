@@ -5,28 +5,40 @@
 Two-layer key hierarchy, app-level. All downloads proxied through the API (no MinIO signed URLs for reads).
 
 ```
-master_secret   = env var (32-byte random, set at deploy time)
+master_secret   = loaded at process start from a secret store (see below)
 KEK for user U  = HKDF-SHA256(master_secret, salt=user_id, info="photo-kek")
 DEK for photo P = random 32 bytes generated at upload time
 
 On ingest:
-  ciphertext = AES-256-GCM(DEK, photo_bytes)
+  # Photos are encrypted in 1 MiB chunks; each chunk has its own AES-256-GCM tag.
+  # Nonce for chunk i = HKDF-SHA256(DEK, info="chunk-nonce", salt=i.to_bytes(8, 'big'))
+  for i, chunk in enumerate(photo_bytes, chunk_size=1_048_576):
+    ciphertext_chunk = AES-256-GCM(key=DEK, nonce=chunk_nonce(i), plaintext=chunk)
+  full_ciphertext = [chunk_count(4 bytes) || chunk_size(4 bytes) || ciphertext_chunks...]
   wrapped_DEK = AES-256-GCM(KEK, DEK)  [nonce prepended]
-  MinIO: store ciphertext at {user_id}/{photo_uuid}.enc
+  MinIO: store full_ciphertext at {user_id}/{photo_uuid}.enc
   Postgres: photos.dek_ciphertext = [key_version_byte || nonce || wrapped_DEK]
 
 On download:
   GET /v1/photos/{id}
-  → backend retrieves ciphertext from MinIO
+  → backend retrieves full_ciphertext from MinIO
   → unwraps DEK with KEK
-  → decrypts
-  → streams plaintext bytes to client
+  → for each chunk: verify GCM tag, then stream verified plaintext to client
+  (memory use is bounded to one chunk at a time regardless of photo size)
 ```
+
+**Why chunked encryption:** whole-blob AES-256-GCM cannot be safely streamed — the auth tag covers the entire ciphertext and must be verified before any plaintext is emitted. On a memory-constrained host, loading the entire plaintext before sending would OOM under concurrent loads. Chunked encryption verifies and emits one chunk at a time.
+
+**`master_secret` loading:** `master_secret` is loaded at process start from a secret store, not a plain environment variable on the same host as the data. Two supported backends:
+- **Single-host (home-lab):** `sops`-encrypted secrets file unlocked by a YubiKey at boot. The decrypted value is passed to the process as an environment variable and never written to disk at runtime. This is a documented compromise — see `deploy/nuc.md`.
+- **Cloud:** managed secret manager (AWS Secrets Manager, GCP Secret Manager, 1Password Connect). Production-tier deployments must use a KMS-backed KEK.
+
+The runtime never persists the unwrapped secret to disk.
 
 - Signed MinIO URLs used only for uploads (direct client-to-MinIO PUT). Downloads always through the API.
 - Thumbnails encrypted with the same DEK; served via `/v1/photos/{id}/thumbnail` with same decrypt-and-stream path.
 - Key version prefix in `dek_ciphertext` supports future master_secret rotation (re-wrap DEKs in Postgres; ciphertext in MinIO unchanged).
-- OAuth tokens use a **separate** master secret env var and the same AES-256-GCM pattern.
+- OAuth tokens use a **separate** `master_secret` (different secret store entry) and the same AES-256-GCM pattern.
 
 ## JWT lifecycle
 
@@ -90,7 +102,7 @@ Cross-diary photo check: `photos` row and MinIO object deleted only when the las
 | Children's data (COPPA/GDPR Art.8) | ℹ️ Parent-operator model; child is not a user | Legal review before public launch |
 | Privacy policy | ❌ Not written | Required before public launch |
 | DPAs with vendors | ❌ Not executed | Anthropic, Google, SendGrid, Expo each need a DPA for GDPR |
-| Data residency | ℹ️ NUC only for PoC | EU public launch needs EU data residency |
+| Data residency | ℹ️ Single-host only for PoC | EU public launch needs EU data residency |
 | Breach notification | ❌ No runbook | 72-hour GDPR requirement; runbook + contact email needed |
 
 ## Auth endpoints rate limiting
@@ -111,8 +123,13 @@ Cross-diary photo check: `photos` row and MinIO object deleted only when the las
 - Dedicated app service account. No public buckets.
 - Non-guessable object keys: `{user_id}/{uuid}.enc`.
 - No client-side read access. All reads proxied through the API.
-- Uploads go to `media.diary.perfectday.bdsys.net` via signed PUT URLs; FortiGate WAF restricts to PUT only.
+- Uploads go to `media.diary.perfectday.bdsys.net` via signed PUT URLs; the edge proxy restricts to PUT only.
 
 ## Backup
 
-Celery beat task daily: `pg_dump` → MinIO (local) + sync to external cloud bucket (S3 or Backblaze B2). Cost ~$5/mo. Protects against NUC disk failure. Required — this is irreplaceable family data.
+Celery beat task daily:
+
+1. `pg_dump` is **encrypted with `age`** using a backup public key before it leaves the host. The corresponding private key is stored **separately from `master_secret`** — ideally on a different device or in a different secret store managed by a different operator. Without this separation, anyone who obtains both the backup bucket and `master_secret` can decrypt every historical photo and OAuth token.
+2. The encrypted dump is synced to a local MinIO object and to an external cloud bucket (S3 or Backblaze B2).
+
+Backup destinations and operator-separation specifics are deployment concerns — see [`deploy/nuc.md`](../deploy/nuc.md) and `deploy/cloud.md`. This is irreplaceable family data.

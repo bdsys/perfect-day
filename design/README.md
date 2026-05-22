@@ -12,7 +12,7 @@ All 10 planning deliverables for the PoC. These are authoritative — use them a
 | [06-scan-worker.md](06-scan-worker.md) | Celery beat schedule, scan loop, grouping algorithm, backfill, rate limits |
 | [07-notifications.md](07-notifications.md) | Notification kinds, channels (Expo push + SendGrid), coalescing, quiet hours |
 | [08-security-privacy.md](08-security-privacy.md) | Photo encryption, JWT lifecycle, deletion flows, GDPR posture |
-| [09-poc-scope.md](09-poc-scope.md) | Phase 1 / 2 / 3 build order, NUC resource estimates |
+| [09-poc-scope.md](09-poc-scope.md) | Phase 1 / 2 / 3 build order; resource estimates in `deploy/nuc.md` |
 | [10-open-questions.md](10-open-questions.md) | All OQ-1 through OQ-11 resolved decisions |
 
 ---
@@ -49,5 +49,6 @@ Build in order — nothing else works until this loop is proven:
 7. **Scan worker: calendar only** — `scan_diary`, `ingest_calendar_event`, `group_events_into_entries` (single-day events only).
 8. **LLM draft generation** — `generate_entry_draft`, prompt builder, Anthropic API call, write draft to Entry.
 9. **Web UI: minimum viable diary view** — Next.js, two pages: timeline (draft/published) and entry detail (read/edit/publish).
+10. **Soft/hard delete flows** — `process_hard_deletes` Celery beat task, grace-period notifications, cascade deletion.
 
 **End of Phase 1:** Sign in → connect Calendar → scan runs → draft appears → edit → publish.

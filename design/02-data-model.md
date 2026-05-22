@@ -37,7 +37,8 @@ users ──┬──< social_identities
 - `id` UUID PK
 - `user_id` UUID FK → users
 - `provider` text NOT NULL  *(`google | facebook | apple`)*
-- `provider_user_id` text NOT NULL
+- `provider_user_id` text NOT NULL  *(Apple: durable `sub` value — not email)*
+- `relay_email` citext NULL  *(Apple Private Relay address; stored for reference only; never used as a lookup key)*
 - UNIQUE (`provider`, `provider_user_id`)
 
 ### `oauth_tokens`
@@ -61,7 +62,7 @@ users ──┬──< social_identities
 - `subject_relation` text NOT NULL DEFAULT `'self'`  *(CHECK: `self | child | family | other_person`)*
 - `voice_override` text NULL  *(CHECK: `first_singular | first_plural | second | third`; overrides derivation)*
 - `tone_hint` text NOT NULL DEFAULT `'warm, narrative'`
-- `timezone` text NOT NULL  *(IANA tz)*
+- `timezone` text NOT NULL  *(IANA tz — all `entry_date` values in this diary are interpreted in this timezone; see [06-scan-worker.md](06-scan-worker.md) § Time and timezones)*
 - `scan_interval_minutes` int NOT NULL DEFAULT 60
 - `scan_enabled` boolean NOT NULL DEFAULT true
 - `cover_photo_id` UUID FK → photos NULL
@@ -95,7 +96,7 @@ Display URLs: `diary.perfectday.bdsys.net/d/{slug}/entries/{entry_date}`. Intern
 ### `entries`
 - `id` UUID PK
 - `diary_id` UUID FK → diaries
-- `entry_date` date NOT NULL  *(start; for single-day this is the date)*
+- `entry_date` date NOT NULL  *(start date, interpreted in `diaries.timezone` — never in server/UTC time)*
 - `entry_end_date` date NULL  *(NULL = single-day; non-null = multi-day span)*
 - `parent_entry_id` UUID FK → entries NULL  *(reserved; not used in PoC — supports future nesting/merge UX)*
 - `title` text
@@ -118,7 +119,7 @@ INDEX on (`diary_id`, `entry_date` DESC) for timeline. Timeline order: `entry_da
 - UNIQUE (`source`, `external_id`) WHERE external_id IS NOT NULL
 
 ### `photos`
-*(per-user library)*
+*(per-user library — read authorization rules are defined in [03-api-surface.md](03-api-surface.md) § Photo authorization)*
 - `id` UUID PK
 - `user_id` UUID FK → users  *(photo belongs to the user, not a specific diary)*
 - `s3_key` text NOT NULL UNIQUE  *(MinIO object key — ciphertext stored at this key)*
