@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import os
 from collections.abc import AsyncGenerator
 from unittest.mock import patch
@@ -150,11 +151,11 @@ async def client(db_url, redis_container) -> AsyncGenerator[AsyncClient, None]:
 
         import app.middleware.rate_limit as _rl
 
-        async def _noop_check(*args, **kwargs):
-            pass
+        _counter = itertools.count()
+        _key = lambda req: f"test-{next(_counter)}"  # noqa: E731
 
-        with patch.object(_rl.auth_limiter, "_check_request_limit", new=_noop_check), \
-             patch.object(_rl.limiter, "_check_request_limit", new=_noop_check):
+        with patch.object(_rl.auth_limiter, "_key_func", new=_key), \
+             patch.object(_rl.limiter, "_key_func", new=_key):
             from app.main import create_app
 
             app_instance = create_app()
