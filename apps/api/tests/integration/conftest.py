@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import itertools
+import os
 from collections.abc import AsyncGenerator
+from unittest.mock import patch
 
 import pytest
 import pytest_asyncio
@@ -11,6 +14,8 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from testcontainers.postgres import PostgresContainer
 from testcontainers.redis import RedisContainer
+
+_ip_counter = itertools.count(1)
 
 # ---------------------------------------------------------------------------
 # Session-scoped containers (start once, reused across all tests)
@@ -71,7 +76,7 @@ def run_migrations(db_url_sync):
 # ---------------------------------------------------------------------------
 
 
-@pytest_asyncio.fixture(autouse=True)
+@pytest_asyncio.fixture(loop_scope="session", autouse=True)
 async def truncate_tables(db_engine):
     yield
     async with db_engine.connect() as conn:
@@ -93,14 +98,14 @@ async def truncate_tables(db_engine):
 # ---------------------------------------------------------------------------
 
 
-@pytest_asyncio.fixture(scope="session")
+@pytest_asyncio.fixture(scope="session", loop_scope="session")
 async def db_engine(db_url):
     engine = create_async_engine(db_url, echo=False, pool_pre_ping=True)
     yield engine
     await engine.dispose()
 
 
-@pytest_asyncio.fixture
+@pytest_asyncio.fixture(loop_scope="session")
 async def db_session(db_engine) -> AsyncGenerator[AsyncSession, None]:
     factory = async_sessionmaker(db_engine, expire_on_commit=False, class_=AsyncSession)
     async with factory() as session:
@@ -112,38 +117,50 @@ async def db_session(db_engine) -> AsyncGenerator[AsyncSession, None]:
 # ---------------------------------------------------------------------------
 
 
-@pytest_asyncio.fixture
-async def client(db_engine, redis_container, monkeypatch) -> AsyncGenerator[AsyncClient, None]:
+@pytest_asyncio.fixture(loop_scope="session")
+async def client(db_engine, redis_container) -> AsyncGenerator[AsyncClient, None]:
     """AsyncClient wired to the FastAPI app with testcontainer DB + Redis."""
     redis_url = f"redis://{redis_container.get_container_host_ip()}:{redis_container.get_exposed_port(6379)}/0"
-
     db_url_str = str(db_engine.url)
-    monkeypatch.setenv("DATABASE_URL", db_url_str)
-    monkeypatch.setenv("DATABASE_URL_SYNC", db_url_str.replace("+asyncpg", ""))
-    monkeypatch.setenv("REDIS_URL", redis_url)
-    monkeypatch.setenv("CELERY_BROKER_URL", redis_url)
-    monkeypatch.setenv("CELERY_RESULT_BACKEND", redis_url)
-    monkeypatch.setenv("ENV", "test")
 
-    # Patch the database module to use the test engine
-    import app.core.database as db_module
+    env_overrides = {
+        "DATABASE_URL": db_url_str,
+        "DATABASE_URL_SYNC": db_url_str.replace("+asyncpg", ""),
+        "REDIS_URL": redis_url,
+        "CELERY_BROKER_URL": redis_url,
+        "CELERY_RESULT_BACKEND": redis_url,
+        "ENV": "test",
+    }
 
-    db_module._engine = db_engine
-    db_module._session_factory = async_sessionmaker(
-        db_engine, expire_on_commit=False, class_=AsyncSession
-    )
+    with patch.dict(os.environ, env_overrides):
+        # Patch the database module to use the test engine
+        import app.core.database as db_module
 
-    from app.core.config import get_settings
+        db_module._engine = db_engine
+        db_module._session_factory = async_sessionmaker(
+            db_engine, expire_on_commit=False, class_=AsyncSession
+        )
 
-    get_settings.cache_clear()
+        from app.core.config import get_settings
 
-    from app.main import create_app
+        get_settings.cache_clear()
 
-    app_instance = create_app()
+        from app.main import create_app
 
-    async with AsyncClient(transport=ASGITransport(app=app_instance), base_url="http://test") as ac:
-        yield ac
+        app_instance = create_app()
 
-    # Reset db module state
-    db_module._engine = None
-    db_module._session_factory = None
+        n = next(_ip_counter)
+        test_ip = f"10.{n // 65536 % 256}.{n // 256 % 256}.{n % 256}"
+
+        import app.middleware.rate_limit as _rl
+
+        with patch.object(_rl.auth_limiter, "_key_func", return_value=test_ip):
+            async with AsyncClient(
+                transport=ASGITransport(app=app_instance),
+                base_url="http://test",
+            ) as ac:
+                yield ac
+
+        # Reset db module state
+        db_module._engine = None
+        db_module._session_factory = None
