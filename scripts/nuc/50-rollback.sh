@@ -9,7 +9,7 @@ set -euo pipefail
 REMOTE="${1:-perfectday@localhost}"
 TARGET_SHA="${2:-}"
 DEPLOY_DIR="/opt/perfect-day"
-HEALTH_URL="https://api.diary.perfectday.bdsys.net/readyz"
+HEALTH_URL="https://api.diary.perfectday.andrewlass.com/readyz"
 HEALTH_TIMEOUT=90
 GHCR_OWNER="andrewlass"
 

@@ -95,7 +95,7 @@ All endpoints prefixed `/v1/`. JSON. Auth via `Authorization: Bearer <jwt>` unle
 | GET | `/v1/photos/{id}/thumbnail` | Decrypt-and-stream thumbnail. |
 | DELETE | `/v1/photos/{id}` | Soft delete. |
 
-Upload pattern: signed URLs to `media.diary.perfectday.bdsys.net`. The edge proxy restricts to PUT only, rate-limited. Object keys non-guessable: `{user_id}/{uuid}.enc`. **Downloads always proxied through the API** — no MinIO signed URLs for reads.
+Upload pattern: signed URLs to `media.diary.perfectday.andrewlass.com`. The edge proxy restricts to PUT only, rate-limited. Object keys non-guessable: `{user_id}/{uuid}.enc`. **Downloads always proxied through the API** — no MinIO signed URLs for reads.
 
 Orphan sweeper runs every 6h via Celery beat; deletes `photos` rows where `finalized_at IS NULL AND created_at < now() - interval '24 hours'` plus the MinIO objects.
 

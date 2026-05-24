@@ -3,7 +3,7 @@
 Step-by-step guide to deploying Perfect Day Phase 1 on a fresh Intel NUC running Ubuntu 26 LTS. Covers first-time setup, FortiGate edge configuration, backups, and the update + rollback procedures.
 
 Target host: Intel NUC (4-core x86, 8 GB RAM), shared with other household services.
-Public hostname: `diary.perfectday.bdsys.net` (web), `api.diary.perfectday.bdsys.net` (API).
+Public hostname: `diary.perfectday.andrewlass.com` (web), `api.diary.perfectday.andrewlass.com` (API).
 
 ---
 
@@ -121,7 +121,7 @@ What `20-deploy.sh` does:
 3. `docker compose pull` — pulls all images from GHCR (or builds locally if GHCR is not yet populated)
 4. `docker compose run --rm api alembic upgrade head` — applies all Alembic migrations
 5. `docker compose up -d` — starts all 7 services
-6. Calls `scripts/wait-for-healthy.sh https://api.diary.perfectday.bdsys.net/readyz 90`
+6. Calls `scripts/wait-for-healthy.sh https://api.diary.perfectday.andrewlass.com/readyz 90`
 7. Logs the deployed commit SHA to `/opt/perfect-day/last-deployed-sha`
 
 On success, the script prints the deployed SHA and `✓ Deploy complete`.
@@ -144,10 +144,10 @@ The FortiGate handles TLS termination and virtual hosting. This is a manual chec
 
 | Vhost | Backend | Port | Notes |
 |---|---|---|---|
-| `diary.perfectday.bdsys.net` | NUC IP | 3000 | Next.js SSR — all methods |
-| `api.diary.perfectday.bdsys.net` | NUC IP | 8000 | FastAPI — all methods |
+| `diary.perfectday.andrewlass.com` | NUC IP | 3000 | Next.js SSR — all methods |
+| `api.diary.perfectday.andrewlass.com` | NUC IP | 8000 | FastAPI — all methods |
 
-> Phase 1 does **not** need the `media.diary.perfectday.bdsys.net` vhost. Photo serving is deferred to Phase 2 per `design/09-poc-scope.md:43-44`. Do not create it now.
+> Phase 1 does **not** need the `media.diary.perfectday.andrewlass.com` vhost. Photo serving is deferred to Phase 2 per `design/09-poc-scope.md:43-44`. Do not create it now.
 
 ### TLS
 - Use Let's Encrypt via FortiGate's built-in ACME client, or upload a cert from Certbot.
@@ -156,12 +156,12 @@ The FortiGate handles TLS termination and virtual hosting. This is a manual chec
 ### Google OAuth callback URL
 In [Google Cloud Console](https://console.cloud.google.com/) → APIs & Services → Credentials → your OAuth 2.0 Client:
 
-- Authorized redirect URIs: `https://api.diary.perfectday.bdsys.net/v1/integrations/google/callback`
+- Authorized redirect URIs: `https://api.diary.perfectday.andrewlass.com/v1/integrations/google/callback`
 
 This must match exactly what the API uses. If the domain or path is wrong, OAuth will return a `redirect_uri_mismatch` error.
 
 ### CORS
-`CORS_ORIGINS` in `/etc/perfect-day/app.env` must include `https://diary.perfectday.bdsys.net`. The bootstrap script sets this automatically. If you add a new origin later, update the env file and restart the API:
+`CORS_ORIGINS` in `/etc/perfect-day/app.env` must include `https://diary.perfectday.andrewlass.com`. The bootstrap script sets this automatically. If you add a new origin later, update the env file and restart the API:
 ```bash
 ssh root@<NUC_IP> "cd /opt/perfect-day && docker compose restart api"
 ```
@@ -217,13 +217,13 @@ Once per quarter, restore to a clean stack on a separate machine:
 Run the smoke test from your workstation (off-NUC) to confirm public reachability:
 
 ```bash
-./scripts/smoke-test.sh https://api.diary.perfectday.bdsys.net
+./scripts/smoke-test.sh https://api.diary.perfectday.andrewlass.com
 ```
 
 This exercises every Phase 1 API endpoint and exits non-zero on any failure. Expected output: 16 `PASS` lines and `All 16 checks passed`.
 
 ### Browser golden path
-1. Navigate to `https://diary.perfectday.bdsys.net`
+1. Navigate to `https://diary.perfectday.andrewlass.com`
 2. Register a new account with email + password
 3. Create a diary
 4. Click "Connect Google Calendar" → complete the OAuth flow in the popup
@@ -340,7 +340,7 @@ ssh perfectday@<NUC_IP> "cd /opt/perfect-day && ./scripts/seed-minio-bucket.sh"
 ```
 
 **OAuth callback URL mismatch**
-The error `redirect_uri_mismatch` means the URL registered in Google Cloud Console doesn't match what the API is sending. Verify that `https://api.diary.perfectday.bdsys.net/v1/integrations/google/callback` is in the OAuth client's authorized redirect URIs.
+The error `redirect_uri_mismatch` means the URL registered in Google Cloud Console doesn't match what the API is sending. Verify that `https://api.diary.perfectday.andrewlass.com/v1/integrations/google/callback` is in the OAuth client's authorized redirect URIs.
 
 **Token decryption failure after rotating secrets**
 If `MASTER_SECRET` or `OAUTH_TOKEN_SECRET` is changed after data exists in the database, encrypted OAuth tokens become unreadable. Users will see errors when trying to use Google Calendar. They must revoke and re-authorize. To avoid this, never rotate these secrets unless the database is empty or you have a key-rotation migration in place.

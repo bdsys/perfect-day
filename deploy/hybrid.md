@@ -51,7 +51,7 @@ This document describes the hybrid deployment target: a Hetzner CX21 cloud VPS a
         └─────────────────────────────────────┘
 ```
 
-DNS A records point to the CX21 public IP. The NUC's public IP is no longer the user-facing address; the FortiGate vhost for `diary.perfectday.bdsys.net` is deactivated (NUC accessible only over WireGuard or LAN).
+DNS A records point to the CX21 public IP. The NUC's public IP is no longer the user-facing address; the FortiGate vhost for `diary.perfectday.andrewlass.com` is deactivated (NUC accessible only over WireGuard or LAN).
 
 ---
 
@@ -137,7 +137,7 @@ Object key format is unchanged: `{user_id}/{uuid}.enc`.
 ### R2 bucket settings
 
 - **Public access:** disabled.
-- **CORS:** restricted to `https://api.diary.perfectday.bdsys.net` only.
+- **CORS:** restricted to `https://api.diary.perfectday.andrewlass.com` only.
 - **Lifecycle rule:** abort incomplete multipart uploads after 1 day.
 - **IAM token scope:** `Object Read & Write` on the diary bucket only. No bucket-level admin permissions.
 
@@ -319,7 +319,7 @@ Operator-runnable verification (at actual deployment time — not part of the do
 
 1. **WireGuard:** `wg show` on both peers, last-handshake < 2 min, bidirectional ping over WG IPs, MTU test passes (see § WireGuard layout).
 2. **Postgres replica:** `SELECT pg_is_in_recovery();` on CX21 returns `t`; lag < 5s; `pg_replication_slots` on NUC shows slot active.
-3. **Read path:** `curl https://diary.perfectday.bdsys.net/healthz` from external host returns 200; timeline entry counts match NUC-direct.
+3. **Read path:** `curl https://diary.perfectday.andrewlass.com/healthz` from external host returns 200; timeline entry counts match NUC-direct.
 4. **Photo round-trip:** upload photo → fetch via CX21 → decrypt succeeds, latency < 1s per chunk; `grep -i master /proc/$(pgrep -f fastapi)/environ` on CX21 returns nothing.
 5. **DEK cache bounds:** read after TTL expiry, observe fresh unwrap RPC call in NUC logs.
 6. **Degraded-mode drill:** stop Postgres on NUC for 60s; CX21 returns `503 NUC_UNREACHABLE_READONLY` for writes, 200 for reads; restore NUC, replica catches up without manual intervention.

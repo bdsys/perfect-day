@@ -18,32 +18,31 @@ Cloudflare DNS → FortiGate TLS certs → Google OAuth redirect URI → NUC dep
 
 ## PHASE A — Third-party account setup (do these first, they unlock everything else)
 
-### A1 — Cloudflare: delegate `perfectday.bdsys.net` subdomain
+### A1 — Cloudflare: hand over `andrewlass.com` and create DNS records
 
-You need Cloudflare to manage DNS for the subdomain so you can update it automatically when your home IP changes (DDNS). GoDaddy stays authoritative for `bdsys.net` itself.
+Cloudflare will become the authoritative DNS for `andrewlass.com`. GoDaddy stays as the registrar (where you pay for the domain) but stops serving DNS.
 
 1. Create a free account at [cloudflare.com](https://cloudflare.com) if you don't have one.
-2. In Cloudflare, click **Add a site** → type `perfectday.bdsys.net` → choose **Free plan**.
+2. In Cloudflare, click **Add a site** → type `andrewlass.com` → choose **Free plan**.
+   - Cloudflare will scan your existing GoDaddy DNS records and import them automatically.
+   - Review the imported records — keep anything already there (email MX records, etc.).
    - Cloudflare will give you two nameserver hostnames, e.g. `adam.ns.cloudflare.com` and `beth.ns.cloudflare.com`.
-3. Log in to GoDaddy → **My Products** → **DNS** for `bdsys.net`.
-4. Add two `NS` records for the `perfectday` subdomain pointing to Cloudflare's nameservers:
-   ```
-   Type: NS    Name: perfectday    Value: adam.ns.cloudflare.com
-   Type: NS    Name: perfectday    Value: beth.ns.cloudflare.com
-   ```
-5. Wait 5–30 min for propagation. Verify with:
+3. Log in to GoDaddy → **My Products** → **andrewlass.com** → **DNS** → **Nameservers** → **Change** → **Enter my own nameservers**.
+   - Replace GoDaddy's default nameservers with the two Cloudflare nameservers from step 2.
+   - Save. GoDaddy no longer serves DNS for this domain.
+4. Wait for propagation (usually 5–30 min, up to a few hours). Verify:
    ```bash
-   dig NS perfectday.bdsys.net
+   dig NS andrewlass.com
    # Should show Cloudflare's nameservers
    ```
 
-### A2 — Cloudflare: create DNS records and DDNS token
+### A2 — Cloudflare: create app DNS records and DDNS token
 
-1. In Cloudflare → **DNS** for `perfectday.bdsys.net`, add three A records:
+1. In Cloudflare → **DNS** for `andrewlass.com`, add three A records:
    ```
-   Type: A   Name: diary                       Value: <YOUR_NUC_WAN_IP>   TTL: 300   Proxy: OFF
-   Type: A   Name: api.diary                   Value: <YOUR_NUC_WAN_IP>   TTL: 300   Proxy: OFF
-   Type: A   Name: media.diary                 Value: <YOUR_NUC_WAN_IP>   TTL: 300   Proxy: OFF
+   Type: A   Name: diary.perfectday                Value: <YOUR_NUC_WAN_IP>   TTL: 300   Proxy: OFF
+   Type: A   Name: api.diary.perfectday             Value: <YOUR_NUC_WAN_IP>   TTL: 300   Proxy: OFF
+   Type: A   Name: media.diary.perfectday           Value: <YOUR_NUC_WAN_IP>   TTL: 300   Proxy: OFF
    ```
    To find your NUC WAN IP: `curl https://api.ipify.org` (run from the NUC or any home device).
    Proxy must be **OFF** (grey cloud, not orange) — FortiGate handles TLS; Cloudflare proxying breaks this.
@@ -51,13 +50,13 @@ You need Cloudflare to manage DNS for the subdomain so you can update it automat
 2. Create a scoped API token for DDNS updates:
    - Cloudflare → **My Profile** → **API Tokens** → **Create Token**
    - Use template **Edit zone DNS**
-   - Under **Zone Resources** → select `perfectday.bdsys.net` only
+   - Under **Zone Resources** → select `andrewlass.com` only
    - Click **Continue to summary** → **Create Token**
    - **Save this token** — you will not see it again. Store in your password manager.
 
 3. Verify DNS resolves:
    ```bash
-   dig +short diary.perfectday.bdsys.net
+   dig +short diary.perfectday.andrewlass.com
    # Should return your NUC WAN IP
    ```
 
@@ -110,8 +109,8 @@ SendGrid is needed because residential IPs are blocked by most mail servers. It 
    - **Copy the key immediately** — it is only shown once. Save to password manager.
 5. (Optional but recommended) Set up domain authentication for better deliverability:
    - **Settings** → **Sender Authentication** → **Authenticate Your Domain**
-   - Domain: `bdsys.net`, Link branding: off
-   - SendGrid will give you DNS records to add in GoDaddy (CNAME records for `s1._domainkey.bdsys.net` etc.)
+   - Domain: `andrewlass.com`, Link branding: off
+   - SendGrid will give you DNS records to add in GoDaddy (CNAME records for `s1._domainkey.andrewlass.com` etc.)
    - Add them in GoDaddy DNS, then click **Verify** in SendGrid
 
 ### A5 — Anthropic: get API key
@@ -179,7 +178,7 @@ Verify DDNS is working:
 ```bash
 # From any external connection (phone hotspot, etc.):
 curl https://api.ipify.org          # your current WAN IP
-dig +short diary.perfectday.bdsys.net   # should match
+dig +short diary.perfectday.andrewlass.com   # should match
 ```
 
 ### B5 — FortiGate: virtual hosts and TLS certificates
@@ -192,8 +191,8 @@ In the FortiGate UI:
 
    | Virtual Host | Backend IP | Backend Port |
    |---|---|---|
-   | `diary.perfectday.bdsys.net` | NUC IP | 3000 |
-   | `api.diary.perfectday.bdsys.net` | NUC IP | 8000 |
+   | `diary.perfectday.andrewlass.com` | NUC IP | 3000 |
+   | `api.diary.perfectday.andrewlass.com` | NUC IP | 8000 |
 
    For each one: Policy & Objects → Virtual IPs → New
    - External interface: WAN interface
@@ -203,7 +202,7 @@ In the FortiGate UI:
 
 2. **Enable Let's Encrypt certificates for both domains:**
    - System → Certificates → Local → Create/Import → Let's Encrypt
-   - Add `diary.perfectday.bdsys.net` and `api.diary.perfectday.bdsys.net`
+   - Add `diary.perfectday.andrewlass.com` and `api.diary.perfectday.andrewlass.com`
    - FortiGate handles ACME HTTP-01 challenge automatically
 
 3. **Create firewall policies** to allow HTTPS traffic through to each VIP.
@@ -217,7 +216,7 @@ Now that HTTPS is working, add the production callback URL:
 1. Google Cloud Console → **APIs & Services** → **Credentials** → your OAuth 2.0 client
 2. Under **Authorized redirect URIs**, add:
    ```
-   https://api.diary.perfectday.bdsys.net/v1/integrations/google/callback
+   https://api.diary.perfectday.andrewlass.com/v1/integrations/google/callback
    ```
 3. Click **Save**
 
@@ -233,11 +232,11 @@ Configure rclone for Backblaze B2 when prompted. Sets up daily encrypted `pg_dum
 ### B8 — Validate production deployment
 
 ```bash
-./scripts/smoke-test.sh https://api.diary.perfectday.bdsys.net
+./scripts/smoke-test.sh https://api.diary.perfectday.andrewlass.com
 # Expect: 16 PASS lines
 ```
 
-Then manually walk through the app at `https://diary.perfectday.bdsys.net`:
+Then manually walk through the app at `https://diary.perfectday.andrewlass.com`:
 - Register with email+password
 - Log in with Google OAuth
 - Create a diary, connect Google Calendar

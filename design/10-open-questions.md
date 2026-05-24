@@ -55,7 +55,7 @@ FastAPI handles all OAuth flows and JWT issuance. Next.js SSR forwards the user'
 
 ## OQ-7: Diary URL slugs ✅
 
-Add `diaries.slug text UNIQUE NOT NULL` at schema creation. Slugs derived from diary name at creation, disambiguated on collision: `eleanors-diary`, `eleanors-diary-2`. Display URLs: `diary.perfectday.bdsys.net/d/{slug}/entries/{entry_date}`. Internal IDs remain UUIDs.
+Add `diaries.slug text UNIQUE NOT NULL` at schema creation. Slugs derived from diary name at creation, disambiguated on collision: `eleanors-diary`, `eleanors-diary-2`. Display URLs: `diary.perfectday.andrewlass.com/d/{slug}/entries/{entry_date}`. Internal IDs remain UUIDs.
 
 **Change early** — changing URLs later breaks shared links.
 

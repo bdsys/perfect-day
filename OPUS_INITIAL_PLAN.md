@@ -26,7 +26,7 @@
 
   - Lab: Intel NUC, 4-core x86 1.85GHz, 8GB RAM, shared with other services
   - Network edge: FortiGate 7.4 — handles Layer 4, WAF, virtual hosting, TLS termination from the internet
-  - Domain: diary.perfectday.bdsys.net (lab domain for now)
+  - Domain: diary.perfectday.andrewlass.com (lab domain for now)
   - Cloud offload: Open to cloud services (AWS, GCP) to offload LLM calls and heavy processing from the NUC
   - Hosting should support two deployment options: (1) fully self-hosted on the NUC, (2) hybrid with cloud offload for LLM/processing
 

@@ -9,7 +9,7 @@ REMOTE="${1:-perfectday@localhost}"
 REPO_URL="https://github.com/andrewlass/perfect-day.git"
 DEPLOY_DIR="/opt/perfect-day"
 ENV_FILE="/etc/perfect-day/app.env"
-HEALTH_URL="https://api.diary.perfectday.bdsys.net/readyz"
+HEALTH_URL="https://api.diary.perfectday.andrewlass.com/readyz"
 HEALTH_TIMEOUT=90
 
 echo "=== Perfect Day First Deploy ==="
