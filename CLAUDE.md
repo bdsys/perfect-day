@@ -2,6 +2,9 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Claude instructions
+* Ignore SAP/Concur specific claude guidance. This is a personal project used to learn how to build a large software system using Claude Code. Practically this means do not use any skills in "mcs network", no Obsidian and no SAP/Concur Wiki or Jira. You should still use MCPs.
+
 ## Project Overview
 
 **Perfect Day** is an automated diary app that synthesizes data from Google Calendar, Google Photos, weather, and Spotify into warm, narrative diary entries using an LLM. Entries are always saved as drafts for human review before publishing. The LLM must only use facts present in source data — never infer or fabricate emotional states or details.

@@ -166,7 +166,8 @@ def validate_citation(output: dict, events: list) -> tuple[bool, str]:
 
 
 async def generate_draft_for_entry(entry_id: uuid.UUID) -> None:
-    from sqlalchemy import select, selectinload
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
 
     from app.models import Diary, Entry, LLMGeneration
 
@@ -234,7 +235,7 @@ async def generate_draft_for_entry(entry_id: uuid.UUID) -> None:
                     }
                 ],
             )
-            raw = response.content[0].text
+            raw = response.content[0].text  # type: ignore[union-attr]  # always TextBlock for non-tool calls
             try:
                 llm_result = json.loads(raw)
             except json.JSONDecodeError:

@@ -1,14 +1,17 @@
-.PHONY: up down api worker beat web migrate lint typecheck \
+.PHONY: up down infra api worker beat web migrate lint typecheck \
         test test-fast test-e2e test-live test-coverage \
         seed-bucket bootstrap
 
-API_DIR := apps/api
-WEB_DIR := apps/web
+API_DIR  := apps/api
+WEB_DIR  := apps/web
+PYTEST   := $(API_DIR)/.venv/bin/pytest
+VENV_BIN := $(API_DIR)/.venv/bin
 
 # ---------------------------------------------------------------------------
 # Stack lifecycle
 # ---------------------------------------------------------------------------
 
+# Option A: run everything in Docker (no hot-reload)
 up:
 	docker compose up -d
 
@@ -18,15 +21,25 @@ down:
 logs:
 	docker compose logs -f
 
-# Run services individually (useful when iterating on one layer)
+# Option B: infra in Docker + app processes locally (hot-reload dev)
+#   Step 1: make infra          — start postgres, redis, minio only
+#   Step 2 (separate terminals):
+#     make api    — FastAPI with --reload on :8000
+#     make worker — Celery worker
+#     make beat   — Celery beat scheduler
+#     make web    — Next.js dev server on :3000
+infra:
+	docker compose up -d postgres redis minio
+
+# Run app processes locally (use after `make infra`, not after `make up`)
 api:
-	cd $(API_DIR) && uvicorn app.main:app --reload --port 8000
+	cd $(API_DIR) && $(CURDIR)/$(VENV_BIN)/uvicorn app.main:app --reload --port 8000
 
 worker:
-	cd $(API_DIR) && celery -A app.workers.celery_app worker --loglevel=info --concurrency=2
+	cd $(API_DIR) && $(CURDIR)/$(VENV_BIN)/celery -A app.workers.celery_app worker --loglevel=info --concurrency=2
 
 beat:
-	cd $(API_DIR) && celery -A app.workers.celery_app beat --loglevel=info
+	cd $(API_DIR) && $(CURDIR)/$(VENV_BIN)/celery -A app.workers.celery_app beat --loglevel=info
 
 web:
 	cd $(WEB_DIR) && npm run dev
@@ -36,10 +49,10 @@ web:
 # ---------------------------------------------------------------------------
 
 migrate:
-	cd $(API_DIR) && alembic upgrade head
+	cd $(API_DIR) && $(CURDIR)/$(VENV_BIN)/alembic upgrade head
 
 migrate-down:
-	cd $(API_DIR) && alembic downgrade -1
+	cd $(API_DIR) && $(CURDIR)/$(VENV_BIN)/alembic downgrade -1
 
 seed-bucket:
 	./scripts/seed-minio-bucket.sh
@@ -49,28 +62,28 @@ seed-bucket:
 # ---------------------------------------------------------------------------
 
 lint:
-	cd $(API_DIR) && ruff check app tests
+	cd $(API_DIR) && $(CURDIR)/$(VENV_BIN)/ruff check app tests
 	cd $(WEB_DIR) && npx eslint src --max-warnings 0
 
 typecheck:
-	cd $(API_DIR) && mypy app
+	cd $(API_DIR) && $(CURDIR)/$(VENV_BIN)/mypy app
 	cd $(WEB_DIR) && npx tsc --noEmit
 
 format:
-	cd $(API_DIR) && ruff format app tests
+	cd $(API_DIR) && $(CURDIR)/$(VENV_BIN)/ruff format app tests
 
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
 
 test-fast:
-	cd $(API_DIR) && pytest tests/unit -q
+	cd $(API_DIR) && $(CURDIR)/$(PYTEST) tests/unit -q
 
 test:
-	cd $(API_DIR) && pytest tests/unit tests/integration -q
+	cd $(API_DIR) && $(CURDIR)/$(PYTEST) tests/unit tests/integration -q
 
 test-coverage:
-	cd $(API_DIR) && pytest tests/unit tests/integration \
+	cd $(API_DIR) && $(CURDIR)/$(PYTEST) tests/unit tests/integration \
 	  --cov=app --cov-report=term-missing --cov-report=html:htmlcov -q
 
 test-e2e:
@@ -81,7 +94,7 @@ test-e2e:
 
 test-live:
 	@echo "Runs live LLM golden tests — never in CI. Requires ANTHROPIC_API_KEY."
-	cd $(API_DIR) && pytest tests/integration/test_scan_loop.py -q -m live
+	cd $(API_DIR) && $(CURDIR)/$(PYTEST) tests/integration/test_scan_loop.py -q -m live
 
 # ---------------------------------------------------------------------------
 # Bootstrap
