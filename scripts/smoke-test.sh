@@ -39,7 +39,7 @@ PASSWORD="Password1!"
 REGISTER=$(curl -sf -X POST "${BASE}/v1/auth/register" \
   -H "Content-Type: application/json" \
   -d "{\"email\":\"${EMAIL}\",\"password\":\"${PASSWORD}\"}")
-_check "POST /v1/auth/register" 200 \
+_check "POST /v1/auth/register" 201 \
   "$(_http -X POST "${BASE}/v1/auth/register" \
      -H "Content-Type: application/json" \
      -d "{\"email\":\"smoke2+${TIMESTAMP}@example.com\",\"password\":\"${PASSWORD}\"}")"
@@ -57,17 +57,13 @@ _check "GET /v1/auth/me" 200 \
 # ---- Diaries ----
 echo ""
 echo "--- Diaries ---"
-DIARY=$(curl -sf -X POST "${BASE}/v1/diaries" \
+DIARY_BODY=$(mktemp)
+DIARY_STATUS=$(curl -s -o "${DIARY_BODY}" -w "%{http_code}" -X POST "${BASE}/v1/diaries" \
   -H "Authorization: Bearer ${TOKEN}" \
   -H "Content-Type: application/json" \
   -d "{\"name\":\"Smoke Test Diary\",\"timezone\":\"UTC\"}")
-DIARY_ID=$(echo "${DIARY}" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
-
-_check "POST /v1/diaries" 201 \
-  "$(_http -X POST "${BASE}/v1/diaries" \
-     -H "Authorization: Bearer ${TOKEN}" \
-     -H "Content-Type: application/json" \
-     -d "{\"name\":\"Smoke2\",\"timezone\":\"UTC\"}")"
+_check "POST /v1/diaries" 201 "${DIARY_STATUS}"
+DIARY_ID=$(python3 -c "import json; print(json.load(open('${DIARY_BODY}'))['id'])")
 
 _check "GET /v1/diaries" 200 \
   "$(_http "${BASE}/v1/diaries" -H "Authorization: Bearer ${TOKEN}")"

@@ -68,7 +68,7 @@ def run_migrations(db_url_sync):
     command.upgrade(cfg, "head")
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="module")
 def sync_engine(db_url_sync):
     engine = sa.create_engine(db_url_sync)
     yield engine

@@ -116,3 +116,69 @@ All transactional emails use SendGrid Dynamic Templates. Template IDs are stored
 - **During PoC:** weekly manual review of the SendGrid dashboard (bounces, spam reports, delivery rate).
 - **Post-launch:** alert in `design/observability.md` on bounce rate > 5% and on spam complaint rate > 0.1%.
 - **DMARC aggregate reports:** review weekly during the `p=none` observation window.
+
+## Dynamic DNS (Comcast residential IP)
+
+The NUC sits behind a Comcast residential connection with a dynamic public
+IPv4. Comcast does not guarantee a static lease — the address can change
+on modem reboot, lease renewal, or upstream maintenance. The DNS A records
+above (`diary.perfectday.bdsys.net`, `media.diary.perfectday.bdsys.net`)
+must track the current WAN IP automatically, otherwise the service goes
+dark whenever the lease rolls.
+
+### Recommended approach: Cloudflare DDNS via API
+
+Use Cloudflare as the authoritative DNS for `bdsys.net` (already the plan
+per the TLS section above) and run a small updater on the NUC that pushes
+the current WAN IP to Cloudflare's DNS API on a schedule.
+
+**Why Cloudflare over a dedicated DDNS service:**
+- DNS is already at Cloudflare, so no second vendor to operate.
+- We get to keep the real domain (`diary.perfectday.bdsys.net`) instead of
+  a third-party hostname like `perfectday.duckdns.org`.
+- Free plan covers unlimited A-record updates.
+- API token can be scoped to "Edit DNS for zone bdsys.net" only — much
+  smaller blast radius than a global API key.
+- No periodic confirmation emails / hostname-expiry games.
+
+**Mechanism:**
+1. Create a Cloudflare API token scoped to `Zone.DNS:Edit` for `bdsys.net`.
+   Store on the NUC at `/etc/perfect-day/cloudflare-ddns.token`, mode 0600.
+2. Run [`ddclient`](https://ddclient.net/) (Perl, in Debian/Ubuntu repos)
+   or [`cloudflare-ddns`](https://github.com/timothymiller/cloudflare-ddns)
+   (Python, Docker-friendly) as a systemd service or container on the NUC.
+3. Updater polls a "what's my IP" endpoint (e.g., `https://api.ipify.org`)
+   every 5 minutes, compares against the current Cloudflare record, and
+   `PATCH`es the A record only on change.
+4. TTL stays at 300s (already the documented PoC value), so propagation
+   after a Comcast IP roll is bounded by ~5 min poll + 5 min TTL = ~10 min
+   worst case.
+
+**Reference (Cloudflare official):** [Managing dynamic IP addresses](https://developers.cloudflare.com/dns/manage-dns-records/how-to/managing-dynamic-ip-addresses/)
+
+### Alternatives considered
+
+| Service | Verdict |
+|---|---|
+| **DuckDNS** ([duckdns.org](https://www.duckdns.org/)) | Free, AWS-hosted, simple token-based update URL. Good fallback, but only gives a `*.duckdns.org` hostname — would force a CNAME hop and a second cert SAN. Use only if Cloudflare DDNS goes down. |
+| **No-IP free** ([noip.com/free](https://www.noip.com/free)) | Free tier requires manual confirmation **every 30 days** by clicking an email link, or the hostname expires. Operationally hostile for a passive home server. Skip. |
+| **Dynu, FreeDNS afraid.org** | Workable but adds a vendor for no win over Cloudflare. Skip. |
+| **FortiGate built-in DDNS** | The FortiGate edge supports DDNS to several providers natively, including Cloudflare via custom API endpoints. Worth using if available — removes the need for a script on the NUC. Verify exact provider list against the deployed FortiOS 7.4 config; if Cloudflare is supported, prefer this and drop `ddclient`. |
+
+### Failure mode and alert
+
+If the WAN IP changes and the updater fails to push within 15 minutes,
+DNS resolves to a stale address and the site is down. Add a synthetic
+check (covered in `design/observability.md`) that resolves
+`diary.perfectday.bdsys.net` and compares to the current public IP
+(`api.ipify.org`); page on mismatch lasting > 15 min.
+
+### Verification
+
+1. Note current `dig +short diary.perfectday.bdsys.net`.
+2. Reboot the Comcast modem (forces a DHCP renew; the lease often, but
+   not always, returns a different IP).
+3. Within 10 minutes, `dig +short diary.perfectday.bdsys.net` should
+   match the new `curl https://api.ipify.org` value from the NUC.
+4. `curl -I https://diary.perfectday.bdsys.net/healthz` returns 200 from
+   off-network (mobile hotspot).

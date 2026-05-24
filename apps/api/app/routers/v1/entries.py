@@ -12,14 +12,9 @@ from app.core.auth import get_current_user
 from app.core.database import get_db
 from app.models import Diary, Entry, LLMGeneration, User
 from app.routers.v1.diaries import _get_diary_or_404
+from app.services.tier import enforce_entry_tier_limit
 
 router = APIRouter(tags=["entries"])
-
-TIER_ENTRY_LIMITS = {
-    "free": {"manual": 5, "auto": 3},
-    "tier1": {"manual": None, "auto": None},
-    "tier2": {"manual": None, "auto": None},
-}
 
 
 # ---------------------------------------------------------------------------
@@ -48,6 +43,7 @@ class EntryOut(BaseModel):
     entry_end_date: date | None
     title: str | None
     body_markdown: str | None
+    flagged_tokens: list[str] | None
     status: str
     created_by: str
     published_at: datetime | None
@@ -134,6 +130,14 @@ async def create_entry(
     diary, role = await _get_diary_or_404(diary_id, user, db)
     if role == "viewer":
         raise HTTPException(status_code=403, detail="forbidden")
+
+    await enforce_entry_tier_limit(
+        user_id=user.id,
+        diary_id=diary_id,
+        source="manual",
+        db=db,
+        subscription_tier=user.subscription_tier,
+    )
 
     entry = Entry(
         diary_id=diary_id,

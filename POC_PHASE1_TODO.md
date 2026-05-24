@@ -106,7 +106,24 @@ Clones repo, runs migrations, starts all 7 services. If `/readyz` returns 503 af
 ssh perfectday@<NUC_IP> "cd /opt/perfect-day && ./scripts/seed-minio-bucket.sh"
 ```
 
-### 4d — FortiGate edge config (manual, in FortiGate UI)
+### 4d — Cloudflare DNS + DDNS setup
+
+Full instructions: `deploy/cloudflare.md`. Short version:
+
+1. Add `bdsys.net` to Cloudflare (free account). Import existing GoDaddy records when prompted.
+   Change GoDaddy nameservers to Cloudflare's assigned NS servers.
+2. In Cloudflare DNS, create three A records pointing to the NUC WAN IP:
+   - `diary.perfectday.bdsys.net` → `<NUC WAN IP>`, TTL 300, proxy off
+   - `api.diary.perfectday.bdsys.net` → `<NUC WAN IP>`, TTL 300, proxy off
+   - `media.diary.perfectday.bdsys.net` → `<NUC WAN IP>`, TTL 300, proxy off
+3. Create a scoped Cloudflare API token: `Zone.DNS:Edit` on `bdsys.net` only.
+   Store at `/etc/perfect-day/cloudflare-ddns.token` (mode 0600).
+4. Check FortiOS 7.4 **Network → DNS → Dynamic DNS** for built-in Cloudflare support.
+   If present, configure DDNS there (no container needed). Otherwise, add
+   `cloudflare-ddns` container to `docker-compose.yml` — see `deploy/cloudflare.md` § 2.2.
+5. Verify: `curl https://api.ipify.org` matches `dig +short diary.perfectday.bdsys.net`.
+
+### 4e — FortiGate edge config (manual, in FortiGate UI)
 
 Create two virtual hosts:
 
@@ -118,7 +135,10 @@ Create two virtual hosts:
 - TLS: Let's Encrypt via FortiGate's ACME client (both vhosts need valid certs — Google OAuth requires HTTPS)
 - In Google Cloud Console → OAuth 2.0 Client, add authorized redirect URI: `https://api.diary.perfectday.bdsys.net/v1/integrations/google/callback`
 
-### 4e — Backups
+**Note:** Step 4d (Cloudflare DNS) must be complete before FortiGate can get a Let's Encrypt cert,
+because ACME HTTP-01 challenge requires the domain to resolve to the NUC's public IP.
+
+### 4f — Backups
 ```bash
 scp scripts/nuc/30-backup.sh root@<NUC_IP>:/tmp/
 ssh root@<NUC_IP> bash /tmp/30-backup.sh

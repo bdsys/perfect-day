@@ -1,6 +1,6 @@
 .PHONY: up down infra api worker beat web migrate lint typecheck \
-        test test-fast test-e2e test-live test-coverage \
-        seed-bucket bootstrap
+        test test-fast test-all test-e2e test-live test-coverage \
+        web-e2e-install seed-bucket bootstrap
 
 API_DIR  := apps/api
 WEB_DIR  := apps/web
@@ -82,19 +82,37 @@ test-fast:
 test:
 	cd $(API_DIR) && $(CURDIR)/$(PYTEST) tests/unit tests/integration -q
 
+# Run lint → typecheck → unit+integration → e2e in fail-fast order (~10 min).
+# Excludes test-live (real API cost) and smoke-test.sh (needs a running stack).
+test-all:
+	@$(MAKE) lint
+	@$(MAKE) typecheck
+	@$(MAKE) test
+	@$(MAKE) test-e2e
+	@echo ""
+	@echo "All checks passed."
+	@echo "Note: 'make test-live' and './scripts/smoke-test.sh' are not included here."
+	@echo "See POC_PHASE1_LOCAL_TESTING.md for when to use them."
+
 test-coverage:
 	cd $(API_DIR) && $(CURDIR)/$(PYTEST) tests/unit tests/integration \
 	  --cov=app --cov-report=term-missing --cov-report=html:htmlcov -q
 
 test-e2e:
-	docker compose -f docker-compose.yml -f docker-compose.test.yml up -d
+	docker compose -f docker-compose.yml -f docker-compose.test.yml up -d --build web
 	./scripts/wait-for-healthy.sh http://localhost:8000/readyz 60
-	cd $(WEB_DIR) && npx playwright test
+	cd $(API_DIR) && DATABASE_URL_SYNC=postgresql://perfectday:perfectday@localhost:5432/perfectday_test \
+	  $(CURDIR)/$(VENV_BIN)/alembic upgrade head
+	test -d "$$HOME/Library/Caches/ms-playwright" || $(MAKE) web-e2e-install
+	cd $(WEB_DIR) && CI=1 npx playwright test
 	docker compose -f docker-compose.yml -f docker-compose.test.yml down -v
+
+web-e2e-install:
+	cd $(WEB_DIR) && npx playwright install chromium
 
 test-live:
 	@echo "Runs live LLM golden tests — never in CI. Requires ANTHROPIC_API_KEY."
-	cd $(API_DIR) && $(CURDIR)/$(PYTEST) tests/integration/test_scan_loop.py -q -m live
+	cd $(API_DIR) && ANTHROPIC_API_KEY=$$(grep '^ANTHROPIC_API_KEY=' .env | cut -d= -f2-) ANTHROPIC_BASE_URL=https://api.anthropic.com $(CURDIR)/$(PYTEST) tests/integration/test_llm_live.py -q -m live
 
 # ---------------------------------------------------------------------------
 # Bootstrap

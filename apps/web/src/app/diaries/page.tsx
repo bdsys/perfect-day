@@ -27,7 +27,7 @@ export default function DiariesPage() {
   const [error, setError] = useState('')
   const [creating, setCreating] = useState(false)
   const [newName, setNewName] = useState('')
-  const [newTz, setNewTz] = useState(Intl.DateTimeFormat().resolvedOptions().timeZone)
+  const [newTz] = useState(Intl.DateTimeFormat().resolvedOptions().timeZone)
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -111,16 +111,7 @@ export default function DiariesPage() {
                 placeholder="My diary"
               />
             </div>
-            <div className="form-field">
-              <label className="form-label" htmlFor="diary-tz">Timezone</label>
-              <input
-                id="diary-tz"
-                type="text"
-                value={newTz}
-                onChange={(e) => setNewTz(e.target.value)}
-                placeholder="America/New_York"
-              />
-            </div>
+            {/* TODO: surface timezone editing in a settings/edit-diary flow once PATCH /v1/diaries/{id} exists */}
             <button type="submit" className="btn btn-primary" disabled={creating}>
               {creating ? 'Creating…' : 'Create diary'}
             </button>

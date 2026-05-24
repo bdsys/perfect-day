@@ -64,6 +64,7 @@ async def _scan_diary(diary_id_str: str) -> None:
 
     heartbeat_task = asyncio.create_task(_heartbeat(r, lock_key))
 
+    scan_run_id = None
     try:
         async with db_session() as db:
             result = await db.execute(
@@ -174,6 +175,24 @@ async def _scan_diary(diary_id_str: str) -> None:
     except Exception as e:
         log.error("scan_diary_error", diary_id=diary_id_str, error=str(e))
         async with db_session() as db:
+            # Close any open ScanRun so no zombie rows remain
+            if scan_run_id is not None:
+                try:
+                    run_result = await db.execute(select(ScanRun).where(ScanRun.id == scan_run_id))
+                    open_run = run_result.scalar_one_or_none()
+                    if open_run and open_run.status == "running":
+                        open_run.status = "failed"
+                        open_run.completed_at = datetime.now(tz=UTC)
+                        open_run.errors = [
+                            {
+                                "source": "scan_diary",
+                                "error_class": type(e).__name__,
+                                "message": str(e),
+                            }
+                        ]
+                except Exception:
+                    pass  # best-effort: don't mask the original exception
+
             job_result = await db.execute(select(ScanJob).where(ScanJob.diary_id == diary_id))
             scan_job_update = job_result.scalar_one_or_none()
             if scan_job_update:
@@ -404,3 +423,109 @@ async def _generate_entry_draft(entry_id_str: str) -> None:
     from app.workers.llm import generate_draft_for_entry
 
     await generate_draft_for_entry(uuid.UUID(entry_id_str))
+
+
+# ---------------------------------------------------------------------------
+# backfill_diary
+# ---------------------------------------------------------------------------
+
+
+@celery_app.task(
+    name="app.workers.tasks.backfill_diary",
+    bind=True,
+    max_retries=3,
+    default_retry_delay=60,
+)
+def backfill_diary(self, backfill_run_id: str) -> None:
+    run_sync(_backfill_diary(backfill_run_id))
+
+
+async def _backfill_diary(backfill_run_id_str: str) -> None:
+    from datetime import UTC, datetime
+
+    from sqlalchemy import select
+
+    from app.models import BackfillRun, Diary, OAuthToken
+    from app.workers.backfill import run_backfill
+    from app.workers.token_refresh import ensure_fresh_access_token
+    from app.workers.utils import db_session
+
+    backfill_run_id = uuid.UUID(backfill_run_id_str)
+
+    async with db_session() as db:
+        result = await db.execute(select(BackfillRun).where(BackfillRun.id == backfill_run_id))
+        backfill_run = result.scalar_one_or_none()
+        if backfill_run is None:
+            return
+
+        diary_result = await db.execute(
+            select(Diary).where(Diary.id == backfill_run.diary_id, Diary.deleted_at.is_(None))
+        )
+        diary = diary_result.scalar_one_or_none()
+        if diary is None:
+            return
+
+        token_result = await db.execute(
+            select(OAuthToken).where(
+                OAuthToken.user_id == diary.owner_user_id,
+                OAuthToken.provider == "google",
+            )
+        )
+        oauth_token = token_result.scalar_one_or_none()
+
+        backfill_run.status = "running"
+        backfill_run.started_at = datetime.now(tz=UTC)
+
+    if oauth_token is None or oauth_token.revoked_at is not None:
+        async with db_session() as db:
+            result = await db.execute(select(BackfillRun).where(BackfillRun.id == backfill_run_id))
+            run = result.scalar_one()
+            run.status = "failed"
+            run.completed_at = datetime.now(tz=UTC)
+            run.error = "No valid Google OAuth token"
+        return
+
+    async with db_session() as db:
+        token_result = await db.execute(
+            select(OAuthToken).where(
+                OAuthToken.user_id == diary.owner_user_id,
+                OAuthToken.provider == "google",
+            )
+        )
+        oauth_token_fresh = token_result.scalar_one()
+        access_token = await ensure_fresh_access_token(oauth_token_fresh, db)
+
+    if not access_token:
+        async with db_session() as db:
+            result = await db.execute(select(BackfillRun).where(BackfillRun.id == backfill_run_id))
+            run = result.scalar_one()
+            run.status = "failed"
+            run.completed_at = datetime.now(tz=UTC)
+            run.error = "Failed to refresh Google access token"
+        return
+
+    try:
+        events_ingested, entries_created = await run_backfill(
+            diary_id=backfill_run.diary_id,
+            from_date=backfill_run.from_date,
+            to_date=backfill_run.to_date,
+            access_token=access_token,
+            diary_timezone=diary.timezone,
+        )
+        async with db_session() as db:
+            result = await db.execute(select(BackfillRun).where(BackfillRun.id == backfill_run_id))
+            run = result.scalar_one()
+            run.status = "completed"
+            run.completed_at = datetime.now(tz=UTC)
+            run.events_ingested = events_ingested
+            run.entries_created = entries_created
+    except Exception as e:
+        log.error("backfill_error", backfill_run_id=backfill_run_id_str, error=str(e))
+        async with db_session() as db:
+            result = await db.execute(select(BackfillRun).where(BackfillRun.id == backfill_run_id))
+            run = result.scalar_one()
+            run.status = "failed"
+            run.completed_at = datetime.now(tz=UTC)
+            run.error = str(e)
+        raise
+

@@ -3,17 +3,17 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import UTC, date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user
 from app.core.database import get_db
 from app.core.dependencies import get_redis
-from app.models import ScanJob, ScanRun, User
+from app.models import BackfillRun, ScanJob, ScanRun, User
 from app.routers.v1.diaries import _get_diary_or_404
 
 router = APIRouter(tags=["scan"])
@@ -92,3 +92,60 @@ async def list_scan_runs(
         .limit(50)
     )
     return list(result.scalars())
+
+
+# ---------------------------------------------------------------------------
+# Backfill
+# ---------------------------------------------------------------------------
+
+
+class BackfillRequest(BaseModel):
+    days: int = Field(ge=1, le=365, description="How many days back to backfill")
+
+
+class BackfillRunOut(BaseModel):
+    id: uuid.UUID
+    diary_id: uuid.UUID
+    from_date: date
+    to_date: date
+    status: str
+    started_at: datetime | None
+    completed_at: datetime | None
+    events_ingested: int
+    entries_created: int
+    error: str | None
+
+    model_config = {"from_attributes": True}
+
+
+@router.post(
+    "/diaries/{diary_id}/scan/backfill",
+    response_model=BackfillRunOut,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def trigger_backfill(
+    diary_id: uuid.UUID,
+    body: BackfillRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> BackfillRun:
+    await _get_diary_or_404(diary_id, user, db, require_owner=True)
+
+    to_date = datetime.now(tz=UTC).date()
+    from_date = to_date - timedelta(days=body.days)
+
+    backfill_run = BackfillRun(
+        diary_id=diary_id,
+        from_date=from_date,
+        to_date=to_date,
+        sources=["google_calendar"],
+        status="pending",
+    )
+    db.add(backfill_run)
+    await db.flush()
+    await db.refresh(backfill_run)
+
+    from app.workers.tasks import backfill_diary
+
+    backfill_diary.delay(str(backfill_run.id))
+    return backfill_run
