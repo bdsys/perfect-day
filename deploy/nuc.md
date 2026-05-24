@@ -13,10 +13,10 @@ This document captures guidance specific to deploying Perfect Day on the home-la
 ## Edge
 
 - **FortiGate 7.4:** TLS termination, WAF, virtual hosting
-- Two TLS certs: one for `diary.perfectday.bdsys.net` (web), one for `api.diary.perfectday.bdsys.net` + `media.diary.perfectday.bdsys.net` (API + upload target)
+- Two TLS certs: one for `diary.perfectday.andrewlass.com` (web), one for `api.diary.perfectday.andrewlass.com` + `media.diary.perfectday.andrewlass.com` (API + upload target)
 - FortiGate WAF rule: `media.*` subdomain accepts PUT only (uploads); all other methods blocked at edge
 - CORS allowlist on the API for the web origin; Expo dev tunnel allowed only when `ENV=dev`
-- **Hybrid mode:** in the hybrid topology, the NUC's FortiGate vhost for `diary.perfectday.bdsys.net` is deactivated. The NUC is reachable only over WireGuard (or LAN). DNS A records point to the CX21, which handles all public TLS. See [`deploy/hybrid.md`](hybrid.md).
+- **Hybrid mode:** in the hybrid topology, the NUC's FortiGate vhost for `diary.perfectday.andrewlass.com` is deactivated. The NUC is reachable only over WireGuard (or LAN). DNS A records point to the CX21, which handles all public TLS. See [`deploy/hybrid.md`](hybrid.md).
 
 ## Resource budget (idle RAM)
 
@@ -72,7 +72,7 @@ The NUC is on a residential IP. Major mailbox providers (Gmail, Outlook) reject 
 
 **All outbound email must go through SendGrid (or Postmark/SES) as an SMTP relay.** Configure FastAPI to use SendGrid's SMTP endpoint with an API key — never send directly from the NUC's IP.
 
-SPF, DKIM, and DMARC records for `bdsys.net` are required before any email lands reliably. See [`design/dns-and-email.md`](../design/dns-and-email.md) for the full DNS plan.
+SPF, DKIM, and DMARC records for `andrewlass.com` are required before any email lands reliably. See [`design/dns-and-email.md`](../design/dns-and-email.md) for the full DNS plan.
 
 ## Photo serving caveat
 

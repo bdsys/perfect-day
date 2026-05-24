@@ -133,7 +133,7 @@ For each threat: actors, vectors, mitigations in place, residual risk, and re-ev
 - User calls `GET /v1/photos/{id}` in a loop to saturate outbound bandwidth (especially acute on NUC home-lab uplink).
 
 **Mitigations in place**:
-- Edge proxy restricts `media.diary.perfectday.bdsys.net` to PUT only, rate-limited.
+- Edge proxy restricts `media.diary.perfectday.andrewlass.com` to PUT only, rate-limited.
 - Orphan sweeper deletes unfinalised uploads after 24 hours.
 - Per-user API rate limit: 100 req/min.
 - Photo storage quota per user tier (Phase 2 enforcement — gap noted below).

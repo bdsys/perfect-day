@@ -4,9 +4,9 @@
 
 | Subdomain | Purpose |
 |---|---|
-| `diary.perfectday.bdsys.net` | Main web app and API |
-| `media.diary.perfectday.bdsys.net` | MinIO upload endpoint — PUT-only (signed URLs), edge proxy restricts |
-| `bdsys.net` | Apex domain — controls email identity (SPF/DKIM/DMARC) |
+| `diary.perfectday.andrewlass.com` | Main web app and API |
+| `media.diary.perfectday.andrewlass.com` | MinIO upload endpoint — PUT-only (signed URLs), edge proxy restricts |
+| `andrewlass.com` | Apex domain — controls email identity (SPF/DKIM/DMARC) |
 
 ## DNS records
 
@@ -16,15 +16,15 @@ Both subdomains point to the NUC public IP (or cloud LB when deployed to cloud).
 
 | Name | Type | Value | TTL |
 |---|---|---|---|
-| `diary.perfectday.bdsys.net` | A | `<NUC public IP>` | 300 (PoC) → 3600 (post-launch) |
-| `media.diary.perfectday.bdsys.net` | A | `<NUC public IP>` | 300 (PoC) → 3600 (post-launch) |
+| `diary.perfectday.andrewlass.com` | A | `<NUC public IP>` | 300 (PoC) → 3600 (post-launch) |
+| `media.diary.perfectday.andrewlass.com` | A | `<NUC public IP>` | 300 (PoC) → 3600 (post-launch) |
 
 Low TTL (300s) during PoC for easy IP changes. Raise to 3600s before public launch to reduce resolver load.
 
 ### TLS
 
 Let's Encrypt certificates via the edge proxy:
-- **NUC:** FortiGate handles ACME renewal. One cert covers `diary.perfectday.bdsys.net` + `media.diary.perfectday.bdsys.net` (SAN or wildcard).
+- **NUC:** FortiGate handles ACME renewal. One cert covers `diary.perfectday.andrewlass.com` + `media.diary.perfectday.andrewlass.com` (SAN or wildcard).
 - **Cloud:** provider-native cert manager or Cloudflare's automatic TLS.
 
 Certificate expiry is a page-level alert in `design/observability.md`. Renewal failure must be caught before expiry, not after.
@@ -36,7 +36,7 @@ All transactional email originates from SendGrid. The residential NUC IP cannot 
 ### SPF
 
 ```
-bdsys.net.  TXT  "v=spf1 include:sendgrid.net ~all"
+andrewlass.com.  TXT  "v=spf1 include:sendgrid.net ~all"
 ```
 
 Start with `~all` (soft-fail) for a 30-day observation window. Move to `-all` (hard-fail) only after confirming all legitimate outbound mail sources are captured. A hard-fail that blocks your own mail is worse than a soft-fail.
@@ -47,8 +47,8 @@ SendGrid generates DKIM keys per sending domain. The setup wizard produces two C
 
 ```
 # Placeholder — replace with actual SendGrid CNAME values at provisioning:
-em1234.bdsys.net.         CNAME  em1234.bdsys.net.sendgrid.net.
-s1._domainkey.bdsys.net.  CNAME  s1.domainkey.u1234567.wl012.sendgrid.net.
+em1234.andrewlass.com.         CNAME  em1234.andrewlass.com.sendgrid.net.
+s1._domainkey.andrewlass.com.  CNAME  s1.domainkey.u1234567.wl012.sendgrid.net.
 ```
 
 ### DMARC
@@ -93,7 +93,7 @@ Out of scope for PoC. Inbound routing is not configured.
 |---|---|
 | From | `Perfect Day <noreply@bdsys.net>` |
 | Reply-To | `support@bdsys.net` |
-| Sending domain | `bdsys.net` (verified single sender in SendGrid) |
+| Sending domain | `andrewlass.com` (verified single sender in SendGrid) |
 
 ## Email templates
 
@@ -122,27 +122,27 @@ All transactional emails use SendGrid Dynamic Templates. Template IDs are stored
 The NUC sits behind a Comcast residential connection with a dynamic public
 IPv4. Comcast does not guarantee a static lease — the address can change
 on modem reboot, lease renewal, or upstream maintenance. The DNS A records
-above (`diary.perfectday.bdsys.net`, `media.diary.perfectday.bdsys.net`)
+above (`diary.perfectday.andrewlass.com`, `media.diary.perfectday.andrewlass.com`)
 must track the current WAN IP automatically, otherwise the service goes
 dark whenever the lease rolls.
 
 ### Recommended approach: Cloudflare DDNS via API
 
-Use Cloudflare as the authoritative DNS for `bdsys.net` (already the plan
+Use Cloudflare as the authoritative DNS for `andrewlass.com` (already the plan
 per the TLS section above) and run a small updater on the NUC that pushes
 the current WAN IP to Cloudflare's DNS API on a schedule.
 
 **Why Cloudflare over a dedicated DDNS service:**
 - DNS is already at Cloudflare, so no second vendor to operate.
-- We get to keep the real domain (`diary.perfectday.bdsys.net`) instead of
+- We get to keep the real domain (`diary.perfectday.andrewlass.com`) instead of
   a third-party hostname like `perfectday.duckdns.org`.
 - Free plan covers unlimited A-record updates.
-- API token can be scoped to "Edit DNS for zone bdsys.net" only — much
+- API token can be scoped to "Edit DNS for zone andrewlass.com" only — much
   smaller blast radius than a global API key.
 - No periodic confirmation emails / hostname-expiry games.
 
 **Mechanism:**
-1. Create a Cloudflare API token scoped to `Zone.DNS:Edit` for `bdsys.net`.
+1. Create a Cloudflare API token scoped to `Zone.DNS:Edit` for `andrewlass.com`.
    Store on the NUC at `/etc/perfect-day/cloudflare-ddns.token`, mode 0600.
 2. Run [`ddclient`](https://ddclient.net/) (Perl, in Debian/Ubuntu repos)
    or [`cloudflare-ddns`](https://github.com/timothymiller/cloudflare-ddns)
@@ -170,15 +170,15 @@ the current WAN IP to Cloudflare's DNS API on a schedule.
 If the WAN IP changes and the updater fails to push within 15 minutes,
 DNS resolves to a stale address and the site is down. Add a synthetic
 check (covered in `design/observability.md`) that resolves
-`diary.perfectday.bdsys.net` and compares to the current public IP
+`diary.perfectday.andrewlass.com` and compares to the current public IP
 (`api.ipify.org`); page on mismatch lasting > 15 min.
 
 ### Verification
 
-1. Note current `dig +short diary.perfectday.bdsys.net`.
+1. Note current `dig +short diary.perfectday.andrewlass.com`.
 2. Reboot the Comcast modem (forces a DHCP renew; the lease often, but
    not always, returns a different IP).
-3. Within 10 minutes, `dig +short diary.perfectday.bdsys.net` should
+3. Within 10 minutes, `dig +short diary.perfectday.andrewlass.com` should
    match the new `curl https://api.ipify.org` value from the NUC.
-4. `curl -I https://diary.perfectday.bdsys.net/healthz` returns 200 from
+4. `curl -I https://diary.perfectday.andrewlass.com/healthz` returns 200 from
    off-network (mobile hotspot).

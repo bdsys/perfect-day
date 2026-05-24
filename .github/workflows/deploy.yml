@@ -129,14 +129,14 @@ jobs:
             docker compose up -d --no-deps api worker beat web
 
             # Wait for healthy
-            ./scripts/wait-for-healthy.sh https://api.diary.perfectday.bdsys.net/readyz 90
+            ./scripts/wait-for-healthy.sh https://api.diary.perfectday.andrewlass.com/readyz 90
 
             # Record deployed SHA for rollback
             echo "${{ needs.build-and-push.outputs.image_tag }}" > /opt/perfect-day/last-deployed-sha
 
       - name: Smoke test (external)
         run: |
-          ./scripts/smoke-test.sh https://api.diary.perfectday.bdsys.net
+          ./scripts/smoke-test.sh https://api.diary.perfectday.andrewlass.com
 
       - name: Sentry release marker (optional)
         if: secrets.SENTRY_AUTH_TOKEN != ''

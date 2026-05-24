@@ -9,7 +9,7 @@ configure each, and the step-by-step setup sequence.
 
 | Use | Deployment target | Cost |
 |---|---|---|
-| Authoritative DNS for `perfectday.bdsys.net` (subdomain delegation) | All | Free |
+| Authoritative DNS for `perfectday.andrewlass.com` (subdomain delegation) | All | Free |
 | DDNS — keeps A records tracking the Comcast dynamic WAN IP | NUC (home-lab) | Free |
 | R2 object storage — encrypted photo chunks | Hybrid (NUC + CX21) | Free at PoC scale |
 
@@ -23,7 +23,7 @@ in § 1 below — but it is not required.
 ## One-time account setup
 
 1. Create a free Cloudflare account at cloudflare.com.
-2. Add the zone `bdsys.net` to Cloudflare. Cloudflare will ask you to
+2. Add the zone `andrewlass.com` to Cloudflare. Cloudflare will ask you to
    change the authoritative nameservers for the entire zone, but **do not
    do that** — see § 1 below for why you only delegate a subdomain.
 3. Note the **Account ID** from the Cloudflare dashboard → right sidebar.
@@ -35,20 +35,20 @@ in § 1 below — but it is not required.
 
 ### Background
 
-`bdsys.net` is registered at GoDaddy, with GoDaddy as the authoritative
+`andrewlass.com` is registered at GoDaddy, with GoDaddy as the authoritative
 nameserver. GoDaddy holds all your existing records (MX, SPF, DKIM, etc.).
 You do not want to move the entire zone to Cloudflare and risk disrupting
 email or other existing services.
 
-Instead, delegate only the `perfectday.bdsys.net` sub-zone to Cloudflare.
-GoDaddy remains authoritative for `bdsys.net`; Cloudflare becomes
-authoritative for `*.perfectday.bdsys.net`. This is a standard NS
+Instead, delegate only the `perfectday.andrewlass.com` sub-zone to Cloudflare.
+GoDaddy remains authoritative for `andrewlass.com`; Cloudflare becomes
+authoritative for `*.perfectday.andrewlass.com`. This is a standard NS
 delegation — no migration of existing records required.
 
-### Step 1.1 — Add `perfectday.bdsys.net` as a zone in Cloudflare
+### Step 1.1 — Add `perfectday.andrewlass.com` as a zone in Cloudflare
 
 Cloudflare's free plan supports full-zone management. You need to add a
-zone for `perfectday.bdsys.net` specifically (not `bdsys.net`).
+zone for `perfectday.andrewlass.com` specifically (not `andrewlass.com`).
 
 > **Note:** Cloudflare's standard "add a site" flow assumes you own the
 > apex domain and want to move all NS there. For a subdomain delegation,
@@ -57,7 +57,7 @@ zone for `perfectday.bdsys.net` specifically (not `bdsys.net`).
 > below.
 
 **Simpler workaround (no Cloudflare account zone needed):** Use Cloudflare
-only for DDNS via the `bdsys.net` zone API. Add `bdsys.net` to Cloudflare
+only for DDNS via the `andrewlass.com` zone API. Add `andrewlass.com` to Cloudflare
 but do **not** change GoDaddy's nameservers. Instead, use Cloudflare in
 "partial / secondary DNS" mode — or just use the Cloudflare API directly
 to update records without making Cloudflare authoritative at all.
@@ -68,11 +68,11 @@ records in GoDaddy indirectly — see § 2 for the DDNS mechanism). If you
 want Cloudflare to actually be authoritative for the subdomains (for the
 proxy benefit), the cleanest path is:
 
-1. Add `perfectday.bdsys.net` A records to GoDaddy pointing to the NUC WAN IP.
-2. Create a free Cloudflare account and add `bdsys.net` as a zone (Cloudflare
+1. Add `perfectday.andrewlass.com` A records to GoDaddy pointing to the NUC WAN IP.
+2. Create a free Cloudflare account and add `andrewlass.com` as a zone (Cloudflare
    imports all existing records from GoDaddy via DNS scan).
 3. Change GoDaddy's nameservers to Cloudflare's assigned NS servers.
-   Cloudflare now serves the entire `bdsys.net` zone including all existing
+   Cloudflare now serves the entire `andrewlass.com` zone including all existing
    MX/SPF/DKIM records it imported.
 4. Verify email still works (check MX, SPF, DKIM records were imported
    correctly before cutting over nameservers).
@@ -87,9 +87,9 @@ updates against GoDaddy), create these records:
 
 | Name | Type | Value | TTL | Proxy |
 |---|---|---|---|---|
-| `diary.perfectday.bdsys.net` | A | `<current NUC WAN IP>` | 300 | Off (grey cloud) for PoC |
-| `api.diary.perfectday.bdsys.net` | A | `<current NUC WAN IP>` | 300 | Off for PoC |
-| `media.diary.perfectday.bdsys.net` | A | `<current NUC WAN IP>` | 300 | Off for PoC |
+| `diary.perfectday.andrewlass.com` | A | `<current NUC WAN IP>` | 300 | Off (grey cloud) for PoC |
+| `api.diary.perfectday.andrewlass.com` | A | `<current NUC WAN IP>` | 300 | Off for PoC |
+| `media.diary.perfectday.andrewlass.com` | A | `<current NUC WAN IP>` | 300 | Off for PoC |
 
 TTL 300s (5 min) during PoC allows the DDNS updater to converge within ~10 min
 of a Comcast lease change. Raise to 3600s before public launch.
@@ -121,8 +121,8 @@ In the Cloudflare dashboard:
 
 1. **My Profile → API Tokens → Create Token**
 2. Use the "Edit zone DNS" template.
-3. Scope: **Zone Resources → Include → Specific zone → `bdsys.net`** (or
-   `perfectday.bdsys.net` if you delegated only the subdomain).
+3. Scope: **Zone Resources → Include → Specific zone → `andrewlass.com`** (or
+   `perfectday.andrewlass.com` if you delegated only the subdomain).
 4. Permissions: `Zone.DNS:Edit` only. Nothing else.
 5. Create the token and copy it — it is shown only once.
 6. Store it on the NUC at `/etc/perfect-day/cloudflare-ddns.token`, mode 0600:
@@ -174,8 +174,8 @@ protocol=cloudflare
 use=web, web=api.ipify.org
 login=token
 password=<your-token>
-zone=bdsys.net
-diary.perfectday.bdsys.net,api.diary.perfectday.bdsys.net,media.diary.perfectday.bdsys.net
+zone=andrewlass.com
+diary.perfectday.andrewlass.com,api.diary.perfectday.andrewlass.com,media.diary.perfectday.andrewlass.com
 ```
 
 ```bash
@@ -219,7 +219,7 @@ Zone ID is on the Cloudflare dashboard → your zone → right sidebar.
 curl -s https://api.ipify.org
 
 # Current DNS resolution:
-dig +short diary.perfectday.bdsys.net
+dig +short diary.perfectday.andrewlass.com
 
 # They should match. If not, check the updater logs:
 docker compose logs cloudflare-ddns
@@ -318,7 +318,7 @@ aws s3 rm s3://perfectday-photos/test.txt \
 
 ### NUC-only deployment
 
-1. Add `bdsys.net` to Cloudflare (or just create a scoped API token if keeping GoDaddy authoritative)
+1. Add `andrewlass.com` to Cloudflare (or just create a scoped API token if keeping GoDaddy authoritative)
 2. Create the three A records (`diary.*`, `api.diary.*`, `media.diary.*`)
 3. Create the scoped `Zone.DNS:Edit` API token
 4. Deploy the DDNS updater (FortiGate built-in or Docker container)

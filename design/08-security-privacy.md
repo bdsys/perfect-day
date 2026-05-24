@@ -148,14 +148,14 @@ Cross-diary photo check: `photos` row and MinIO object deleted only when the las
 
 `HttpOnly SameSite=Strict` cookie on refresh tokens. Custom `Authorization` header on API calls (not form-submittable). No additional CSRF token needed for the API in general.
 
-**`/v1/auth/refresh` CSRF protection:** this endpoint accepts the refresh token from the HttpOnly cookie without an Authorization header. The `SameSite=Strict` attribute prevents cross-origin POSTs from including the cookie, which is the primary defense. As an additional layer, the endpoint also validates an `Origin` header check — requests must originate from `diary.perfectday.bdsys.net` or `api.diary.perfectday.bdsys.net`. Requests with an absent or mismatched Origin header (that are not from the same origin) are rejected with `403 forbidden_origin`. This defense-in-depth covers browsers that do not yet fully enforce SameSite=Strict.
+**`/v1/auth/refresh` CSRF protection:** this endpoint accepts the refresh token from the HttpOnly cookie without an Authorization header. The `SameSite=Strict` attribute prevents cross-origin POSTs from including the cookie, which is the primary defense. As an additional layer, the endpoint also validates an `Origin` header check — requests must originate from `diary.perfectday.andrewlass.com` or `api.diary.perfectday.andrewlass.com`. Requests with an absent or mismatched Origin header (that are not from the same origin) are rejected with `403 forbidden_origin`. This defense-in-depth covers browsers that do not yet fully enforce SameSite=Strict.
 
 ## MinIO access controls
 
 - Dedicated app service account. No public buckets.
 - Non-guessable object keys: `{user_id}/{uuid}.enc`.
 - No client-side read access. All reads proxied through the API.
-- Uploads go to `media.diary.perfectday.bdsys.net` via signed PUT URLs; the edge proxy restricts to PUT only.
+- Uploads go to `media.diary.perfectday.andrewlass.com` via signed PUT URLs; the edge proxy restricts to PUT only.
 
 ## Backup
 

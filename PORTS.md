@@ -18,7 +18,7 @@ The FortiGate handles TLS termination and reverse-proxies to the NUC. Only ports
 
 | Port | Service | Public URL |
 |------|---------|------------|
-| 443 | HTTPS (TLS termination, FortiGate) | https://diary.perfectday.bdsys.net |
-| 80 | HTTP (redirects to HTTPS, FortiGate) | http://diary.perfectday.bdsys.net |
+| 443 | HTTPS (TLS termination, FortiGate) | https://diary.perfectday.andrewlass.com |
+| 80 | HTTP (redirects to HTTPS, FortiGate) | http://diary.perfectday.andrewlass.com |
 
 Internal container ports on the NUC mirror the local dev setup above but are not exposed externally.

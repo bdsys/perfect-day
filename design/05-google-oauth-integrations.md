@@ -40,7 +40,7 @@ No `oauth_tokens` row is created for login flows — login is a one-time identit
    - include_granted_scopes=true
    - scope=openid email profile <requested API scopes>
    - state=signed_token (HMAC-signed: user_id + diary_id + nonce)
-   - redirect_uri=https://api.diary.perfectday.bdsys.net/v1/integrations/google/callback
+   - redirect_uri=https://api.diary.perfectday.andrewlass.com/v1/integrations/google/callback
 4. User grants/denies/partial-grants on Google's consent screen.
 5. Google redirects back with ?code= and ?scope= (actual granted scopes).
 6. Backend:

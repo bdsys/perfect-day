@@ -109,12 +109,12 @@ MASTER_SECRET=${MASTER_SECRET}
 OAUTH_TOKEN_SECRET=${OAUTH_TOKEN_SECRET}
 
 # CORS
-CORS_ORIGINS=["https://diary.perfectday.bdsys.net"]
+CORS_ORIGINS=["https://diary.perfectday.andrewlass.com"]
 
 # Google OAuth
 GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
 GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
-GOOGLE_REDIRECT_URI=https://api.diary.perfectday.bdsys.net/v1/integrations/google/callback
+GOOGLE_REDIRECT_URI=https://api.diary.perfectday.andrewlass.com/v1/integrations/google/callback
 
 # Anthropic
 ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}

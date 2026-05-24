@@ -73,7 +73,7 @@ users ──┬──< social_identities
 
 App-layer check: per-user diary count vs tier (free=1, tier1=2, tier2=4).
 
-Display URLs: `diary.perfectday.bdsys.net/d/{slug}/entries/{entry_date}`. Internal IDs remain UUIDs. Slugs are UNIQUE per `(owner_user_id, slug)` — not globally unique. A global slug uniqueness constraint leaks diary existence across users (if a slug is taken, an attacker can enumerate whether a user with a given diary name exists).
+Display URLs: `diary.perfectday.andrewlass.com/d/{slug}/entries/{entry_date}`. Internal IDs remain UUIDs. Slugs are UNIQUE per `(owner_user_id, slug)` — not globally unique. A global slug uniqueness constraint leaks diary existence across users (if a slug is taken, an attacker can enumerate whether a user with a given diary name exists).
 
 ### `diary_permissions`
 - `id` UUID PK

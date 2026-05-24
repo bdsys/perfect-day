@@ -172,7 +172,7 @@ Calls the real Anthropic API. Use this to refresh `tests/cassettes/llm_draft_sim
 
 You can also run it against a deployed stack:
 ```bash
-./scripts/smoke-test.sh https://api.diary.perfectday.bdsys.net
+./scripts/smoke-test.sh https://api.diary.perfectday.andrewlass.com
 ```
 
 ---
@@ -241,7 +241,7 @@ The plan uses **three separate GCP projects** to keep credentials isolated and a
 |---|---|---|
 | `perfect-day-dev` | Local development | `http://localhost:8000/v1/integrations/google/callback` |
 | `perfect-day-test` | CI / automated testing | (same as dev) |
-| `perfect-day-prod` | NUC production | `https://api.diary.perfectday.bdsys.net/v1/integrations/google/callback` |
+| `perfect-day-prod` | NUC production | `https://api.diary.perfectday.andrewlass.com/v1/integrations/google/callback` |
 
 For local testing, create and use `perfect-day-dev`.
 
