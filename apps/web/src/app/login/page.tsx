@@ -1,17 +1,23 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/auth-context'
 
 export default function LoginPage() {
-  const { login } = useAuth()
+  const { user, loading: authLoading, login } = useAuth()
   const router = useRouter()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    if (!authLoading && user) {
+      router.replace('/diaries')
+    }
+  }, [authLoading, user, router])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -25,6 +31,10 @@ export default function LoginPage() {
     } finally {
       setLoading(false)
     }
+  }
+
+  if (authLoading || user) {
+    return <div className="loading">Loading…</div>
   }
 
   return (

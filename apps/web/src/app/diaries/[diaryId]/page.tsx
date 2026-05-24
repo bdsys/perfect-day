@@ -40,6 +40,8 @@ export default function DiaryDetailPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [scanning, setScanning] = useState(false)
+  const [creating, setCreating] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   const [statusFilter, setStatusFilter] = useState('')
 
   useEffect(() => {
@@ -80,6 +82,30 @@ export default function DiaryDetailPage() {
     }
   }
 
+  async function handleNewEntry() {
+    setCreating(true)
+    try {
+      const today = new Date().toISOString().slice(0, 10)
+      const entry = await api.entries.create(diaryId, { entry_date: today })
+      router.push(`/entries/${entry.id}`)
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Failed to create entry')
+      setCreating(false)
+    }
+  }
+
+  async function handleDeleteDiary() {
+    if (!confirm(`Delete "${diary?.name ?? 'this diary'}"? You can restore it within 30 days.`)) return
+    setDeleting(true)
+    try {
+      await api.diaries.delete(diaryId)
+      router.push('/diaries')
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Delete failed')
+      setDeleting(false)
+    }
+  }
+
   if (authLoading || loading) return <div className="loading">Loading…</div>
   if (!user) return null
 
@@ -99,6 +125,12 @@ export default function DiaryDetailPage() {
             </button>
             <button className="btn btn-primary" onClick={handleScan} disabled={scanning}>
               {scanning ? 'Scanning…' : 'Scan now'}
+            </button>
+            <button className="btn btn-primary" onClick={handleNewEntry} disabled={creating}>
+              {creating ? 'Creating…' : 'New entry'}
+            </button>
+            <button className="btn btn-danger" onClick={handleDeleteDiary} disabled={deleting}>
+              {deleting ? 'Deleting…' : 'Delete diary'}
             </button>
           </div>
         </div>

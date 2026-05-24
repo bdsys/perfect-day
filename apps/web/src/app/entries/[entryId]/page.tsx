@@ -31,6 +31,7 @@ export default function EntryDetailPage() {
 
   const [publishing, setPublishing] = useState(false)
   const [regenerating, setRegenerating] = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
   useEffect(() => {
     if (!authLoading && !user) router.replace('/login')
@@ -108,6 +109,19 @@ export default function EntryDetailPage() {
       setError(e instanceof Error ? e.message : 'Regenerate failed')
     } finally {
       setRegenerating(false)
+    }
+  }
+
+  async function handleDelete() {
+    if (!entry) return
+    if (!confirm('Delete this entry? You can restore it within 30 days.')) return
+    setDeleting(true)
+    try {
+      await api.entries.delete(entry.id)
+      router.push(`/diaries/${entry.diary_id}`)
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Delete failed')
+      setDeleting(false)
     }
   }
 
@@ -215,6 +229,9 @@ export default function EntryDetailPage() {
               )}
               <button className="btn btn-secondary" onClick={handleRegenerate} disabled={regenerating}>
                 {regenerating ? 'Queued…' : 'Regenerate'}
+              </button>
+              <button className="btn btn-danger" onClick={handleDelete} disabled={deleting}>
+                {deleting ? 'Deleting…' : 'Delete'}
               </button>
             </div>
           </>

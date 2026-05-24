@@ -17,7 +17,7 @@ from app.workers.utils import db_session
 
 log = structlog.get_logger()
 
-PRIMARY_MODEL = "claude-sonnet-4-6-20251001"
+PRIMARY_MODEL = "claude-sonnet-4-6"
 
 SYSTEM_PROMPT = """\
 You are a warm, observational diary writer. Your job is to turn a list of calendar events \
@@ -206,24 +206,23 @@ async def generate_draft_for_entry(entry_id: uuid.UUID) -> None:
 
     for attempt in range(MAX_ATTEMPTS):
         try:
-            messages = [
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": diary_context,
-                            "cache_control": {"type": "ephemeral"},
-                        },
-                        {"type": "text", "text": entry_data + user_message_extra},
-                    ],
-                }
-            ]
             response = client.messages.create(
                 model=PRIMARY_MODEL,
                 max_tokens=1024,
                 system=SYSTEM_PROMPT,
-                messages=messages,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": diary_context,
+                                "cache_control": {"type": "ephemeral"},
+                            },
+                            {"type": "text", "text": entry_data + user_message_extra},
+                        ],
+                    }
+                ],  # type: ignore[list-item]  # anthropic SDK types don't model cache_control blocks
             )
             raw = response.content[0].text  # type: ignore[union-attr]
             try:

@@ -6,15 +6,14 @@ Run with: make test-live
 from __future__ import annotations
 
 import os
-from datetime import UTC, date, datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from contextlib import asynccontextmanager
+from datetime import UTC, date, datetime
+from unittest.mock import patch
 
 import pytest
 import pytest_asyncio
-import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from testcontainers.postgres import PostgresContainer
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -36,8 +35,9 @@ def db_url_sync(pg):
 
 @pytest.fixture(scope="module", autouse=True)
 def run_migrations(db_url_sync):
-    from alembic import command
     from alembic.config import Config
+
+    from alembic import command
 
     cfg = Config("alembic.ini")
     cfg.set_main_option("sqlalchemy.url", db_url_sync)
@@ -76,7 +76,7 @@ async def _make_diary(db: AsyncSession):
 
     user = User(
         email="live-test@example.com",
-        password_hash="x",
+        password_hash="x",  # noqa: S106
         subscription_tier="free",
     )
     db.add(user)
@@ -113,14 +113,14 @@ async def _make_entry_with_events(db: AsyncSession, diary_id):
             entry_id=entry.id,
             source="google_calendar",
             external_id="evt-soccer-001",
-            occurred_at=datetime(2026, 5, 10, 16, 0, tzinfo=timezone.utc),
+            occurred_at=datetime(2026, 5, 10, 16, 0, tzinfo=UTC),
             payload={"summary": "Soccer practice", "location": "Main Field", "description": ""},
         ),
         Event(
             entry_id=entry.id,
             source="google_calendar",
             external_id="evt-dinner-001",
-            occurred_at=datetime(2026, 5, 10, 19, 0, tzinfo=timezone.utc),
+            occurred_at=datetime(2026, 5, 10, 19, 0, tzinfo=UTC),
             payload={"summary": "Pizza dinner", "location": "Home", "description": ""},
         ),
     ]
@@ -146,27 +146,17 @@ async def test_generate_draft_golden(db: AsyncSession, db_url: str):
     from sqlalchemy import select
 
     from app.models import Entry, LLMGeneration
-    from app.workers.llm import generate_draft_for_entry, validate_citation
+    from app.workers.llm import generate_draft_for_entry
 
     diary = await _make_diary(db)
-    entry, events = await _make_entry_with_events(db, diary.id)
+    entry, _events = await _make_entry_with_events(db, diary.id)
     entry_id = entry.id
 
     await db.commit()
 
-    # Patch the db_session helper to reuse our test DB
-    engine_url = db_url
+    import app.workers.llm as worker_llm
 
-    import app.workers.utils as worker_utils
-
-    original_db_session = worker_utils.db_session
-
-    # Run against the test DB by patching db_session to our engine
-    from contextlib import asynccontextmanager
-
-    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-
-    _live_engine = create_async_engine(engine_url, echo=False)
+    _live_engine = create_async_engine(db_url, echo=False)
     _live_factory = async_sessionmaker(_live_engine, expire_on_commit=False, class_=AsyncSession)
 
     @asynccontextmanager
@@ -175,12 +165,11 @@ async def test_generate_draft_golden(db: AsyncSession, db_url: str):
             yield session
             await session.commit()
 
-    with patch.object(worker_utils, "db_session", _test_db_session):
+    with patch.object(worker_llm, "db_session", _test_db_session):
         await generate_draft_for_entry(entry_id)
 
     await _live_engine.dispose()
 
-    # Re-fetch the entry using our test DB session
     result = await db.execute(select(Entry).where(Entry.id == entry_id))
     updated_entry = result.scalar_one()
 

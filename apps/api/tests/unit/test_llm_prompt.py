@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
 from app.workers.llm import build_prompt
@@ -39,7 +39,7 @@ def _entry(
 def _event(summary: str, index_hint: int = 1, location: str = "") -> MagicMock:
     ev = MagicMock()
     ev.source = "google_calendar"
-    ev.occurred_at = datetime(2026, 5, 10, 16, 0, tzinfo=timezone.utc)
+    ev.occurred_at = datetime(2026, 5, 10, 16, 0, tzinfo=UTC)
     ev.payload = {"summary": summary, "location": location}
     return ev
 

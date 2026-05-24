@@ -111,7 +111,7 @@ test.describe('Phase 1 golden path', () => {
     )
 
     await page.reload()
-    await expect(page.locator('text=E2E Test Entry')).toBeVisible({ timeout: 5_000 })
+    await expect(page.locator('text=E2E Test Entry').first()).toBeVisible({ timeout: 5_000 })
   })
 
   test('5. Open entry → edit body → Publish → status badge shows "published"', async ({ page }) => {
@@ -123,7 +123,7 @@ test.describe('Phase 1 golden path', () => {
     await page.click('text=My Test Diary')
     await page.waitForURL('**/diaries/**')
 
-    await page.click('text=E2E Test Entry')
+    await page.locator('text=E2E Test Entry').first().click()
     await page.waitForURL('**/entries/**')
 
     await page.click('button:has-text("Edit")')

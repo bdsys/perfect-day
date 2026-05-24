@@ -1,5 +1,5 @@
 .PHONY: up down infra api worker beat web migrate lint typecheck \
-        test test-fast test-e2e test-live test-coverage \
+        test test-fast test-all test-e2e test-live test-coverage \
         web-e2e-install seed-bucket bootstrap
 
 API_DIR  := apps/api
@@ -82,6 +82,18 @@ test-fast:
 test:
 	cd $(API_DIR) && $(CURDIR)/$(PYTEST) tests/unit tests/integration -q
 
+# Run lint → typecheck → unit+integration → e2e in fail-fast order (~10 min).
+# Excludes test-live (real API cost) and smoke-test.sh (needs a running stack).
+test-all:
+	@$(MAKE) lint
+	@$(MAKE) typecheck
+	@$(MAKE) test
+	@$(MAKE) test-e2e
+	@echo ""
+	@echo "All checks passed."
+	@echo "Note: 'make test-live' and './scripts/smoke-test.sh' are not included here."
+	@echo "See POC_PHASE1_LOCAL_TESTING.md for when to use them."
+
 test-coverage:
 	cd $(API_DIR) && $(CURDIR)/$(PYTEST) tests/unit tests/integration \
 	  --cov=app --cov-report=term-missing --cov-report=html:htmlcov -q
@@ -100,7 +112,7 @@ web-e2e-install:
 
 test-live:
 	@echo "Runs live LLM golden tests — never in CI. Requires ANTHROPIC_API_KEY."
-	cd $(API_DIR) && $(CURDIR)/$(PYTEST) tests/integration/test_llm_live.py -q -m live
+	cd $(API_DIR) && ANTHROPIC_API_KEY=$$(grep '^ANTHROPIC_API_KEY=' .env | cut -d= -f2-) ANTHROPIC_BASE_URL=https://api.anthropic.com $(CURDIR)/$(PYTEST) tests/integration/test_llm_live.py -q -m live
 
 # ---------------------------------------------------------------------------
 # Bootstrap

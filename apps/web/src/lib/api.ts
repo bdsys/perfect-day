@@ -134,6 +134,9 @@ export const api = {
     async triggerScan(id: string) {
       return apiFetch(`/v1/diaries/${id}/scan/run`, { method: 'POST' })
     },
+    async delete(id: string): Promise<Diary> {
+      return apiFetch(`/v1/diaries/${id}`, { method: 'DELETE' })
+    },
   },
 
   entries: {
@@ -141,11 +144,17 @@ export const api = {
       const q = new URLSearchParams(params).toString()
       return apiFetch(`/v1/diaries/${diaryId}/entries${q ? '?' + q : ''}`)
     },
+    async create(diaryId: string, data: { entry_date: string; title?: string | null; body_markdown?: string | null }): Promise<Entry> {
+      return apiFetch(`/v1/diaries/${diaryId}/entries`, { method: 'POST', body: JSON.stringify(data) })
+    },
     async get(id: string): Promise<Entry> {
       return apiFetch(`/v1/entries/${id}`)
     },
     async patch(id: string, data: Partial<Entry>): Promise<Entry> {
       return apiFetch(`/v1/entries/${id}`, { method: 'PATCH', body: JSON.stringify(data) })
+    },
+    async delete(id: string): Promise<void> {
+      return apiFetch(`/v1/entries/${id}`, { method: 'DELETE' })
     },
     async publish(id: string): Promise<Entry> {
       return apiFetch(`/v1/entries/${id}/publish`, { method: 'POST' })

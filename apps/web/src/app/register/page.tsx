@@ -1,18 +1,24 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/auth-context'
 
 export default function RegisterPage() {
   const router = useRouter()
-  const { register } = useAuth()
+  const { user, loading: authLoading, register } = useAuth()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [displayName, setDisplayName] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    if (!authLoading && user) {
+      router.replace('/diaries')
+    }
+  }, [authLoading, user, router])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -26,6 +32,10 @@ export default function RegisterPage() {
     } finally {
       setLoading(false)
     }
+  }
+
+  if (authLoading || user) {
+    return <div className="loading">Loading…</div>
   }
 
   return (

@@ -88,11 +88,19 @@ make web         # Next.js dev server on :3000
 | API docs | http://localhost:8000/docs | Swagger UI (dev mode only) |
 | Web UI | http://localhost:3000 | Next.js |
 | MinIO console | http://localhost:9001 | minioadmin / minioadmin |
-| pgAdmin 4 | http://localhost:5050 | Postgres web GUI; admin@perfectday.local / admin |
+| pgAdmin 4 | http://localhost:5050 | Postgres web GUI; admin@example.com / admin |
 
 ---
 
 ## Running the Test Suite
+
+### Run everything at once (`make test-all`)
+
+```bash
+make test-all
+```
+
+Chains lint → typecheck → unit+integration tests → end-to-end (Playwright), fail-fast, in about 10 minutes total. This is the recommended command to run after any non-trivial change. It does **not** include `make test-live` (calls the real Anthropic API — see below) or `./scripts/smoke-test.sh` (requires a running stack).
 
 ### Unit tests only (~30s)
 
@@ -337,6 +345,47 @@ curl -s -X POST http://localhost:8000/v1/diaries/<diary_id>/scan/run \
   -H "Authorization: Bearer $TOKEN"
 # Then: make logs | grep llm
 ```
+
+---
+
+## Outstanding Phase 1 TODOs
+
+These items are in scope for Phase 1 but not yet implemented. Pick them up before
+considering Phase 1 complete.
+
+### 1 — Restore UI for soft-deleted diaries and entries
+
+**Status:** Backend endpoints exist and work; frontend UI is missing.
+
+The API already has:
+- `POST /v1/diaries/{id}/restore` — restores a soft-deleted diary within the 30-day window
+- `POST /v1/entries/{id}/restore` — restores a soft-deleted entry (no grace-period constraint currently)
+
+What's needed in the web UI:
+- `/diaries` page: list soft-deleted diaries (separate section or filter) with a Restore button each.
+- `/diaries/{id}` page: list soft-deleted entries (toggle or separate tab) with a Restore button each.
+- Wire `api.diaries.restore(id)` and `api.entries.restore(id)` into the API client (`apps/web/src/lib/api.ts`).
+- Update the delete confirm dialogs to say something accurate (e.g. "You can restore it from this page within 30 days").
+
+### 2 — Entry hard-delete (30-day grace) + matching UI
+
+**Status:** Entries are soft-deleted indefinitely; no hard-delete path exists for them. The design doc
+(`design/02-data-model.md` § Behavior decisions) says entries are "soft indefinitely; recoverable from UI"
+but the confirm dialog currently implies a 30-day window which is inaccurate.
+
+Two sub-tasks:
+
+**a) Fix the confirm dialog (quick):**
+Change the entry delete confirm in `apps/web/src/app/entries/[entryId]/page.tsx` to not imply a deadline,
+since entries are intentionally soft-deleted indefinitely per the design doc.
+
+**b) Decide and document the intended behaviour:**
+The design doc says entries are soft-indefinitely. If that's the final decision, update the confirm
+dialog to reflect it and make sure the restore UI (TODO #1 above) surfaces soft-deleted entries
+with no expiry warning. If a 30-day grace window is preferred instead, add `hard_delete_after` to the
+`Entry` model, wire it into `process_hard_deletes` in `apps/api/app/workers/beat_tasks.py`, add an
+Alembic migration, and update the restore endpoint to enforce the deadline (matching the diary flow
+in `apps/api/app/routers/v1/diaries.py:246`).
 
 ---
 
