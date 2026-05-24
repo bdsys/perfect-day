@@ -65,7 +65,7 @@ make up          # docker compose up -d (all 7 services)
 make logs        # follow all logs
 ```
 
-Services started: `postgres`, `redis`, `minio`, `api`, `worker`, `beat`, `web`.
+Services started: `postgres`, `redis`, `minio`, `pgadmin`, `api`, `worker`, `beat`, `web`.
 
 ### Option B — Hot-reload local dev (recommended for iteration)
 
@@ -88,6 +88,7 @@ make web         # Next.js dev server on :3000
 | API docs | http://localhost:8000/docs | Swagger UI (dev mode only) |
 | Web UI | http://localhost:3000 | Next.js |
 | MinIO console | http://localhost:9001 | minioadmin / minioadmin |
+| pgAdmin 4 | http://localhost:5050 | Postgres web GUI; admin@perfectday.local / admin |
 
 ---
 

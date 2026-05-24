@@ -3,10 +3,11 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { api, setAccessToken } from '@/lib/api'
+import { useAuth } from '@/lib/auth-context'
 
 export default function RegisterPage() {
   const router = useRouter()
+  const { register } = useAuth()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [displayName, setDisplayName] = useState('')
@@ -18,8 +19,7 @@ export default function RegisterPage() {
     setError('')
     setLoading(true)
     try {
-      const tokens = await api.auth.register(email, password, displayName || undefined)
-      setAccessToken(tokens.access_token)
+      await register(email, password, displayName || undefined)
       router.push('/diaries')
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Registration failed')

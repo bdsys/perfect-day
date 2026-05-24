@@ -1,0 +1,14 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "Perfect Day (local)",
+      "Group": "Servers",
+      "Host": "postgres",
+      "Port": 5432,
+      "MaintenanceDB": "perfectday",
+      "Username": "perfectday",
+      "SSLMode": "prefer",
+      "PassFile": "/dev/null"
+    }
+  }
+}

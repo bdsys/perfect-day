@@ -68,6 +68,12 @@ else
   npm install --prefix "${WEB_DIR}"
 fi
 
+# ---- 6. Playwright browsers ----
+echo "→ Installing Playwright browsers (chromium)..."
+cd "${WEB_DIR}" && npx playwright install chromium
+cd "${REPO_ROOT}"
+echo "✓ Playwright browsers ready"
+
 echo ""
 echo "=== Bootstrap complete ==="
 echo "  make up        — start all Docker services"

@@ -7,6 +7,7 @@ interface AuthState {
   user: Record<string, unknown> | null
   loading: boolean
   login: (email: string, password: string) => Promise<void>
+  register: (email: string, password: string, displayName?: string) => Promise<void>
   logout: () => Promise<void>
 }
 
@@ -14,6 +15,7 @@ const AuthContext = createContext<AuthState>({
   user: null,
   loading: true,
   login: async () => {},
+  register: async () => {},
   logout: async () => {},
 })
 
@@ -48,13 +50,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(me as Record<string, unknown>)
   }, [])
 
+  const register = useCallback(async (email: string, password: string, displayName?: string) => {
+    const tokens = await api.auth.register(email, password, displayName)
+    setAccessToken(tokens.access_token)
+    const me = await api.auth.me()
+    setUser(me as Record<string, unknown>)
+  }, [])
+
   const logout = useCallback(async () => {
     await api.auth.logout()
     setAccessToken('')
     setUser(null)
   }, [])
 
-  return <AuthContext.Provider value={{ user, loading, login, logout }}>{children}</AuthContext.Provider>
+  return <AuthContext.Provider value={{ user, loading, login, register, logout }}>{children}</AuthContext.Provider>
 }
 
 export function useAuth() {

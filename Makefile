@@ -1,6 +1,6 @@
 .PHONY: up down infra api worker beat web migrate lint typecheck \
         test test-fast test-e2e test-live test-coverage \
-        seed-bucket bootstrap
+        web-e2e-install seed-bucket bootstrap
 
 API_DIR  := apps/api
 WEB_DIR  := apps/web
@@ -89,8 +89,12 @@ test-coverage:
 test-e2e:
 	docker compose -f docker-compose.yml -f docker-compose.test.yml up -d
 	./scripts/wait-for-healthy.sh http://localhost:8000/readyz 60
+	test -d "$$HOME/Library/Caches/ms-playwright" || $(MAKE) web-e2e-install
 	cd $(WEB_DIR) && npx playwright test
 	docker compose -f docker-compose.yml -f docker-compose.test.yml down -v
+
+web-e2e-install:
+	cd $(WEB_DIR) && npx playwright install chromium
 
 test-live:
 	@echo "Runs live LLM golden tests — never in CI. Requires ANTHROPIC_API_KEY."
