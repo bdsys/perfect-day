@@ -9,14 +9,10 @@ BUCKET="${S3_BUCKET_PHOTOS:-photos}"
 
 echo "Seeding MinIO bucket '${BUCKET}' at ${ENDPOINT}..."
 
-# Use mc (MinIO client) if available, else fall back to the MinIO mc Docker image
-if command -v mc &>/dev/null; then
-  mc alias set local "${ENDPOINT}" "${ACCESS_KEY}" "${SECRET_KEY}" --api S3v4 > /dev/null
-  mc mb --ignore-existing "local/${BUCKET}"
-  echo "✓ Bucket '${BUCKET}' ready"
-else
-  docker run --rm --network host \
-    -e MC_HOST_local="${ACCESS_KEY}:${SECRET_KEY}@${ENDPOINT#http://}" \
-    minio/mc mb --ignore-existing "local/${BUCKET}"
-  echo "✓ Bucket '${BUCKET}' ready (via Docker)"
-fi
+# Always use Docker-based mc to avoid host install issues
+docker run --rm --network host \
+  minio/mc alias set local "${ENDPOINT}" "${ACCESS_KEY}" "${SECRET_KEY}" && \
+docker run --rm --network host \
+  -e MC_HOST_local="http://${ACCESS_KEY}:${SECRET_KEY}@${ENDPOINT#http://}" \
+  minio/mc mb --ignore-existing "local/${BUCKET}"
+echo "✓ Bucket '${BUCKET}' ready (via Docker)"

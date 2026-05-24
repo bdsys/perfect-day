@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi import Request, status
+from fastapi.exceptions import HTTPException, RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -29,28 +30,29 @@ def error_response(
     )
 
 
-async def http_exception_handler(request: Request, exc) -> JSONResponse:
-
+async def http_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    http_exc = exc if isinstance(exc, HTTPException) else HTTPException(500)
     return error_response(
         code="http_error",
-        message=exc.detail if isinstance(exc.detail, str) else str(exc.detail),
-        status_code=exc.status_code,
+        message=http_exc.detail if isinstance(http_exc.detail, str) else str(http_exc.detail),
+        status_code=http_exc.status_code,
     )
 
 
-async def request_validation_handler(request: Request, exc) -> JSONResponse:
+async def request_validation_handler(request: Request, exc: Exception) -> JSONResponse:
     errors = []
-    for e in exc.errors():
-        # pydantic v2 puts the original exception object in ctx — strip url and convert to strings
-        ctx = {k: str(v) for k, v in e.get("ctx", {}).items()} if e.get("ctx") else None
-        entry = {k: v for k, v in e.items() if k not in ("ctx", "url")}
-        if ctx:
-            entry["ctx"] = ctx
-        errors.append(entry)
+    if isinstance(exc, RequestValidationError):
+        for e in exc.errors():
+            # pydantic v2 puts the original exception object in ctx — strip url and convert to strings
+            ctx = {k: str(v) for k, v in e.get("ctx", {}).items()} if e.get("ctx") else None
+            entry = {k: v for k, v in e.items() if k not in ("ctx", "url")}
+            if ctx:
+                entry["ctx"] = ctx
+            errors.append(entry)
     return error_response(
         code="validation_error",
         message="Request validation failed",
-        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         details={"errors": errors},
     )
 

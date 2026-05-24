@@ -347,7 +347,7 @@ class Photo(TimestampMixin, SoftDeleteMixin, Base):
     )
     s3_key: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
     mime_type: Mapped[str | None] = mapped_column(Text)
-    bytes: Mapped[int | None] = mapped_column(BigInteger)
+    bytes: Mapped[int | None] = mapped_column(BigInteger)  # noqa: A003  # shadows builtin intentionally
     taken_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     lat: Mapped[float | None] = mapped_column(Numeric(9, 6))
     lon: Mapped[float | None] = mapped_column(Numeric(9, 6))
@@ -355,7 +355,7 @@ class Photo(TimestampMixin, SoftDeleteMixin, Base):
     external_id: Mapped[str | None] = mapped_column(Text)
     thumbnail_s3_key: Mapped[str | None] = mapped_column(Text)
     ai_description: Mapped[str | None] = mapped_column(Text)
-    dek_ciphertext: Mapped[bytes | None] = mapped_column(LargeBinary)
+    dek_ciphertext: Mapped[bytes | None] = mapped_column(LargeBinary)  # type: ignore[valid-type]
     finalized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     user: Mapped[User] = relationship(back_populates="photos")

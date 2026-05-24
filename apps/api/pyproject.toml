@@ -59,6 +59,9 @@ dev = [
     "mypy>=1.13",
     "types-python-dateutil",
     "types-pytz",
+    "types-python-jose",
+    "boto3-stubs[s3]",
+    "celery-types",
     "faker>=33",
 ]
 

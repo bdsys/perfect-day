@@ -98,7 +98,8 @@ async def _sweep_orphaned_photos() -> None:
 
     async with db_session() as db:
         cutoff = func.now() - func.cast(
-            "24 hours", __import__("sqlalchemy", fromlist=["text"]).text("interval")
+            "24 hours",  # type: ignore[arg-type]
+            __import__("sqlalchemy", fromlist=["text"]).text("interval"),
         )
         result = await db.execute(
             select(Photo).where(

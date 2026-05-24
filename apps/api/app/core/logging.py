@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import structlog
 import structlog.stdlib
+from structlog.types import Processor
 
 
 def configure_logging(env: str = "dev") -> None:
-    processors = [
+    processors: list[Processor] = [
         structlog.contextvars.merge_contextvars,
         structlog.stdlib.add_log_level,
         structlog.processors.TimeStamper(fmt="iso"),

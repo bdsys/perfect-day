@@ -3,8 +3,8 @@
 # Outputs shell export statements; redirect into a file or eval into your shell.
 set -euo pipefail
 
-hex32() { python3 -c "import secrets; print(secrets.token_hex(32))" }
-hex64() { openssl rand -hex 32 }
+hex32() { python3 -c "import secrets; print(secrets.token_hex(32))"; }
+hex64() { openssl rand -hex 32; }
 
 echo "# Generated $(date -u +%Y-%m-%dT%H:%M:%SZ) — store securely, do not commit"
 echo "SECRET_KEY=$(hex64)"
