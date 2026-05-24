@@ -171,6 +171,22 @@ export default function EntryDetailPage() {
               {entry.title ?? <span style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>(no title yet)</span>}
             </h1>
 
+            {entry.status === 'draft' && entry.flagged_tokens && entry.flagged_tokens.length > 0 && (
+              <div style={{
+                background: '#fffbeb',
+                border: '1px solid #f59e0b',
+                borderRadius: 6,
+                padding: '0.75rem 1rem',
+                marginBottom: '1rem',
+                fontSize: '0.875rem',
+                color: '#92400e',
+              }}>
+                <strong>⚠ Verify before publishing:</strong> This draft mentions{' '}
+                <strong>{entry.flagged_tokens.join(', ')}</strong>. Make sure these match
+                what actually happened before publishing.
+              </div>
+            )}
+
             {entry.body_markdown ? (
               <div
                 className="card"

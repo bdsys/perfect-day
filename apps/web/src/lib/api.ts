@@ -87,6 +87,7 @@ export interface Entry {
   entry_end_date: string | null
   title: string | null
   body_markdown: string | null
+  flagged_tokens: string[] | null
   status: 'draft' | 'published'
   created_by: 'auto' | 'manual'
   published_at: string | null

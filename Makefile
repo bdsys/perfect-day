@@ -87,10 +87,12 @@ test-coverage:
 	  --cov=app --cov-report=term-missing --cov-report=html:htmlcov -q
 
 test-e2e:
-	docker compose -f docker-compose.yml -f docker-compose.test.yml up -d
+	docker compose -f docker-compose.yml -f docker-compose.test.yml up -d --build web
 	./scripts/wait-for-healthy.sh http://localhost:8000/readyz 60
+	cd $(API_DIR) && DATABASE_URL_SYNC=postgresql://perfectday:perfectday@localhost:5432/perfectday_test \
+	  $(CURDIR)/$(VENV_BIN)/alembic upgrade head
 	test -d "$$HOME/Library/Caches/ms-playwright" || $(MAKE) web-e2e-install
-	cd $(WEB_DIR) && npx playwright test
+	cd $(WEB_DIR) && CI=1 npx playwright test
 	docker compose -f docker-compose.yml -f docker-compose.test.yml down -v
 
 web-e2e-install:
@@ -98,7 +100,7 @@ web-e2e-install:
 
 test-live:
 	@echo "Runs live LLM golden tests — never in CI. Requires ANTHROPIC_API_KEY."
-	cd $(API_DIR) && $(CURDIR)/$(PYTEST) tests/integration/test_scan_loop.py -q -m live
+	cd $(API_DIR) && $(CURDIR)/$(PYTEST) tests/integration/test_llm_live.py -q -m live
 
 # ---------------------------------------------------------------------------
 # Bootstrap

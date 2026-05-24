@@ -72,6 +72,9 @@ packages = ["app"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 addopts = "--tb=short"
+markers = [
+    "live: marks tests that call the real Anthropic API (deselected by default; run with -m live)",
+]
 
 [tool.ruff]
 line-length = 100

@@ -278,6 +278,7 @@ class Entry(TimestampMixin, SoftDeleteMixin, Base):
     )
     title: Mapped[str | None] = mapped_column(Text)
     body_markdown: Mapped[str | None] = mapped_column(Text)
+    flagged_tokens: Mapped[list[str] | None] = mapped_column(ARRAY(Text), nullable=True)
     status: Mapped[str] = mapped_column(String(10), nullable=False, server_default="draft")
     created_by: Mapped[str] = mapped_column(String(10), nullable=False)
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

@@ -115,49 +115,33 @@ def build_prompt(diary, entry, events, enrichments) -> tuple[str, str]:
 # ---------------------------------------------------------------------------
 
 
-def validate_citation(output: dict, events: list) -> tuple[bool, str]:
+def validate_citation(output: dict, events: list) -> tuple[bool, str, list[str]]:
     facts_used = output.get("facts_used", [])
     title_facts = output.get("title_facts_used", [])
     max_idx = len(events)
 
     for idx in facts_used + title_facts:
         if not isinstance(idx, int) or idx < 1 or idx > max_idx:
-            return False, f"facts_used contains invalid event index: {idx}"
+            return False, f"facts_used contains invalid event index: {idx}", []
 
     body = output.get("body_markdown", "")
     title = output.get("title", "")
 
-    # Heuristic: capitalized tokens > 2 chars should appear in cited events
     cited_event_texts = " ".join(
         json.dumps(events[i - 1].payload) for i in facts_used if 1 <= i <= max_idx
     )
     tokens = re.findall(r"\b[A-Z][a-z]{2,}\b", body + " " + title)
+    flagged = []
+    _CALENDAR_WORDS = {
+        "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
+        "January", "February", "March", "April", "May", "June",
+        "July", "August", "September", "October", "November", "December",
+    }
     for token in tokens:
-        if token not in cited_event_texts and token not in (
-            "Monday",
-            "Tuesday",
-            "Wednesday",
-            "Thursday",
-            "Friday",
-            "Saturday",
-            "Sunday",
-            "January",
-            "February",
-            "March",
-            "April",
-            "May",
-            "June",
-            "July",
-            "August",
-            "September",
-            "October",
-            "November",
-            "December",
-        ):
-            # Soft warning — don't hard reject, just flag
-            pass
+        if token not in cited_event_texts and token not in _CALENDAR_WORDS:
+            flagged.append(token)
 
-    return True, ""
+    return True, "", flagged
 
 
 # ---------------------------------------------------------------------------
@@ -214,50 +198,66 @@ async def generate_draft_for_entry(entry_id: uuid.UUID) -> None:
     llm_result = None
     error_msg = None
     model_used = PRIMARY_MODEL
+    response = None
+    flagged_tokens: list[str] = []
 
-    for attempt in range(2):
+    MAX_ATTEMPTS = 3
+    user_message_extra = ""
+
+    for attempt in range(MAX_ATTEMPTS):
         try:
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": diary_context,
+                            "cache_control": {"type": "ephemeral"},
+                        },
+                        {"type": "text", "text": entry_data + user_message_extra},
+                    ],
+                }
+            ]
             response = client.messages.create(
                 model=PRIMARY_MODEL,
                 max_tokens=1024,
                 system=SYSTEM_PROMPT,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": diary_context,
-                                "cache_control": {"type": "ephemeral"},
-                            },
-                            {"type": "text", "text": entry_data},
-                        ],
-                    }
-                ],
+                messages=messages,
             )
-            raw = response.content[0].text  # type: ignore[union-attr]  # always TextBlock for non-tool calls
+            raw = response.content[0].text  # type: ignore[union-attr]
             try:
                 llm_result = json.loads(raw)
             except json.JSONDecodeError:
-                # Try extracting JSON block
                 match = re.search(r"\{.*\}", raw, re.DOTALL)
                 if match:
                     llm_result = json.loads(match.group())
                 else:
                     raise ValueError("no JSON in response")
 
-            valid, err = validate_citation(llm_result, events)
-            if not valid and attempt == 0:
+            valid, err, flagged_tokens = validate_citation(llm_result, events)
+            if not valid:
                 log.warning("citation_validation_failed", entry_id=str(entry_id), err=err)
-                # One retry with stricter instruction
-                continue
+                if attempt < MAX_ATTEMPTS - 1:
+                    # Retry with explicit correction instruction appended
+                    user_message_extra = (
+                        f"\n\nPREVIOUS RESPONSE FAILED CITATION VALIDATION: {err}. "
+                        f"Reply again with valid JSON where every facts_used index is in "
+                        f"[1..{len(events)}] and references only events in the EVENTS section."
+                    )
+                    llm_result = None
+                    continue
+                else:
+                    error_msg = f"citation validation failed after {MAX_ATTEMPTS} attempts: {err}"
+                    llm_result = None
 
             break
+
         except anthropic.APIError as e:
             import asyncio
 
             log.error("anthropic_error", entry_id=str(entry_id), attempt=attempt, error=str(e))
-            if attempt < 2:
+            if attempt < MAX_ATTEMPTS - 1:
                 await asyncio.sleep(4**attempt)
             else:
                 error_msg = str(e)
@@ -278,8 +278,7 @@ async def generate_draft_for_entry(entry_id: uuid.UUID) -> None:
         if llm_result:
             entry_update.title = llm_result.get("title")
             entry_update.body_markdown = llm_result.get("body_markdown")
-            # Note if citation validation had warnings (unused but intentional guard)
-            validate_citation(llm_result, events)
+            entry_update.flagged_tokens = flagged_tokens or []
 
             gen = LLMGeneration(
                 entry_id=entry_id,
@@ -287,8 +286,8 @@ async def generate_draft_for_entry(entry_id: uuid.UUID) -> None:
                 prompt_hash=prompt_hash,
                 latency_ms=latency_ms,
                 status="success",
-                input_tokens=getattr(response, "usage", None) and response.usage.input_tokens,
-                output_tokens=getattr(response, "usage", None) and response.usage.output_tokens,
+                input_tokens=response.usage.input_tokens if response else None,
+                output_tokens=response.usage.output_tokens if response else None,
             )
         else:
             gen = LLMGeneration(
