@@ -13,6 +13,54 @@ Where things stand as of 2026-05-22 and what to do next.
 
 ---
 
+## Step 0 — Add README + Codecov
+
+Before merging PR #3, add a professional repo root README and wire up live coverage badges.
+Spec: `docs/superpowers/specs/2026-05-23-readme-design.md`
+
+### 0a — Sign up for Codecov
+
+1. Go to [codecov.io](https://codecov.io), sign in with GitHub
+2. Add `bdsys/perfect-day` repository
+3. Copy the upload token from the Codecov dashboard
+4. `gh secret set CODECOV_TOKEN` (paste the token when prompted)
+
+### 0b — Update `ci.yml` integration test job
+
+Change the pytest run to generate `coverage.xml`:
+```yaml
+run: pytest tests/unit tests/integration -q --timeout=120 --cov=app --cov-report=xml
+```
+
+Add a coverage upload step after the pytest step:
+```yaml
+- name: Upload coverage to Codecov
+  uses: codecov/codecov-action@v4
+  with:
+    token: ${{ secrets.CODECOV_TOKEN }}
+    files: apps/api/coverage.xml
+    flags: integration
+    fail_ci_if_error: false
+```
+
+### 0c — Create `README.md` at repo root
+
+See spec for full content. Key sections:
+- Badge row: 6 CI job badges (Shields.io) + 1 Codecov coverage badge
+- One-line project description
+- Quick start (4 commands: `bootstrap`, `api`, `web`, `test`)
+- "Where to go next" table (4 rows)
+- Full doc index: design/, deploy/, operations & reference
+
+### Verify
+
+1. Push branch → all 6 CI badges show green in README on GitHub
+2. Coverage badge shows a percentage (not "unknown") after first CI run
+3. Clicking each badge navigates to the Actions workflow page
+4. All doc links in the index resolve (no 404s)
+
+---
+
 ## Step 1 — Merge PR #3
 
 ```bash
