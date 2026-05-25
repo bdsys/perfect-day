@@ -65,6 +65,7 @@ class EntryOut(BaseModel):
     published_at: datetime | None
     deleted_at: datetime | None
     created_at: datetime
+    updated_at: datetime
     body_source: str = "llm"
     events: list[EventOut] = []
 
@@ -110,6 +111,7 @@ def _entry_out_from_orm(entry: Entry) -> EntryOut:
         published_at=entry.published_at,
         deleted_at=entry.deleted_at,
         created_at=entry.created_at,
+        updated_at=entry.updated_at,
         body_source=entry.body_source,
         events=events_out,
     )

@@ -247,6 +247,40 @@ input:focus {
   margin-top: 0.5rem;
 }
 
+/* Spinner */
+.spinner {
+  display: inline-block;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Status panel */
+.status-panel {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  border-radius: 6px;
+  margin: 0.75rem 0 1rem;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  font-size: 0.875rem;
+}
+.status-panel.running  { background: #f0f7ff; border-color: #93c5fd; }
+.status-panel.success  { background: var(--published-bg); border-color: var(--published-border); }
+.status-panel.failed   { background: #fef2f2; border-color: #fca5a5; color: #991b1b; }
+.status-panel.partial  { background: var(--draft-bg); border-color: var(--draft-border); color: #92400e; }
+.status-panel-body     { flex: 1; min-width: 0; }
+.status-panel-headline { font-weight: 600; }
+.status-panel-detail   { color: var(--text-muted); margin-top: 0.15rem; font-size: 0.8rem; }
+.status-panel-errors   { margin-top: 0.35rem; padding-left: 1rem; font-size: 0.8rem; }
+.status-panel-dismiss  { background: none; border: none; color: var(--text-muted); font-size: 1.1rem; line-height: 1; cursor: pointer; padding: 0; flex-shrink: 0; }
+
 .success-message {
   color: #16a34a;
   font-size: 0.875rem;

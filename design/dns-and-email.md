@@ -143,7 +143,7 @@ the current WAN IP to Cloudflare's DNS API on a schedule.
 
 **Mechanism:**
 1. Create a Cloudflare API token scoped to `Zone.DNS:Edit` for `andrewlass.com`.
-   Store on the NUC at `/etc/perfect-day/cloudflare-ddns.token`, mode 0600.
+   Store on the NUC at `/etc/perfect-day/cloudflare-ddns.config.json`, mode 0600.
 2. Run [`ddclient`](https://ddclient.net/) (Perl, in Debian/Ubuntu repos)
    or [`cloudflare-ddns`](https://github.com/timothymiller/cloudflare-ddns)
    (Python, Docker-friendly) as a systemd service or container on the NUC.

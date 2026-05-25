@@ -1,10 +1,12 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
-import { api, type Diary, type Entry, type Integration } from '@/lib/api'
+import { api, type Diary, type Entry, type Integration, type ScanRun } from '@/lib/api'
 import { useAuth } from '@/lib/auth-context'
+import { StatusPanel } from '@/components/StatusPanel'
+import { usePolling } from '@/lib/usePolling'
 
 function formatDate(d: string) {
   return new Date(d + 'T00:00:00').toLocaleDateString(undefined, {
@@ -50,7 +52,8 @@ export default function DiaryDetailPage() {
   const [googleIntegration, setGoogleIntegration] = useState<Integration | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [scanning, setScanning] = useState(false)
+  const [pollingScan, setPollingScan] = useState(false)
+  const [latestRun, setLatestRun] = useState<ScanRun | null>(null)
   const [creating, setCreating] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [statusFilter, setStatusFilter] = useState('')
@@ -86,15 +89,42 @@ export default function DiaryDetailPage() {
   }, [user, diaryId, statusFilter])
 
   async function handleScan() {
-    setScanning(true)
     try {
-      await api.diaries.triggerScan(diaryId)
+      const result = await api.diaries.triggerScan(diaryId)
+      if (result.queued || result.alreadyRunning) {
+        setLatestRun(null)
+        setPollingScan(true)
+      }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Scan failed')
-    } finally {
-      setScanning(false)
     }
   }
+
+  const pollScan = useCallback(async () => {
+    try {
+      const runs = await api.diaries.listScanRuns(diaryId)
+      if (runs.length === 0) return
+      const run = runs[0]
+      setLatestRun(run)
+      if (run.status === 'success' || run.status === 'partial' || run.status === 'failed') {
+        setPollingScan(false)
+        const updated = await api.entries.list(diaryId, statusFilter ? { status: statusFilter } : {})
+        setEntries(updated)
+      }
+    } catch {
+    }
+  }, [diaryId, statusFilter])
+
+  usePolling(pollScan, 2000, pollingScan)
+
+  useEffect(() => {
+    if (!pollingScan) return
+    const timer = setTimeout(() => {
+      setPollingScan(false)
+      setLatestRun(prev => prev?.status === 'running' ? { ...prev, status: 'failed' } : prev)
+    }, 5 * 60 * 1000)
+    return () => clearTimeout(timer)
+  }, [pollingScan])
 
   async function connectCalendar() {
     try {
@@ -153,8 +183,8 @@ export default function DiaryDetailPage() {
                 Connect Google Calendar
               </button>
             )}
-            <button className="btn btn-primary" onClick={handleScan} disabled={scanning}>
-              {scanning ? 'Scanning…' : 'Scan now'}
+            <button className="btn btn-primary" onClick={handleScan} disabled={pollingScan}>
+              {pollingScan ? 'Scanning…' : 'Scan now'}
             </button>
             <button className="btn btn-primary" onClick={handleNewEntry} disabled={creating}>
               {creating ? 'Creating…' : 'New entry'}
@@ -169,6 +199,26 @@ export default function DiaryDetailPage() {
         </div>
 
         {error && <p className="error-message" style={{ marginBottom: '1rem' }}>{error}</p>}
+
+        {latestRun && (
+          <StatusPanel
+            state={latestRun.status}
+            headline={
+              latestRun.status === 'running' ? 'Scanning…' :
+              latestRun.status === 'success' ? `Scan complete` :
+              latestRun.status === 'partial' ? 'Scan completed with errors' :
+              'Scan failed'
+            }
+            detail={
+              latestRun.status !== 'running' && latestRun.completed_at
+                ? `${latestRun.events_calendar} events · ${latestRun.entries_created} new entries`
+                : undefined
+            }
+            errors={latestRun.errors?.map(e => e.message)}
+            startedAt={latestRun.started_at}
+            onDismiss={() => setLatestRun(null)}
+          />
+        )}
 
         <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
           {['', 'draft', 'published'].map((f) => (

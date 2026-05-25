@@ -1,64 +1,66 @@
 #!/usr/bin/env bash
 # scripts/nuc/20-deploy.sh — First deploy (or full redeploy) to the NUC
-# Usage: ./scripts/nuc/20-deploy.sh [user@host]
-# Example: ./scripts/nuc/20-deploy.sh perfectday@192.168.1.100
-# Defaults to perfectday@localhost if no argument given (run locally on the NUC).
+# Run on the NUC as: sudo ./scripts/nuc/20-deploy.sh
 set -euo pipefail
 
-REMOTE="${1:-perfectday@localhost}"
-REPO_URL="https://github.com/andrewlass/perfect-day.git"
+if [ "$(id -u)" -ne 0 ]; then
+    echo "ERROR: This script must be run as root (use sudo)." >&2
+    exit 1
+fi
+
+REPO_URL="git@github.com:bdsys/perfect-day.git"
 DEPLOY_DIR="/opt/perfect-day"
 ENV_FILE="/etc/perfect-day/app.env"
 HEALTH_URL="https://api.diary.perfectday.andrewlass.com/readyz"
 HEALTH_TIMEOUT=90
 
+LOG_DIR=/var/log/perfect-day
+LOG_FILE="${LOG_DIR}/deploy-$(date +%Y%m%d-%H%M%S).log"
+
+mkdir -p "${LOG_DIR}"
+exec > >(tee -a "${LOG_FILE}") 2>&1
+
 echo "=== Perfect Day First Deploy ==="
-echo "Target: ${REMOTE}"
 echo "Deploy dir: ${DEPLOY_DIR}"
+echo "Date: $(date)"
 echo ""
 
-# Run the deploy steps on the remote host (or locally if REMOTE is localhost)
-ssh_or_local() {
-    if [[ "${REMOTE}" == "perfectday@localhost" || "${REMOTE}" == "localhost" ]]; then
-        bash -c "$*"
-    else
-        ssh -o StrictHostKeyChecking=accept-new "${REMOTE}" "$@"
-    fi
-}
-
-ssh_or_local "
-set -euo pipefail
-
-DEPLOY_DIR='${DEPLOY_DIR}'
-ENV_FILE='${ENV_FILE}'
-LOG_DIR=/var/log/perfect-day
-LOG_FILE=\"\${LOG_DIR}/deploy-\$(date +%Y%m%d-%H%M%S).log\"
-
-mkdir -p \"\${LOG_DIR}\"
-exec > >(tee -a \"\${LOG_FILE}\") 2>&1
-
 echo '[1/7] Cloning or updating repository...'
-if [ -d \"\${DEPLOY_DIR}/.git\" ]; then
-    cd \"\${DEPLOY_DIR}\"
+# /opt/perfect-day is owned by perfectday:docker (per 00-bootstrap.sh) but this
+# script runs as root. Tell git the directory is safe to avoid "dubious ownership".
+git config --global --add safe.directory "${DEPLOY_DIR}"
+if [ -d "${DEPLOY_DIR}/.git" ]; then
+    cd "${DEPLOY_DIR}"
     git pull --ff-only
     echo '  Updated existing repo'
 else
-    git clone '${REPO_URL}' \"\${DEPLOY_DIR}\"
-    cd \"\${DEPLOY_DIR}\"
+    if ! git clone "${REPO_URL}" "${DEPLOY_DIR}"; then
+        echo "" >&2
+        echo "ERROR: git clone failed." >&2
+        echo "Ensure a deploy key is installed at /root/.ssh/id_ed25519 and its" >&2
+        echo "public key is added to the repository as a deploy key on GitHub." >&2
+        exit 1
+    fi
+    cd "${DEPLOY_DIR}"
     echo '  Cloned fresh repo'
 fi
 
 echo '[2/7] Linking secrets file...'
-if [ ! -f '${ENV_FILE}' ]; then
-    echo 'ERROR: ${ENV_FILE} not found. Run scripts/nuc/10-secrets.sh first.' >&2
+if [ ! -f "${ENV_FILE}" ]; then
+    echo "ERROR: ${ENV_FILE} not found. Run scripts/nuc/10-secrets.sh first." >&2
     exit 1
 fi
-# Symlink so docker-compose.yml finds .env in the project root
-ln -sf '${ENV_FILE}' \"\${DEPLOY_DIR}/.env\"
-echo '  Linked ${ENV_FILE} -> \${DEPLOY_DIR}/.env'
+# Compose reads ./.env for ${VAR} interpolation (postgres/minio creds);
+# api/worker/beat services consume ./apps/api/.env via env_file. Symlink both
+# to the same source-of-truth secrets file.
+ln -sf "${ENV_FILE}" "${DEPLOY_DIR}/.env"
+mkdir -p "${DEPLOY_DIR}/apps/api"
+ln -sf "${ENV_FILE}" "${DEPLOY_DIR}/apps/api/.env"
+echo "  Linked ${ENV_FILE} -> ${DEPLOY_DIR}/.env"
+echo "  Linked ${ENV_FILE} -> ${DEPLOY_DIR}/apps/api/.env"
 
 echo '[3/7] Pulling Docker images...'
-cd \"\${DEPLOY_DIR}\"
+cd "${DEPLOY_DIR}"
 # Try GHCR first; fall back to local build if images not yet pushed
 if docker compose pull api worker beat web 2>/dev/null; then
     echo '  Pulled from GHCR'
@@ -80,23 +82,22 @@ echo '[6/7] Seeding MinIO bucket...'
 
 echo '[7/7] Waiting for readiness...'
 ELAPSED=0
-until curl -sf --max-time 5 '${HEALTH_URL}' > /dev/null 2>&1; do
-    if [ \"\${ELAPSED}\" -ge '${HEALTH_TIMEOUT}' ]; then
-        echo 'ERROR: Service not healthy after ${HEALTH_TIMEOUT}s' >&2
+until curl -sf --max-time 5 "${HEALTH_URL}" > /dev/null 2>&1; do
+    if [ "${ELAPSED}" -ge "${HEALTH_TIMEOUT}" ]; then
+        echo "ERROR: Service not healthy after ${HEALTH_TIMEOUT}s" >&2
         docker compose logs --tail=50
         exit 1
     fi
     sleep 5
-    ELAPSED=\$(( ELAPSED + 5 ))
-    echo \"  Waiting... \${ELAPSED}s\"
+    ELAPSED=$(( ELAPSED + 5 ))
+    echo "  Waiting... ${ELAPSED}s"
 done
 
-SHA=\$(git rev-parse --short HEAD)
-echo \"\${SHA}\" > \"\${DEPLOY_DIR}/last-deployed-sha\"
+SHA=$(git rev-parse --short HEAD)
+echo "${SHA}" > "${DEPLOY_DIR}/last-deployed-sha"
 
 echo ''
 echo '╔══════════════════════════════════════════╗'
-echo \"║  Deploy complete: sha-\${SHA}\"
+echo "║  Deploy complete: sha-${SHA}"
 echo '╚══════════════════════════════════════════╝'
-echo \"Log: \${LOG_FILE}\"
-"
+echo "Log: ${LOG_FILE}"

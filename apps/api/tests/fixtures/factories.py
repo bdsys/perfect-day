@@ -78,18 +78,28 @@ async def make_entry(
 
 async def make_event(
     db: AsyncSession,
-    entry: Entry,
+    diary_id: uuid.UUID | None = None,
+    entry: Entry | None = None,
     source: str = "google_calendar",
     external_id: str | None = None,
     payload: dict | None = None,
     occurred_at: datetime | None = None,
 ) -> Event:
     ev = Event(
-        entry_id=entry.id,
-        diary_id=entry.diary_id,
+        diary_id=diary_id if diary_id is not None else getattr(entry, "diary_id", None),
+        entry_id=entry.id if entry is not None else None,
         source=source,
         external_id=external_id or uuid.uuid4().hex,
-        payload=payload or {"summary": "Test event", "location": ""},
+        payload=payload
+            or {
+                "summary": "Test event",
+                "location": "",
+                "description": "",
+                "start": {},
+                "end": {},
+                "status": "",
+                "attendees": [],
+            },
         occurred_at=occurred_at or datetime.now(tz=UTC),
     )
     db.add(ev)

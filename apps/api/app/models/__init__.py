@@ -202,6 +202,9 @@ class Diary(TimestampMixin, SoftDeleteMixin, Base):
     backfill_runs: Mapped[list[BackfillRun]] = relationship(
         back_populates="diary", cascade="all, delete-orphan"
     )
+    auto_creation_rules: Mapped[list[AutoCreationRule]] = relationship(
+        back_populates="diary", cascade="all, delete-orphan"
+    )
 
     __table_args__ = (
         UniqueConstraint("owner_user_id", "slug", name="uq_diaries_owner_slug"),
@@ -284,10 +287,16 @@ class Entry(TimestampMixin, SoftDeleteMixin, Base):
     body_source: Mapped[str] = mapped_column(String(20), nullable=False, server_default="llm")
     status: Mapped[str] = mapped_column(String(10), nullable=False, server_default="draft")
     created_by: Mapped[str] = mapped_column(String(10), nullable=False)
+    creation_source: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default="manual"
+    )
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     diary: Mapped[Diary] = relationship(back_populates="entries")
-    events: Mapped[list[Event]] = relationship(back_populates="entry", cascade="all, delete-orphan")
+    events: Mapped[list[Event]] = relationship(
+        back_populates="entry", cascade="all, delete-orphan",
+        foreign_keys="Event.entry_id",
+    )
     entry_photos: Mapped[list[EntryPhoto]] = relationship(
         back_populates="entry", cascade="all, delete-orphan"
     )
@@ -300,12 +309,19 @@ class Entry(TimestampMixin, SoftDeleteMixin, Base):
     edit_diffs: Mapped[list[EntryEditDiff]] = relationship(
         back_populates="entry", cascade="all, delete-orphan"
     )
+    rule_matches: Mapped[list[EntryRuleMatch]] = relationship(
+        back_populates="entry", cascade="all, delete-orphan"
+    )
 
     __table_args__ = (
         Index("ix_entries_diary_entry_date", "diary_id", "entry_date"),
         CheckConstraint("status IN ('draft','published')", name="ck_entries_status"),
         CheckConstraint("created_by IN ('auto','manual')", name="ck_entries_created_by"),
         CheckConstraint("body_source IN ('llm','fallback')", name="ck_entries_body_source"),
+        CheckConstraint(
+            "creation_source IN ('manual','calendar_pick','rule','legacy_auto')",
+            name="ck_entries_creation_source",
+        ),
     )
 
 
@@ -313,15 +329,18 @@ class Event(TimestampMixin, Base):
     __tablename__ = "events"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    entry_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("entries.id", ondelete="CASCADE"), nullable=False
+    diary_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("diaries.id", ondelete="CASCADE"), nullable=True
+    )
+    entry_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("entries.id", ondelete="CASCADE"), nullable=True
     )
     source: Mapped[str] = mapped_column(String(30), nullable=False)
     external_id: Mapped[str | None] = mapped_column(Text)
     occurred_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
 
-    entry: Mapped[Entry] = relationship(back_populates="events")
+    entry: Mapped[Entry | None] = relationship(back_populates="events", foreign_keys=[entry_id])
 
     __table_args__ = (
         Index(
@@ -331,6 +350,12 @@ class Event(TimestampMixin, Base):
             unique=True,
             postgresql_where=text("external_id IS NOT NULL"),
         ),
+        Index(
+            "ix_events_unattached_occurred",
+            "occurred_at",
+            postgresql_where=text("entry_id IS NULL"),
+        ),
+        Index("ix_events_diary_id", "diary_id"),
         CheckConstraint(
             "source IN ('google_calendar','google_photos','manual','spotify')",
             name="ck_events_source",
@@ -518,6 +543,8 @@ class ScanRun(TimestampMixin, Base):
     entries_created: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     entries_updated: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     llm_calls_made: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    rules_evaluated: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    rule_matches: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     errors: Mapped[dict | None] = mapped_column(JSONB)
 
     diary: Mapped[Diary] = relationship(back_populates="scan_runs")
@@ -576,6 +603,79 @@ class DiaryCalendarFilter(TimestampMixin, Base):
             "diary_id", "google_calendar_id", name="uq_diary_calendar_filters_diary_gcal"
         ),
     )
+
+
+# ---------------------------------------------------------------------------
+# Auto-creation rules
+# ---------------------------------------------------------------------------
+
+
+class AutoCreationRule(TimestampMixin, Base):
+    __tablename__ = "auto_creation_rules"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    diary_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("diaries.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    # condition: AND/OR tree — see docs/superpowers/plans for JSON shape
+    condition: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    # options keys: recurring ('per_instance'|'per_series'), multi_day ('per_day'|'spanning')
+    options: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    last_applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    diary: Mapped[Diary] = relationship(back_populates="auto_creation_rules")
+    rule_matches: Mapped[list[EntryRuleMatch]] = relationship(
+        back_populates="rule", cascade="all, delete-orphan"
+    )
+    series_claims: Mapped[list[RuleSeriesClaim]] = relationship(
+        back_populates="rule", cascade="all, delete-orphan"
+    )
+
+    __table_args__ = (
+        Index("ix_auto_creation_rules_diary_enabled", "diary_id", "enabled"),
+    )
+
+
+class EntryRuleMatch(Base):
+    __tablename__ = "entry_rule_matches"
+
+    entry_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("entries.id", ondelete="CASCADE"), primary_key=True
+    )
+    rule_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("auto_creation_rules.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    matched_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    entry: Mapped[Entry] = relationship(back_populates="rule_matches")
+    rule: Mapped[AutoCreationRule] = relationship(back_populates="rule_matches")
+
+    __table_args__ = (Index("ix_entry_rule_matches_rule", "rule_id"),)
+
+
+class RuleSeriesClaim(Base):
+    __tablename__ = "rule_series_claims"
+
+    rule_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("auto_creation_rules.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    recurring_event_id: Mapped[str] = mapped_column(Text, nullable=False, primary_key=True)
+    entry_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("entries.id", ondelete="CASCADE"), nullable=False
+    )
+    claimed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    rule: Mapped[AutoCreationRule] = relationship(back_populates="series_claims")
 
 
 # ---------------------------------------------------------------------------

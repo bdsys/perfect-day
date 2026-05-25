@@ -90,7 +90,7 @@ def truncate_tables(sync_engine, run_migrations):
                 "oauth_tokens, refresh_tokens, audit_log, llm_generations, "
                 "entry_edit_diffs, diary_permissions, invitations, scan_runs, "
                 "backfill_runs, diary_calendar_filters, notification_preferences, "
-                "notifications "
+                "notifications, auto_creation_rules, entry_rule_matches, rule_series_claims "
                 "RESTART IDENTITY CASCADE"
             )
         )

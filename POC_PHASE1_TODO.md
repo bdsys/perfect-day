@@ -127,17 +127,30 @@ SendGrid is needed because residential IPs are blocked by most mail servers. It 
 ### B1 — Bootstrap the NUC server (run once)
 
 ```bash
-scp scripts/nuc/00-bootstrap.sh root@<NUC_IP>:/tmp/
-ssh root@<NUC_IP> bash /tmp/00-bootstrap.sh
+ssh andrew@<NUC_IP>
+git clone git@github.com:bdsys/perfect-day.git ~/perfect-day
+cd ~/perfect-day
+sudo ./scripts/nuc/00-bootstrap.sh
 ```
 
-This installs Docker, UFW firewall, fail2ban, creates the `perfectday` service user and `/opt/perfect-day/`.
+This installs Docker, UFW firewall, fail2ban, creates the `perfectday` service user and `/opt/perfect-day/`. Also adds `andrew` to the `docker` group (re-login required).
+
+### B1.5 — Set up GitHub deploy key for git clone
+
+```bash
+sudo ssh-keygen -t ed25519 -C "perfect-day-nuc-deploy" -f /root/.ssh/id_ed25519 -N ""
+sudo cat /root/.ssh/id_ed25519.pub
+```
+
+Add the printed public key to GitHub: repo → **Settings** → **Deploy keys** → **Add deploy key** (read-only).
+
+Verify: `sudo ssh -T git@github.com` → should print "Hi bdsys/perfect-day! You've successfully authenticated..."
 
 ### B2 — Provision secrets on NUC
 
 ```bash
-scp scripts/nuc/10-secrets.sh root@<NUC_IP>:/tmp/
-ssh root@<NUC_IP> bash /tmp/10-secrets.sh
+cd ~/perfect-day
+sudo ./scripts/nuc/10-secrets.sh
 ```
 
 The script will prompt for:
@@ -153,32 +166,43 @@ It auto-generates all crypto keys. Output: `/etc/perfect-day/app.env` (mode 600)
 ### B3 — First deploy
 
 ```bash
-./scripts/nuc/20-deploy.sh root@<NUC_IP>
+cd ~/perfect-day
+sudo ./scripts/nuc/20-deploy.sh
 ```
 
 Clones the repo, runs migrations, starts all 7 services. If `/readyz` returns 503 afterward:
 ```bash
-ssh perfectday@<NUC_IP> "cd /opt/perfect-day && ./scripts/seed-minio-bucket.sh"
+cd /opt/perfect-day && ./scripts/seed-minio-bucket.sh
 ```
 
 ### B4 — Cloudflare DDNS setup
 
-Your home IP changes occasionally. The DDNS updater keeps the DNS records current.
+Your home IP changes occasionally. The `cloudflare-ddns` sidecar container (already in `docker-compose.yml`) keeps the DNS A records current.
 
-First, check if your FortiGate has built-in Cloudflare DDNS support:
-- Log in to FortiGate UI → **Network** → **DNS** → **Dynamic DNS**
-- If Cloudflare is listed as a provider, configure it there using the token from A2.
+**What you need from Cloudflare (do this first):**
+1. An API token with `Zone.DNS:Edit` scope on your zone — see `deploy/cloudflare.md` § 2.1 for exact steps.
+2. Your Zone ID — found on the Cloudflare dashboard → your zone → right sidebar.
 
-If FortiGate doesn't support Cloudflare DDNS natively, add the updater to the NUC:
-- SSH to NUC → edit `/opt/perfect-day/docker-compose.yml`
-- Add the `cloudflare-ddns` service as documented in `deploy/cloudflare.md` § 2.2
-- Use the scoped API token from A2
+**Provision the config file on the NUC:**
 
-Verify DDNS is working:
+If you haven't run `10-secrets.sh` yet, you'll be prompted for the token and zone ID automatically. If you already ran it and skipped those prompts, either re-run the script or write the file manually (see `deploy/cloudflare.md` § 2.2 for the one-shot `sudo tee` command).
+
+**Start the updater:**
+
+The DDNS sidecar starts automatically on the next `sudo ./scripts/nuc/20-deploy.sh`. If the NUC is already deployed:
+
 ```bash
-# From any external connection (phone hotspot, etc.):
-curl https://api.ipify.org          # your current WAN IP
-dig +short diary.perfectday.andrewlass.com   # should match
+cd /opt/perfect-day
+docker compose up -d cloudflare-ddns
+```
+
+**Verify:**
+
+```bash
+WAN_IP=$(curl -s https://api.ipify.org)
+DNS_IP=$(dig +short diary.perfectday.andrewlass.com)
+[ "$WAN_IP" = "$DNS_IP" ] && echo "OK: DNS matches WAN" || echo "MISMATCH: WAN=$WAN_IP DNS=$DNS_IP"
+docker compose logs cloudflare-ddns --tail=20
 ```
 
 ### B5 — FortiGate: virtual hosts and TLS certificates
@@ -223,8 +247,8 @@ Now that HTTPS is working, add the production callback URL:
 ### B7 — Backups
 
 ```bash
-scp scripts/nuc/30-backup.sh root@<NUC_IP>:/tmp/
-ssh root@<NUC_IP> bash /tmp/30-backup.sh
+cd ~/perfect-day
+sudo ./scripts/nuc/30-backup.sh
 ```
 
 Configure rclone for Backblaze B2 when prompted. Sets up daily encrypted `pg_dump` backups. (~$5/mo storage cost)
@@ -345,7 +369,7 @@ A4 (SendGrid API key)
 A5 (Anthropic API key)
   └─ B2 (secrets on NUC — needs ANTHROPIC_API_KEY)
 
-B1 (NUC bootstrap) → B2 (secrets) → B3 (first deploy) → B4+B5 → B6 → B7 (backups) → B8 (smoke test)
+B1 (NUC bootstrap) → B1.5 (deploy key) → B2 (secrets) → B3 (first deploy) → B4+B5 → B6 → B7 (backups) → B8 (smoke test)
 
 C (Web UI audit) — do locally, ideally before B3 to avoid debugging on NUC
 

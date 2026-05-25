@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 # scripts/nuc/30-backup.sh — Provision daily encrypted backup with rclone → B2
-# Run as root on the NUC after first deploy.
+# Run on the NUC as: sudo ./scripts/nuc/30-backup.sh
 # Creates an age keypair, backup service + systemd timer.
 set -euo pipefail
+
+if [ "$(id -u)" -ne 0 ]; then
+    echo "ERROR: This script must be run as root (use sudo)." >&2
+    exit 1
+fi
 
 SECRETS_DIR=/etc/perfect-day
 AGE_KEY="${SECRETS_DIR}/backup.key"

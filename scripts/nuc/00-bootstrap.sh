@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 # scripts/nuc/00-bootstrap.sh — First-time NUC OS prep
-# Run as root on a fresh Ubuntu 26 LTS install.
+# Run on the NUC as: sudo ./scripts/nuc/00-bootstrap.sh
 # Idempotent: safe to re-run.
 set -euo pipefail
+
+if [ "$(id -u)" -ne 0 ]; then
+    echo "ERROR: This script must be run as root (use sudo)." >&2
+    exit 1
+fi
 
 LOG_DIR=/var/log/perfect-day
 LOG_FILE="${LOG_DIR}/bootstrap-$(date +%Y%m%d-%H%M%S).log"
@@ -47,6 +52,11 @@ else
     # Ensure user is in docker group even if it existed before
     usermod -aG docker perfectday
     echo "  User already exists; ensured docker group membership"
+fi
+
+if id andrew &>/dev/null; then
+    usermod -aG docker andrew
+    echo "  Added andrew to docker group (re-login required for it to take effect)"
 fi
 
 # ── 4. Create directory structure ─────────────────────────────────────────────

@@ -1,10 +1,12 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
 import { api, type Entry, type EventItem } from '@/lib/api'
 import { useAuth } from '@/lib/auth-context'
+import { StatusPanel } from '@/components/StatusPanel'
+import { usePolling } from '@/lib/usePolling'
 
 function formatDate(d: string) {
   return new Date(d + 'T00:00:00').toLocaleDateString(undefined, {
@@ -50,7 +52,10 @@ export default function EntryDetailPage() {
   const [saving, setSaving] = useState(false)
 
   const [publishing, setPublishing] = useState(false)
-  const [regenerating, setRegenerating] = useState(false)
+  const [pollingRegen, setPollingRegen] = useState(false)
+  const [regenStartedAt, setRegenStartedAt] = useState<string | null>(null)
+  const [regenStartTime, setRegenStartTime] = useState<string | null>(null)
+  const [regenResult, setRegenResult] = useState<'success' | 'failed' | null>(null)
   const [deleting, setDeleting] = useState(false)
 
   useEffect(() => {
@@ -121,16 +126,50 @@ export default function EntryDetailPage() {
 
   async function handleRegenerate() {
     if (!entry) return
-    setRegenerating(true)
     try {
+      setRegenStartedAt(entry.updated_at)
+      setRegenStartTime(new Date().toISOString())
+      setRegenResult(null)
       await api.entries.regenerate(entry.id)
+      setPollingRegen(true)
       setError('')
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Regenerate failed')
-    } finally {
-      setRegenerating(false)
     }
   }
+
+  const pollRegen = useCallback(async () => {
+    if (!entry) return
+    try {
+      const updated = await api.entries.get(entry.id)
+      if (updated.updated_at !== regenStartedAt) {
+        setEntry(updated)
+        setPollingRegen(false)
+        setRegenResult('success')
+      }
+    } catch {
+    }
+  }, [entry, regenStartedAt])
+
+  usePolling(pollRegen, 2000, pollingRegen)
+
+  useEffect(() => {
+    if (!pollingRegen) return
+    const timer = setTimeout(() => {
+      setPollingRegen(false)
+      setRegenResult('failed')
+    }, 90 * 1000)
+    return () => clearTimeout(timer)
+  }, [pollingRegen])
+
+  useEffect(() => {
+    if (regenResult !== 'success') return
+    const timer = setTimeout(() => {
+      setRegenResult(null)
+      setRegenStartTime(null)
+    }, 8000)
+    return () => clearTimeout(timer)
+  }, [regenResult])
 
   async function handleDelete() {
     if (!entry) return
@@ -265,6 +304,18 @@ export default function EntryDetailPage() {
               </details>
             )}
 
+            {(pollingRegen || regenResult !== null) && (
+              <StatusPanel
+                state={pollingRegen ? 'running' : regenResult!}
+                headline={
+                  pollingRegen ? 'Regenerating draft…' :
+                  regenResult === 'success' ? 'Draft regenerated' :
+                  'Regeneration is taking longer than expected — refresh the page to check'
+                }
+                startedAt={regenStartTime ?? undefined}
+                onDismiss={() => { setRegenResult(null); setRegenStartTime(null) }}
+              />
+            )}
             <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1.25rem', flexWrap: 'wrap' }}>
               <button className="btn btn-secondary" onClick={startEdit}>
                 Edit
@@ -278,8 +329,8 @@ export default function EntryDetailPage() {
                   {publishing ? 'Unpublishing…' : 'Unpublish'}
                 </button>
               )}
-              <button className="btn btn-secondary" onClick={handleRegenerate} disabled={regenerating}>
-                {regenerating ? 'Queued…' : 'Regenerate'}
+              <button className="btn btn-secondary" onClick={handleRegenerate} disabled={pollingRegen}>
+                {pollingRegen ? 'Regenerating…' : 'Regenerate'}
               </button>
               <button className="btn btn-danger" onClick={handleDelete} disabled={deleting}>
                 {deleting ? 'Deleting…' : 'Delete'}
