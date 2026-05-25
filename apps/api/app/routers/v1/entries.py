@@ -11,7 +11,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.auth import get_current_user
 from app.core.database import get_db
-from app.models import Diary, Entry, Event, LLMGeneration, User
+from app.models import Diary, Entry, EntryRuleMatch, Event, LLMGeneration, User
 from app.routers.v1.diaries import _get_diary_or_404
 from app.services.tier import enforce_entry_tier_limit
 
@@ -52,6 +52,14 @@ class EventOut(BaseModel):
     model_config = {"from_attributes": False}  # built manually from payload
 
 
+class RuleMatchOut(BaseModel):
+    rule_id: uuid.UUID
+    rule_name: str
+    matched_at: datetime
+
+    model_config = {"from_attributes": False}
+
+
 class EntryOut(BaseModel):
     id: uuid.UUID
     diary_id: uuid.UUID
@@ -69,6 +77,7 @@ class EntryOut(BaseModel):
     body_source: str = "llm"
     creation_source: str = "manual"
     events: list[EventOut] = []
+    rule_matches: list[RuleMatchOut] = []
 
     model_config = {"from_attributes": True}
 
@@ -99,6 +108,14 @@ def _entry_out_from_orm(entry: Entry) -> EntryOut:
         [_event_out_from_orm(e) for e in entry.events],
         key=lambda e: e.occurred_at or datetime.min.replace(tzinfo=UTC),
     )
+    rule_matches_out = [
+        RuleMatchOut(
+            rule_id=match.rule_id,
+            rule_name=match.rule.name if match.rule else "",
+            matched_at=match.matched_at,
+        )
+        for match in entry.rule_matches
+    ]
     return EntryOut(
         id=entry.id,
         diary_id=entry.diary_id,
@@ -116,6 +133,7 @@ def _entry_out_from_orm(entry: Entry) -> EntryOut:
         body_source=entry.body_source,
         creation_source=entry.creation_source,
         events=events_out,
+        rule_matches=rule_matches_out,
     )
 
 
@@ -132,7 +150,10 @@ async def _get_entry_or_404(
 ) -> tuple[Entry, Diary, str | None]:
     result = await db.execute(
         select(Entry)
-        .options(selectinload(Entry.events))
+        .options(
+            selectinload(Entry.events),
+            selectinload(Entry.rule_matches).selectinload(EntryRuleMatch.rule),
+        )
         .where(Entry.id == entry_id, Entry.deleted_at.is_(None))
     )
     entry = result.scalar_one_or_none()
@@ -170,7 +191,10 @@ async def list_deleted_entries(
         raise HTTPException(status_code=404, detail="not_found")
     entry_result = await db.execute(
         select(Entry)
-        .options(selectinload(Entry.events))
+        .options(
+            selectinload(Entry.events),
+            selectinload(Entry.rule_matches).selectinload(EntryRuleMatch.rule),
+        )
         .where(Entry.diary_id == diary_id, Entry.deleted_at.is_not(None))
         .order_by(Entry.deleted_at.desc())
     )
@@ -192,7 +216,10 @@ async def list_entries(
 
     q = (
         select(Entry)
-        .options(selectinload(Entry.events))
+        .options(
+            selectinload(Entry.events),
+            selectinload(Entry.rule_matches).selectinload(EntryRuleMatch.rule),
+        )
         .where(Entry.diary_id == diary_id, Entry.deleted_at.is_(None))
     )
 
@@ -245,7 +272,7 @@ async def create_entry(
     )
     db.add(entry)
     await db.flush()
-    await db.refresh(entry, ["events"])
+    await db.refresh(entry, ["events", "rule_matches"])
     return _entry_out_from_orm(entry)
 
 
@@ -330,7 +357,12 @@ async def restore_entry(
     db: AsyncSession = Depends(get_db),
 ) -> EntryOut:
     result = await db.execute(
-        select(Entry).options(selectinload(Entry.events)).where(Entry.id == entry_id)
+        select(Entry)
+        .options(
+            selectinload(Entry.events),
+            selectinload(Entry.rule_matches).selectinload(EntryRuleMatch.rule),
+        )
+        .where(Entry.id == entry_id)
     )
     entry = result.scalar_one_or_none()
     if entry is None:
