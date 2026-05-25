@@ -201,6 +201,88 @@ def validate_citation(output: dict, events: list) -> tuple[bool, str, list[str]]
 
 
 # ---------------------------------------------------------------------------
+# Fallback body builder
+# ---------------------------------------------------------------------------
+
+
+def _build_fallback_body(events: list, entry_date) -> tuple[str, str]:
+    """Return (title, body_markdown) built deterministically from sorted events.
+
+    ``events`` must already be sorted by ``occurred_at`` (the caller's responsibility).
+    ``entry_date`` is a ``datetime.date`` used to format the title when there are
+    multiple events.
+
+    Title logic:
+    - Single event with a non-empty summary  → use that summary as title.
+    - Otherwise (multiple events, or first event has no summary) →
+      ``"{N} events on {date}"`` e.g. ``"3 events on May 19"``.
+
+    Body format (one bullet per event):
+        - HH:MM–HH:MM  **Summary** — Location
+    Time display:
+    - Both dateTime start + end present → ``HH:MM–HH:MM``
+    - Only dateTime start → ``HH:MM``
+    - All-day (only ``date`` key, no ``dateTime``) → ``All day``
+    - Fallback → ``occurred_at.strftime("%H:%M")``
+    """
+    lines: list[str] = []
+    for event in events:
+        p = event.payload if isinstance(event.payload, dict) else {}
+        summary = (p.get("summary") or "").strip() or "(no title)"
+
+        start = p.get("start") or {}
+        end = p.get("end") or {}
+        start_dt_str = start.get("dateTime")
+        end_dt_str = end.get("dateTime")
+        is_all_day = not start_dt_str and bool(start.get("date"))
+
+        if is_all_day:
+            time_range = "All day"
+        elif start_dt_str and end_dt_str:
+            try:
+                s = datetime.fromisoformat(start_dt_str)
+                e = datetime.fromisoformat(end_dt_str)
+                time_range = f"{s.strftime('%H:%M')}–{e.strftime('%H:%M')}"
+            except (ValueError, TypeError):
+                time_range = (
+                    event.occurred_at.strftime("%H:%M") if event.occurred_at else "?"
+                )
+        elif start_dt_str:
+            try:
+                s = datetime.fromisoformat(start_dt_str)
+                time_range = s.strftime("%H:%M")
+            except (ValueError, TypeError):
+                time_range = (
+                    event.occurred_at.strftime("%H:%M") if event.occurred_at else "?"
+                )
+        else:
+            time_range = (
+                event.occurred_at.strftime("%H:%M") if event.occurred_at else "?"
+            )
+
+        location = (p.get("location") or "").strip()
+        loc_suffix = f" — {location}" if location else ""
+        lines.append(f"- {time_range}  **{summary}**{loc_suffix}")
+
+    body_markdown = "\n".join(lines)
+
+    # Build title
+    first_summary = ""
+    if events:
+        first_p = events[0].payload if isinstance(events[0].payload, dict) else {}
+        first_summary = (first_p.get("summary") or "").strip()
+
+    n = len(events)
+    if n == 1 and first_summary:
+        title = first_summary
+    else:
+        date_str = entry_date.strftime("%B %-d") if entry_date else "unknown date"
+        title = f"{n} events on {date_str}"
+
+    return title, body_markdown
+
+
+# ---------------------------------------------------------------------------
 # Main generation function
 # ---------------------------------------------------------------------------
 
@@ -324,15 +406,25 @@ async def generate_draft_for_entry(entry_id: uuid.UUID) -> None:
 
     latency_ms = int(time.time() * 1000) - start_ms
 
+    # Determine whether the LLM result is usable (non-None and has non-empty
+    # title or body).  An empty dict or a result where both fields are falsy
+    # triggers the deterministic fallback.
+    llm_usable = bool(
+        llm_result
+        and (llm_result.get("title") or llm_result.get("body_markdown"))
+    )
+
     async with db_session() as db:
         entry_result = await db.execute(select(Entry).where(Entry.id == entry_id))
         entry_update = entry_result.scalar_one_or_none()
         if entry_update is None:
             return
 
-        if llm_result:
+        if llm_usable:
+            assert llm_result is not None  # guaranteed by llm_usable check above
             entry_update.title = llm_result.get("title")
             entry_update.body_markdown = llm_result.get("body_markdown")
+            entry_update.body_source = "llm"
             entry_update.flagged_tokens = flagged_tokens or []
 
             gen = LLMGeneration(
@@ -345,13 +437,31 @@ async def generate_draft_for_entry(entry_id: uuid.UUID) -> None:
                 output_tokens=response.usage.output_tokens if response else None,
             )
         else:
+            # Deterministic fallback: build a bulleted event list from raw data.
+            # ``events`` was computed in the first db_session block and is still
+            # in scope here.
+            fallback_title, fallback_body = _build_fallback_body(
+                events, entry_update.entry_date
+            )
+            entry_update.title = fallback_title
+            entry_update.body_markdown = fallback_body
+            entry_update.body_source = "fallback"
+            entry_update.flagged_tokens = []
+
+            # Distinguish between API failure (llm_result is None) and an LLM
+            # response that contained no usable content (llm_result is a dict
+            # with empty fields).  Both map to status="failed" because the DB
+            # constraint only allows 'success' | 'failed'.
+            gen_error = error_msg or (
+                "llm returned empty title and body" if llm_result is not None else "unknown"
+            )
             gen = LLMGeneration(
                 entry_id=entry_id,
                 model=model_used,
                 prompt_hash=prompt_hash,
                 latency_ms=latency_ms,
                 status="failed",
-                error=error_msg or "unknown",
+                error=gen_error,
             )
 
         db.add(gen)
@@ -359,5 +469,6 @@ async def generate_draft_for_entry(entry_id: uuid.UUID) -> None:
             "generate_entry_draft_done",
             entry_id=str(entry_id),
             status=gen.status,
+            body_source=entry_update.body_source,
             latency_ms=latency_ms,
         )
