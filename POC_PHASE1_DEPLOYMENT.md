@@ -340,6 +340,99 @@ What `40-update.sh` does:
 
 ---
 
+## 8.5 — Full Reinstall (Teardown + Rebuild)
+
+When the NUC's state has drifted (recurring Postgres auth failures, stale containers across profiles, mismatched secrets), do a full nuke and rebuild instead of debugging individual symptoms. This takes ~5 minutes and produces a deterministic clean state.
+
+### When to use this
+
+- Recurring `FATAL: password authentication failed for user "perfectday"` after `10-secrets.sh` regenerated `POSTGRES_PASSWORD` but the Postgres data volume survived a partial cleanup
+- `pgadmin` from a stray `make up` is holding `pgadmin_data` open and blocking volume removal
+- You suspect systemd `perfect-day.service` is racing your manual operator commands
+- General "I want to start clean" — preferred over piecemeal cleanup
+
+### What gets destroyed
+
+| State source | Removed |
+|---|---|
+| systemd `perfect-day.service` | Stopped + disabled (unit file kept) |
+| All containers across `--profile nuc` AND `--profile dev` | Yes |
+| All `perfect-day_*` named Docker volumes | Yes |
+| `/etc/perfect-day/app.env` | Yes — forces re-prompt for API keys |
+| `/etc/perfect-day/cloudflare-ddns.config.json` | Yes |
+| `/opt/perfect-day` (deployed repo) | Yes |
+| Docker images | **No** (cached layers, harmless; speeds up rebuild) |
+| `perfectday` OS user, UFW rules, fail2ban, `/var/log/perfect-day/` | **No** (environment setup, not project state) |
+| `perfect-day-backup.timer` | **No** (disable manually first if backups are in flight) |
+
+### The procedure
+
+Have your four API keys ready before starting (`ANTHROPIC_API_KEY`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `SENDGRID_API_KEY`) — `10-secrets.sh` will re-prompt for all of them.
+
+```bash
+# 1. Dry-run first to see exactly what will be destroyed:
+sudo /opt/perfect-day/scripts/nuc/99-teardown.sh
+
+# 2. Confirm and execute the teardown:
+sudo /opt/perfect-day/scripts/nuc/99-teardown.sh --yes
+
+# 3. Re-clone the repo:
+sudo git clone git@github.com:bdsys/perfect-day.git /opt/perfect-day
+cd /opt/perfect-day
+
+# 4. Re-provision secrets (re-prompts for all 4 API keys):
+sudo ./scripts/nuc/10-secrets.sh
+
+# 5. Deploy (no --clean needed; volumes are already gone):
+sudo ./scripts/nuc/20-deploy.sh
+```
+
+### Why this fixes the recurring Postgres auth failure
+
+Postgres only honors `POSTGRES_PASSWORD` on the **first init** of `/var/lib/postgresql/data`. If `10-secrets.sh` regenerates a fresh `POSTGRES_PASSWORD` (it always does — `secrets.token_hex(32)`) but the `postgres_data` volume survives, the new env password and the on-disk password hash drift. The API can't authenticate.
+
+`99-teardown.sh` clears all six state sources simultaneously (systemd unit, containers across both Docker profiles, named volumes, `app.env`, `cloudflare-ddns.config.json`, repo checkout) so the next `10-secrets.sh` + `20-deploy.sh` run starts from a known-clean state.
+
+### Lighter alternative: `--clean` flag
+
+If you only need to reset Postgres without nuking secrets and the repo (e.g. you re-ran `10-secrets.sh` but don't want to re-enter API keys):
+
+```bash
+sudo ./scripts/nuc/20-deploy.sh --clean
+```
+
+This wipes all `perfect-day_*` Docker volumes across both `--profile nuc` and `--profile dev`, but keeps `/etc/perfect-day/app.env` and `/opt/perfect-day` intact.
+
+### Caveat: `main` vs working branches
+
+`git clone` with no `-b` flag pulls the default branch (`main`). If your latest fixes are on a feature branch that hasn't been merged to `main` yet, the NUC will pull stale code and may re-trigger the same failure mode. Either merge to `main` first, or clone the specific branch:
+
+```bash
+sudo git clone -b <branch-name> git@github.com:bdsys/perfect-day.git /opt/perfect-day
+```
+
+Subsequent `20-deploy.sh` runs will then `git pull --ff-only` from that branch.
+
+### Verification after rebuild
+
+```bash
+# Stack is healthy:
+curl -fsS http://localhost/healthz -H "Host: api.diary.perfectday.andrewlass.com"
+# Expect: {"status":"ok"}
+
+# API can authenticate against Postgres (the failure mode this fixes):
+cd /opt/perfect-day
+sudo docker compose --profile nuc exec api \
+    python -c "from app.core.config import get_settings; print(get_settings().database_url_sync.split('@')[0])"
+# Expect: postgresql://perfectday:<long_hex_string>   (NOT :perfectday)
+
+# systemd is re-enabled (auto-start on next reboot):
+sudo systemctl is-enabled perfect-day.service
+# Expect: enabled
+```
+
+---
+
 ## 9 — Rollback
 
 ```bash
