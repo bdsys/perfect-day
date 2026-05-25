@@ -70,6 +70,68 @@ def _derive_voice(diary) -> tuple[str, str]:
 # ---------------------------------------------------------------------------
 
 
+def _format_duration(minutes: int) -> str:
+    """Return a human-readable duration string, e.g. '30m' or '1h 30m'."""
+    if minutes < 60:
+        return f"{minutes}m"
+    hours, remainder = divmod(minutes, 60)
+    if remainder == 0:
+        return f"{hours}h"
+    return f"{hours}h {remainder}m"
+
+
+def _format_event_line(i: int, event) -> str:
+    """Render one <event> line with time range, summary, and optional extras."""
+    p = event.payload
+    summary = p.get("summary", "(no title)")
+
+    # --- Time range ---
+    start_dt_str = (p.get("start") or {}).get("dateTime")
+    end_dt_str = (p.get("end") or {}).get("dateTime")
+    is_all_day = not start_dt_str and bool((p.get("start") or {}).get("date"))
+
+    if is_all_day:
+        time_str = "all day"
+    elif start_dt_str and end_dt_str:
+        try:
+            start_dt = datetime.fromisoformat(start_dt_str)
+            end_dt = datetime.fromisoformat(end_dt_str)
+            duration_minutes = int((end_dt - start_dt).total_seconds() / 60)
+            duration_str = _format_duration(duration_minutes)
+            # Strip end time's date portion — just HH:MM:SS+offset for brevity
+            end_time_part = end_dt_str.split("T", 1)[1] if "T" in end_dt_str else end_dt_str
+            time_str = f"{start_dt_str}–{end_time_part} ({duration_str})"
+        except (ValueError, TypeError):
+            # Malformed dateTime — fall back to occurred_at
+            time_str = event.occurred_at.isoformat() if event.occurred_at else "unknown time"
+    elif start_dt_str:
+        time_str = start_dt_str
+    else:
+        time_str = event.occurred_at.isoformat() if event.occurred_at else "unknown time"
+
+    # --- Optional extras ---
+    location = p.get("location", "")
+    loc_str = f', location: "{location}"' if location else ""
+
+    attendees_raw = p.get("attendees") or []
+    attendee_names = []
+    for a in attendees_raw:
+        name = (a.get("displayName") or "").strip()
+        if not name:
+            name = (a.get("email") or "").strip()
+        if name:
+            attendee_names.append(name)
+    attendees_str = f', attendees: "{", ".join(attendee_names)}"' if attendee_names else ""
+
+    description = (p.get("description") or "").strip()
+    desc_str = f', description: "{description}"' if description else ""
+
+    return (
+        f'<event index="{i}">[{event.source}] {time_str}, "{summary}"'
+        f"{loc_str}{attendees_str}{desc_str}</event>"
+    )
+
+
 def build_prompt(diary, entry, events, enrichments) -> tuple[str, str]:
     """Return (diary_context_message, per_entry_message)."""
     voice, pronoun = _derive_voice(diary)
@@ -91,13 +153,7 @@ def build_prompt(diary, entry, events, enrichments) -> tuple[str, str]:
 
     event_lines = []
     for i, event in enumerate(events, 1):
-        p = event.payload
-        summary = p.get("summary", "(no title)")
-        location = p.get("location", "")
-        occurred = event.occurred_at.isoformat() if event.occurred_at else "unknown time"
-        loc_str = f', location: "{location}"' if location else ""
-        line = f'<event index="{i}">[{event.source}] {occurred}, "{summary}"{loc_str}</event>'
-        event_lines.append(line)
+        event_lines.append(_format_event_line(i, event))
 
     enrichment_lines = []
     for enrichment in enrichments:
