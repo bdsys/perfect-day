@@ -228,7 +228,7 @@ every realserver in the pool automatically.
 ### NUC-side Caddy edge
 
 The Caddy container handles Host-header routing after FortiGate decrypts the traffic. See
-[`deploy/caddy/Caddyfile`](caddy/Caddyfile) for the routing rules and
+[`deploy/caddy/Caddyfile.tmpl`](caddy/Caddyfile.tmpl) for the routing rules and
 [`deploy/caddy/README.md`](caddy/README.md) for local debugging instructions.
 
 The Caddy service starts automatically when deploying with `--profile nuc`:

@@ -28,7 +28,7 @@ echo ""
 
 cd "${DEPLOY_DIR}"
 
-echo '[1/6] Updating repository...'
+echo '[1/7] Updating repository...'
 git fetch origin
 if [ -n "${TARGET_SHA}" ]; then
     git checkout "${TARGET_SHA}"
@@ -38,18 +38,28 @@ else
     echo "  Updated to: $(git rev-parse --short HEAD)"
 fi
 
-echo '[2/6] Pulling new images...'
+echo '[2/7] Rendering Caddyfile from template...'
+ENV_FILE="/etc/perfect-day/app.env"
+if [ -f "${ENV_FILE}" ]; then
+    FORTIGATE_LAN_IP=$(grep -E '^FORTIGATE_LAN_IP=' "${ENV_FILE}" | cut -d= -f2-)
+    export FORTIGATE_LAN_IP
+else
+    echo "  WARNING: ${ENV_FILE} not found — Caddyfile will use private_ranges fallback." >&2
+fi
+./scripts/nuc/render-caddyfile.sh
+
+echo '[3/7] Pulling new images...'
 docker compose --profile nuc pull api worker beat web edge
 
-echo '[3/6] Running migrations...'
+echo '[4/7] Running migrations...'
 docker compose --profile nuc run --rm api alembic upgrade head
 echo '  Migrations complete'
 
-echo '[4/6] Restarting app services (infra stays up)...'
+echo '[5/7] Restarting app services (infra stays up)...'
 docker compose --profile nuc up -d --no-deps api worker beat web edge
 echo '  Services restarted'
 
-echo '[5/6] Waiting for readiness...'
+echo '[6/7] Waiting for readiness...'
 ELAPSED=0
 until curl -sf --max-time 5 "${HEALTH_URL}" > /dev/null 2>&1; do
     if [ "${ELAPSED}" -ge "${HEALTH_TIMEOUT}" ]; then
@@ -66,7 +76,7 @@ SHA=$(git rev-parse --short HEAD)
 echo "${SHA}" > "${DEPLOY_DIR}/last-deployed-sha"
 echo "  Recorded deployed SHA: ${SHA}"
 
-echo '[6/6] Update complete.'
+echo '[7/7] Update complete.'
 echo "Log: ${LOG_FILE}"
 
 echo ""

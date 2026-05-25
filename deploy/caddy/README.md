@@ -17,7 +17,7 @@ Any other `Host` value returns 404.
 
 ## Before deploying to the NUC
 
-Edit `Caddyfile` and replace `<FORTIGATE_LAN_IP>` with the actual LAN IP of your FortiGate (the IP it uses on the home LAN, e.g. `192.168.1.1`). This IP is used to scope which upstream proxy is trusted to set `X-Forwarded-For` / `X-Forwarded-Proto` headers.
+Set `FORTIGATE_LAN_IP` when running `scripts/nuc/10-secrets.sh` (prompted automatically). The deploy scripts render `Caddyfile.tmpl` → `Caddyfile` at deploy time — you never need to edit the Caddyfile manually. For local dev, leave `FORTIGATE_LAN_IP` empty; Caddy will trust all RFC1918 ranges instead.
 
 ---
 
@@ -33,9 +33,14 @@ sudo tee -a /etc/hosts <<'EOF'
 EOF
 ```
 
-### Step 2 — Edit `deploy/caddy/Caddyfile` to use local hostnames (don't commit)
+### Step 2 — Render `Caddyfile.tmpl` and switch to local hostnames
 
-Change the two `host` matchers in `deploy/caddy/Caddyfile`:
+First render the template (uses `private_ranges` fallback since no FortiGate is present):
+```bash
+FORTIGATE_LAN_IP= ./scripts/nuc/render-caddyfile.sh
+```
+
+Then edit `deploy/caddy/Caddyfile` (gitignored, safe to edit) to use local hostnames:
 ```
 @diary host diary.perfectday.local
 @api host api.diary.perfectday.local
@@ -65,7 +70,7 @@ Or browse to `http://diary.perfectday.local` and `http://api.diary.perfectday.lo
 
 ```bash
 docker compose --profile nuc down
-git checkout -- deploy/caddy/Caddyfile   # revert the hostname edits
+rm -f deploy/caddy/Caddyfile   # remove the rendered file (gitignored; regenerated on next deploy)
 ```
 
 **Why no TLS in local debug:** `auto_https off` means Caddy serves plain HTTP. In production, TLS is terminated by FortiGate before traffic reaches Caddy. Locally, there is no TLS at all — just like the FortiGate→NUC LAN hop.
