@@ -60,7 +60,7 @@ async def test_free_tier_limit_stops_rule_entries(
             diary_id=diary_id,
             payload={
                 "summary": f"Meeting {i + 1}",
-                "start": {"dateTime": f"2026-06-0{i + 1}T10:00:00Z"},
+                "start": {"dateTime": f"2026-06-{i + 1:02d}T10:00:00Z"},
                 "end": {},
                 "attendees": [],
                 "description": "",

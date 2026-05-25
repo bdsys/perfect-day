@@ -366,7 +366,10 @@ async def _evaluate_rules_for_event(event_id: str, diary_id: str) -> None:
 )
 def apply_rule_backfill(self, rule_id: str, days: int) -> None:
     """Backfill rule evaluation against past events for the given rule."""
-    run_sync(_apply_rule_backfill(rule_id, days))
+    try:
+        run_sync(_apply_rule_backfill(rule_id, days))
+    except Exception as exc:
+        raise self.retry(exc=exc)
 
 
 async def _apply_rule_backfill(rule_id_str: str, days: int) -> None:
@@ -379,6 +382,11 @@ async def _apply_rule_backfill(rule_id_str: str, days: int) -> None:
     from app.workers.utils import db_session
 
     rule_uuid = uuid.UUID(rule_id_str)
+
+    if days <= 0:
+        log.warning("apply_rule_backfill_invalid_days", rule_id=rule_id_str, days=days)
+        return
+
     since = datetime.now(UTC) - timedelta(days=days)
 
     async with db_session() as db:
@@ -399,6 +407,7 @@ async def _apply_rule_backfill(rule_id_str: str, days: int) -> None:
             .where(Event.diary_id == diary_id)
             .where(Event.occurred_at >= since)
             .order_by(Event.occurred_at.asc())
+            .limit(5000)
         )
         events = list(events_result.scalars())
 
