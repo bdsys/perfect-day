@@ -257,6 +257,20 @@ async def _ingest_calendar_event(
         "status": event_data.get("status", ""),
     }
 
+    raw_attendees = event_data.get("attendees", [])
+    attendees = []
+    for a in raw_attendees:
+        display_name = _strip_injection(str(a.get("displayName", "") or ""))
+        email = str(a.get("email", "") or "")
+        if display_name or email:
+            attendees.append({
+                "displayName": display_name,
+                "email": email,
+                "organizer": bool(a.get("organizer", False)),
+                "responseStatus": str(a.get("responseStatus", "") or ""),
+            })
+    payload["attendees"] = attendees
+
     occurred_at = None
     start = event_data.get("start", {})
     if "dateTime" in start:
