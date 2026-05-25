@@ -24,7 +24,9 @@ def sample_event_data() -> dict:
         "status": "confirmed",
         "start": {"dateTime": "2026-05-25T10:00:00-05:00"},
         "end": {"dateTime": "2026-05-25T11:30:00-05:00"},
-        "attendees": [{"displayName": "Alice", "email": "alice@example.com", "responseStatus": "accepted"}],
+        "attendees": [
+            {"displayName": "Alice", "email": "alice@example.com", "responseStatus": "accepted"}
+        ],
     }
 
 
@@ -68,7 +70,9 @@ async def diary_id(db_session: AsyncSession) -> uuid.UUID:
 
 
 class TestIngestCalendarEventUnattached:
-    async def test_new_event_has_null_entry_id(self, db_session: AsyncSession, diary_id, sample_event_data):
+    async def test_new_event_has_null_entry_id(
+        self, db_session: AsyncSession, diary_id, sample_event_data
+    ):
         """After refactor, ingest_calendar_event must NOT create an Entry."""
         with patch("app.workers.tasks.evaluate_rules_for_event") as mock_rules:
             mock_rules.delay = MagicMock()
@@ -90,7 +94,9 @@ class TestIngestCalendarEventUnattached:
         # Rule evaluation must be queued with the correct event and diary IDs
         mock_rules.delay.assert_called_once_with(str(event.id), str(diary_id))
 
-    async def test_duplicate_event_updates_payload(self, db_session: AsyncSession, diary_id, sample_event_data):
+    async def test_duplicate_event_updates_payload(
+        self, db_session: AsyncSession, diary_id, sample_event_data
+    ):
         """Re-ingesting the same external_id updates payload but keeps entry_id unchanged."""
         with patch("app.workers.tasks.evaluate_rules_for_event") as mock_rules:
             mock_rules.delay = MagicMock()
