@@ -135,7 +135,7 @@ On the Cloudflare dashboard, click your zone (`andrewlass.com` or `perfectday.an
 
 ### Step 2.2 — Provision the DDNS config file on the NUC
 
-The `cloudflare-ddns` service is already in the in-repo `docker-compose.yml`. You do not edit the compose file. The container reads its configuration from `/etc/perfect-day/cloudflare-ddns.config.json` (mode 0600, `root:docker`).
+The `cloudflare-ddns` service is already in the in-repo `docker-compose.yml`. You do not edit the compose file. The container reads its configuration from `/etc/perfect-day/cloudflare-ddns.config.json` (mode 0600, `root:docker`), mounted at `/config.json` inside the container.
 
 The easiest way to provision this file is to provide the API token and Zone ID when prompted by `10-secrets.sh`. The script writes the JSON for you:
 

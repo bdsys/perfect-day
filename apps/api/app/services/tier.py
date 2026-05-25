@@ -54,3 +54,28 @@ async def enforce_entry_tier_limit(
                 f"({current}/{cap}). Upgrade to create more."
             ),
         )
+
+
+async def try_enforce_entry_tier_limit(
+    user_id: uuid.UUID,
+    diary_id: uuid.UUID,
+    source: str,
+    db: AsyncSession,
+    subscription_tier: str = "free",
+) -> tuple[bool, str | None]:
+    """No-raise variant of enforce_entry_tier_limit for use in Celery workers.
+
+    Returns (True, None) if within limit, (False, reason_str) if over limit.
+    Never raises HTTPException.
+    """
+    try:
+        await enforce_entry_tier_limit(
+            user_id=user_id,
+            diary_id=diary_id,
+            source=source,
+            db=db,
+            subscription_tier=subscription_tier,
+        )
+        return True, None
+    except HTTPException as exc:
+        return False, str(exc.detail)

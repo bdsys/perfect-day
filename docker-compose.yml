@@ -115,10 +115,13 @@ services:
   cloudflare-ddns:
     image: timothyjmiller/cloudflare-ddns:latest
     restart: unless-stopped
+    network_mode: host
+    security_opt:
+      - no-new-privileges:true
     environment:
       TZ: America/Chicago
     volumes:
-      - /etc/perfect-day/cloudflare-ddns.config.json:/app/config.json:ro
+      - /etc/perfect-day/cloudflare-ddns.config.json:/config.json:ro
 
 volumes:
   postgres_data:

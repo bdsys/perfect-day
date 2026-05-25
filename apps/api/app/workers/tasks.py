@@ -285,8 +285,12 @@ async def _ingest_calendar_event(
         await db.flush()
         event_id = event.id
 
-    # Queue rule evaluation
-    evaluate_rules_for_event.delay(str(event_id), str(diary_id))
+    # Queue rule evaluation (best-effort: don't roll back a successful ingest
+    # just because the broker is briefly down)
+    try:
+        evaluate_rules_for_event.delay(str(event_id), str(diary_id))
+    except Exception:
+        log.exception("failed_to_queue_rule_evaluation", event_id=str(event_id), diary_id=str(diary_id))
     return str(event_id)
 
 
