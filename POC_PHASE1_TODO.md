@@ -127,17 +127,30 @@ SendGrid is needed because residential IPs are blocked by most mail servers. It 
 ### B1 — Bootstrap the NUC server (run once)
 
 ```bash
-scp scripts/nuc/00-bootstrap.sh root@<NUC_IP>:/tmp/
-ssh root@<NUC_IP> bash /tmp/00-bootstrap.sh
+ssh andrew@<NUC_IP>
+git clone git@github.com:andrewlass/perfect-day.git ~/perfect-day
+cd ~/perfect-day
+sudo ./scripts/nuc/00-bootstrap.sh
 ```
 
-This installs Docker, UFW firewall, fail2ban, creates the `perfectday` service user and `/opt/perfect-day/`.
+This installs Docker, UFW firewall, fail2ban, creates the `perfectday` service user and `/opt/perfect-day/`. Also adds `andrew` to the `docker` group (re-login required).
+
+### B1.5 — Set up GitHub deploy key for git clone
+
+```bash
+sudo ssh-keygen -t ed25519 -C "perfect-day-nuc-deploy" -f /root/.ssh/id_ed25519 -N ""
+sudo cat /root/.ssh/id_ed25519.pub
+```
+
+Add the printed public key to GitHub: repo → **Settings** → **Deploy keys** → **Add deploy key** (read-only).
+
+Verify: `sudo ssh -T git@github.com` → should print "Hi andrewlass/perfect-day! You've successfully authenticated..."
 
 ### B2 — Provision secrets on NUC
 
 ```bash
-scp scripts/nuc/10-secrets.sh root@<NUC_IP>:/tmp/
-ssh root@<NUC_IP> bash /tmp/10-secrets.sh
+cd ~/perfect-day
+sudo ./scripts/nuc/10-secrets.sh
 ```
 
 The script will prompt for:
@@ -153,12 +166,13 @@ It auto-generates all crypto keys. Output: `/etc/perfect-day/app.env` (mode 600)
 ### B3 — First deploy
 
 ```bash
-./scripts/nuc/20-deploy.sh root@<NUC_IP>
+cd ~/perfect-day
+sudo ./scripts/nuc/20-deploy.sh
 ```
 
 Clones the repo, runs migrations, starts all 7 services. If `/readyz` returns 503 afterward:
 ```bash
-ssh perfectday@<NUC_IP> "cd /opt/perfect-day && ./scripts/seed-minio-bucket.sh"
+cd /opt/perfect-day && ./scripts/seed-minio-bucket.sh
 ```
 
 ### B4 — Cloudflare DDNS setup
@@ -223,8 +237,8 @@ Now that HTTPS is working, add the production callback URL:
 ### B7 — Backups
 
 ```bash
-scp scripts/nuc/30-backup.sh root@<NUC_IP>:/tmp/
-ssh root@<NUC_IP> bash /tmp/30-backup.sh
+cd ~/perfect-day
+sudo ./scripts/nuc/30-backup.sh
 ```
 
 Configure rclone for Backblaze B2 when prompted. Sets up daily encrypted `pg_dump` backups. (~$5/mo storage cost)
@@ -345,7 +359,7 @@ A4 (SendGrid API key)
 A5 (Anthropic API key)
   └─ B2 (secrets on NUC — needs ANTHROPIC_API_KEY)
 
-B1 (NUC bootstrap) → B2 (secrets) → B3 (first deploy) → B4+B5 → B6 → B7 (backups) → B8 (smoke test)
+B1 (NUC bootstrap) → B1.5 (deploy key) → B2 (secrets) → B3 (first deploy) → B4+B5 → B6 → B7 (backups) → B8 (smoke test)
 
 C (Web UI audit) — do locally, ideally before B3 to avoid debugging on NUC
 

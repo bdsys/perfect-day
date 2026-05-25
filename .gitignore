@@ -47,6 +47,10 @@ postgres_data/
 minio_data/
 redis_data/
 
+# Celery beat runtime state — never commit or copy into images
+celerybeat-schedule
+celerybeat-schedule.*
+
 # macOS
 .DS_Store
 .AppleDouble

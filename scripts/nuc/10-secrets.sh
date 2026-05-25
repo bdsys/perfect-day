@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 # scripts/nuc/10-secrets.sh — Provision application secrets on the NUC
-# Run as root on the NUC after 00-bootstrap.sh.
+# Run on the NUC as: sudo ./scripts/nuc/10-secrets.sh
 # Writes /etc/perfect-day/app.env (chmod 600, root:docker).
 set -euo pipefail
+
+if [ "$(id -u)" -ne 0 ]; then
+    echo "ERROR: This script must be run as root (use sudo)." >&2
+    exit 1
+fi
 
 ENV_FILE=/etc/perfect-day/app.env
 LOG_DIR=/var/log/perfect-day

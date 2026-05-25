@@ -1,0 +1,33 @@
+# Git
+.git
+.gitignore
+
+# Secrets / env
+.env
+.env.*
+
+# Python artifacts
+__pycache__
+*.pyc
+*.pyo
+*.egg-info
+.mypy_cache
+.ruff_cache
+.pytest_cache
+.coverage
+htmlcov
+.venv
+venv
+
+# Tests (not needed in runtime images)
+tests/
+
+# Celery beat runtime state — NEVER copy into image
+celerybeat-schedule
+celerybeat-schedule.*
+
+# Editor / OS
+.idea
+.vscode
+*.swp
+.DS_Store
