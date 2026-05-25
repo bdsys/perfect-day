@@ -2,15 +2,15 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_DB: perfectday
-      POSTGRES_USER: perfectday
-      POSTGRES_PASSWORD: perfectday
+      POSTGRES_DB: ${POSTGRES_DB:-perfectday}
+      POSTGRES_USER: ${POSTGRES_USER:-perfectday}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-perfectday}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U perfectday"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-perfectday}"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -29,8 +29,8 @@ services:
     image: minio/minio:latest
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
     ports:
       - "9000:9000"
       - "9001:9001"
@@ -66,13 +66,6 @@ services:
       - "8000:8000"
     env_file:
       - ./apps/api/.env
-    environment:
-      DATABASE_URL: postgresql+asyncpg://perfectday:perfectday@postgres:5432/perfectday
-      DATABASE_URL_SYNC: postgresql://perfectday:perfectday@postgres:5432/perfectday
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/0
-      CELERY_RESULT_BACKEND: redis://redis:6379/1
-      S3_ENDPOINT_URL: http://minio:9000
     depends_on:
       postgres:
         condition: service_healthy
@@ -88,13 +81,6 @@ services:
       dockerfile: Dockerfile
     env_file:
       - ./apps/api/.env
-    environment:
-      DATABASE_URL: postgresql+asyncpg://perfectday:perfectday@postgres:5432/perfectday
-      DATABASE_URL_SYNC: postgresql://perfectday:perfectday@postgres:5432/perfectday
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/0
-      CELERY_RESULT_BACKEND: redis://redis:6379/1
-      S3_ENDPOINT_URL: http://minio:9000
     depends_on:
       postgres:
         condition: service_healthy
@@ -108,13 +94,6 @@ services:
       dockerfile: Dockerfile
     env_file:
       - ./apps/api/.env
-    environment:
-      DATABASE_URL: postgresql+asyncpg://perfectday:perfectday@postgres:5432/perfectday
-      DATABASE_URL_SYNC: postgresql://perfectday:perfectday@postgres:5432/perfectday
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/0
-      CELERY_RESULT_BACKEND: redis://redis:6379/1
-      S3_ENDPOINT_URL: http://minio:9000
     depends_on:
       postgres:
         condition: service_healthy
@@ -129,7 +108,7 @@ services:
     ports:
       - "3000:3000"
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8000
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
     depends_on:
       - api
 

@@ -92,21 +92,28 @@ cat > "${ENV_FILE}" <<EOF
 
 ENV=production
 
-# Database
+# Database (consumed by both Postgres container and API)
 POSTGRES_USER=perfectday
 POSTGRES_DB=perfectday
 POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
 DATABASE_URL=postgresql+asyncpg://perfectday:${POSTGRES_PASSWORD}@postgres:5432/perfectday
 DATABASE_URL_SYNC=postgresql://perfectday:${POSTGRES_PASSWORD}@postgres:5432/perfectday
 
-# Redis
+# Redis / Celery
 REDIS_URL=redis://redis:6379/0
+CELERY_BROKER_URL=redis://redis:6379/0
+CELERY_RESULT_BACKEND=redis://redis:6379/1
 
-# MinIO
+# MinIO container creds
 MINIO_ROOT_USER=perfectday
 MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
-MINIO_ENDPOINT=http://minio:9000
-MINIO_BUCKET=photos
+
+# S3 (API client config — points at MinIO using the same creds)
+S3_ENDPOINT_URL=http://minio:9000
+S3_ACCESS_KEY=perfectday
+S3_SECRET_KEY=${MINIO_ROOT_PASSWORD}
+S3_BUCKET_PHOTOS=photos
+S3_REGION=us-east-1
 
 # JWT / crypto
 SECRET_KEY=${SECRET_KEY}
@@ -126,6 +133,14 @@ ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
 
 # SendGrid (optional — email notifications)
 SENDGRID_API_KEY=${SENDGRID_API_KEY:-}
+EMAIL_FROM=pd@bdsys.net
+
+# Rate limiting
+RATE_LIMIT_DEFAULT=100/minute
+RATE_LIMIT_AUTH=10/minute
+
+# Web (Next.js)
+NEXT_PUBLIC_API_URL=https://api.diary.perfectday.andrewlass.com
 EOF
 
 chmod 600 "${ENV_FILE}"

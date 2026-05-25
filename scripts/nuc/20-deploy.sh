@@ -47,9 +47,14 @@ if [ ! -f "${ENV_FILE}" ]; then
     echo "ERROR: ${ENV_FILE} not found. Run scripts/nuc/10-secrets.sh first." >&2
     exit 1
 fi
-# Symlink so docker-compose.yml finds .env in the project root
+# Compose reads ./.env for ${VAR} interpolation (postgres/minio creds);
+# api/worker/beat services consume ./apps/api/.env via env_file. Symlink both
+# to the same source-of-truth secrets file.
 ln -sf "${ENV_FILE}" "${DEPLOY_DIR}/.env"
+mkdir -p "${DEPLOY_DIR}/apps/api"
+ln -sf "${ENV_FILE}" "${DEPLOY_DIR}/apps/api/.env"
 echo "  Linked ${ENV_FILE} -> ${DEPLOY_DIR}/.env"
+echo "  Linked ${ENV_FILE} -> ${DEPLOY_DIR}/apps/api/.env"
 
 echo '[3/7] Pulling Docker images...'
 cd "${DEPLOY_DIR}"
