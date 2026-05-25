@@ -214,7 +214,7 @@ docker compose logs cloudflare-ddns --tail=20
 Follow the procedure in [`deploy/nuc.md` → FortiGate Virtual Server setup](deploy/nuc.md#fortigate-virtual-server-setup). It covers:
 
 1. Generate a CSR on FortiGate and obtain a Cloudflare Origin Certificate (multi-SAN, 15-year validity)
-2. Create a single HTTPS Virtual Server on WAN:443 with one realserver → NUC:80 (Caddy edge)
+2. Create a single HTTPS Virtual Server on WAN:443 with one realserver → NUC:80 (Caddy edge), and bind an HTTP health-check monitor at the VIP level
 3. One firewall policy permitting inbound HTTPS from Cloudflare IP ranges only
 
 When complete, verify from off-network:
@@ -269,7 +269,7 @@ Configure rclone for Backblaze B2 when prompted. Sets up daily encrypted `pg_dum
 ### B8 — Validate production deployment
 
 ```bash
-./scripts/smoke-test.sh https://api.diary.perfectday.andrewlass.com
+make test-smoke BASE=https://api.diary.perfectday.andrewlass.com
 # Expect: 16 PASS lines
 ```
 

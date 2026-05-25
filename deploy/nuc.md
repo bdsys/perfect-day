@@ -145,6 +145,26 @@ one realserver entry pointing at the Caddy edge on port 80.
 
 **Via CLI:**
 
+First, create the HTTP health-check monitor that probes the Caddy edge:
+
+```
+config firewall ldb-monitor
+    edit "perfectday-caddy-http"
+        set type http
+        set port 80
+        set http-get "/healthz"
+        set http-match "Not Found"
+        set interval 10
+        set timeout 2
+        set retry 3
+    next
+end
+```
+
+Then create the VIP and bind the monitor at the VIP level (not inside `config realservers` — when
+a top-level `monitor` is bound to a `server-load-balance` VIP, FortiGate health-checks every
+realserver in the pool against that monitor automatically):
+
 ```
 config firewall vip
     edit "perfectday-https"
@@ -154,7 +174,7 @@ config firewall vip
         set extport 443
         set server-type https
         set ssl-certificate "perfectday-cf-origin"
-        set http-cookie-flag none
+        set monitor "perfectday-caddy-http"
         config realservers
             edit 1
                 set ip <NUC_LAN_IP>
@@ -166,6 +186,12 @@ end
 ```
 
 Replace `<WAN_IP>` with your FortiGate WAN IP and `<NUC_LAN_IP>` with the NUC's LAN IP.
+
+> **Why match "Not Found":** Caddy's catch-all returns `404 Not Found` for `/healthz` (the probe
+> arrives without a `Host` header that matches `@diary` or `@api`). A 404 with that body proves
+> Caddy is alive and routing — exactly what we want to verify. We're checking Caddy itself, not
+> the backends. Without this monitor, FortiGate has no way to know if Caddy crashed, and would
+> keep forwarding traffic into a black hole.
 
 > **`set extintf`**: substitute your actual WAN interface name if it differs from `wan1`
 > (check with `get system interface` — look for the interface with your WAN IP).
@@ -186,12 +212,16 @@ Replace `<WAN_IP>` with your FortiGate WAN IP and `<NUC_LAN_IP>` with the NUC's 
 | External service port | 443 |
 | Virtual server type | HTTPS |
 | Server SSL certificate | `perfectday-cf-origin` |
+| Health Check | `perfectday-caddy-http` (create under Policy & Objects → Health Check first) |
 
 Add one real server:
 
 | Real server | IP | Port |
 |---|---|---|
 | 1 | `<NUC_LAN_IP>` | 80 |
+
+The health check is bound at the VIP level, not on the real server. FortiGate uses it to probe
+every realserver in the pool automatically.
 
 ---
 

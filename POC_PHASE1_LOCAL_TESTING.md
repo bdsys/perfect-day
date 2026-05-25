@@ -100,7 +100,7 @@ make web         # Next.js dev server on :3000
 make test-all
 ```
 
-Chains lint → typecheck → unit+integration tests → end-to-end (Playwright), fail-fast, in about 10 minutes total. This is the recommended command to run after any non-trivial change. It does **not** include `make test-live` (calls the real Anthropic API — see below) or `./scripts/smoke-test.sh` (requires a running stack).
+Chains lint → typecheck → unit+integration tests → end-to-end (Playwright), fail-fast, in about 10 minutes total. This is the recommended command to run after any non-trivial change. It does **not** include `make test-live` (calls the real Anthropic API — see below) or `make test-smoke` (requires a running stack).
 
 ### Unit tests only (~30s)
 
@@ -164,15 +164,11 @@ Calls the real Anthropic API. Use this to refresh `tests/cassettes/llm_draft_sim
 
 ## Automated Smoke (curl)
 
-`scripts/smoke-test.sh` runs a full curl walkthrough and asserts HTTP status codes at each step. It exercises every Phase 1 API endpoint and exits non-zero on any failure.
+`make test-smoke` (wrapping `scripts/smoke-test.sh`) runs a full curl walkthrough and asserts HTTP status codes at each step. It exercises every Phase 1 API endpoint and exits non-zero on any failure. Requires a running stack.
 
 ```bash
-./scripts/smoke-test.sh http://localhost:8000
-```
-
-You can also run it against a deployed stack:
-```bash
-./scripts/smoke-test.sh https://api.diary.perfectday.andrewlass.com
+make test-smoke                                                    # default: http://localhost:8000
+make test-smoke BASE=https://api.diary.perfectday.andrewlass.com  # against deployed stack
 ```
 
 ---

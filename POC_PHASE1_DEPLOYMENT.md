@@ -194,7 +194,7 @@ routing — that feature belongs to FortiADC, a separate Fortinet product.
 Follow the step-by-step procedure in [`deploy/nuc.md` → FortiGate Virtual Server setup](deploy/nuc.md#fortigate-virtual-server-setup). Summary:
 
 1. Generate a CSR on FortiGate and obtain a Cloudflare Origin Certificate (multi-SAN; 15-year validity) — see Step 1 in [`deploy/nuc.md`](deploy/nuc.md#fortigate-virtual-server-setup)
-2. Create one HTTPS Virtual Server on WAN:443 with a single realserver → `<NUC_LAN_IP>:80` (Caddy edge)
+2. Create one HTTPS Virtual Server on WAN:443 with a single realserver → `<NUC_LAN_IP>:80` (Caddy edge), and bind an HTTP health-check monitor at the VIP level
 3. Add a firewall policy for HTTPS inbound (restrict source to Cloudflare IP ranges)
 4. Bring up the Caddy edge: `docker compose --profile nuc up -d edge` on the NUC
 
@@ -266,7 +266,7 @@ Once per quarter, restore to a clean stack on a separate machine:
 Run the smoke test from your workstation (off-NUC) to confirm public reachability:
 
 ```bash
-./scripts/smoke-test.sh https://api.diary.perfectday.andrewlass.com
+make test-smoke BASE=https://api.diary.perfectday.andrewlass.com
 ```
 
 This exercises every Phase 1 API endpoint and exits non-zero on any failure. Expected output: 16 `PASS` lines and `All 16 checks passed`.
