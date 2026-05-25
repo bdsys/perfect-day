@@ -66,6 +66,7 @@ function EntryDetailPageInner() {
   const [regenStartedAt, setRegenStartedAt] = useState<string | null>(null)
   const [regenStartTime, setRegenStartTime] = useState<string | null>(null)
   const [regenResult, setRegenResult] = useState<'success' | 'failed' | null>(null)
+  const [regenSlow, setRegenSlow] = useState(false)
   const [deleting, setDeleting] = useState(false)
 
   useEffect(() => {
@@ -146,6 +147,7 @@ function EntryDetailPageInner() {
       setRegenStartedAt(entry.updated_at)
       setRegenStartTime(new Date().toISOString())
       setRegenResult(null)
+      setRegenSlow(false)
       await api.entries.regenerate(entry.id)
       setPollingRegen(true)
       setError('')
@@ -161,6 +163,7 @@ function EntryDetailPageInner() {
       if (updated.updated_at !== regenStartedAt) {
         setEntry(updated)
         setPollingRegen(false)
+        setRegenSlow(false)
         setRegenResult('success')
       }
     } catch {
@@ -171,11 +174,16 @@ function EntryDetailPageInner() {
 
   useEffect(() => {
     if (!pollingRegen) return
-    const timer = setTimeout(() => {
+    const slowTimer = setTimeout(() => setRegenSlow(true), 9 * 1000)
+    const failTimer = setTimeout(() => {
       setPollingRegen(false)
+      setRegenSlow(false)
       setRegenResult('failed')
-    }, 90 * 1000)
-    return () => clearTimeout(timer)
+    }, 30 * 1000)
+    return () => {
+      clearTimeout(slowTimer)
+      clearTimeout(failTimer)
+    }
   }, [pollingRegen])
 
   useEffect(() => {
@@ -338,9 +346,13 @@ function EntryDetailPageInner() {
               <StatusPanel
                 state={pollingRegen ? 'running' : regenResult!}
                 headline={
-                  pollingRegen ? (entry.body_markdown ? 'Regenerating draft…' : 'Generating draft…') :
-                  regenResult === 'success' ? (entry.body_markdown ? 'Draft regenerated' : 'Draft generated') :
-                  'Generation is taking longer than expected — refresh the page to check'
+                  pollingRegen
+                    ? (regenSlow
+                        ? 'Still working — this is taking longer than expected…'
+                        : (entry.body_markdown ? 'Regenerating draft…' : 'Generating draft…'))
+                    : regenResult === 'success'
+                      ? (entry.body_markdown ? 'Draft regenerated' : 'Draft generated')
+                      : 'Generation is taking longer than expected — refresh the page to check'
                 }
                 startedAt={regenStartTime ?? undefined}
                 onDismiss={() => { setRegenResult(null); setRegenStartTime(null) }}
