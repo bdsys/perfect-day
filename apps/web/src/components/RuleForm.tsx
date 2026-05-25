@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, type RuleCondition, type RuleConditionLeaf, type RuleOptions, type RulePreview } from '@/lib/api'
 
 // Generates a simple unique ID for tree node keys
@@ -165,7 +165,7 @@ export function RuleForm({ diaryId, initialName = '', initialCondition, initialO
   const [previewing, setPreviewing] = useState(false)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const condition = stripIds(tree)
+  const condition = useMemo(() => stripIds(tree), [tree])
 
   const runPreview = useCallback(async (cond: RuleCondition, opts: RuleOptions) => {
     // Only run if condition has at least one leaf with a non-empty value
@@ -251,10 +251,8 @@ export function RuleForm({ diaryId, initialName = '', initialCondition, initialO
         <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.5rem', color: '#555' }}>
           Preview against last 90 days
         </div>
-        {previewing ? (
-          <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Checking…</div>
-        ) : preview ? (
-          <>
+        {preview ? (
+          <div style={{ opacity: previewing ? 0.6 : 1, transition: 'opacity 120ms ease' }}>
             {preview.threshold_exceeded && (
               <div style={{
                 background: '#fffbeb', border: '1px solid #f59e0b', borderRadius: 4,
@@ -263,8 +261,9 @@ export function RuleForm({ diaryId, initialName = '', initialCondition, initialO
                 ⚠ This rule would match ~{preview.matched_count} events. Make sure the condition is specific enough.
               </div>
             )}
-            <div style={{ fontSize: '0.85rem', color: '#555' }}>
+            <div style={{ fontSize: '0.85rem', color: '#555', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               {preview.matched_count} of {preview.total_evaluated} recent events match
+              {previewing && <span style={{ color: 'var(--text-muted)', fontSize: '0.78rem' }}>updating…</span>}
             </div>
             {preview.sample.length > 0 && (
               <ul style={{ margin: '0.4rem 0 0', padding: '0 0 0 1.2rem', fontSize: '0.8rem', color: '#666' }}>
@@ -273,7 +272,9 @@ export function RuleForm({ diaryId, initialName = '', initialCondition, initialO
                 ))}
               </ul>
             )}
-          </>
+          </div>
+        ) : previewing ? (
+          <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Checking…</div>
         ) : (
           <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>
             Fill in at least one condition value to see a preview.

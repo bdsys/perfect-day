@@ -24,3 +24,14 @@ services:
   api:
     ports:
       - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://perfectday:perfectday@postgres:5432/perfectday
+      DATABASE_URL_SYNC: postgresql://perfectday:perfectday@postgres:5432/perfectday
+
+  worker:
+    environment:
+      DATABASE_URL: postgresql+asyncpg://perfectday:perfectday@postgres:5432/perfectday
+
+  beat:
+    environment:
+      DATABASE_URL: postgresql+asyncpg://perfectday:perfectday@postgres:5432/perfectday

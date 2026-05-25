@@ -13,7 +13,7 @@ VENV_BIN := $(API_DIR)/.venv/bin
 
 # Option A: run everything in Docker (no hot-reload)
 up:
-	docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile dev up -d
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile dev up -d --build
 
 down:
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile dev down
