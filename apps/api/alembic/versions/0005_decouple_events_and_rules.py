@@ -103,6 +103,11 @@ def upgrade() -> None:
         "auto_creation_rules",
         ["diary_id", "enabled"],
     )
+    op.execute("""
+        CREATE TRIGGER trg_auto_creation_rules_updated_at
+        BEFORE UPDATE ON auto_creation_rules
+        FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+    """)
 
     # 6. New table: entry_rule_matches
     op.create_table(
@@ -154,8 +159,7 @@ def upgrade() -> None:
             nullable=False,
         ),
     )
-
-    # 8. Add rules counters to scan_runs
+    op.create_index("ix_rule_series_claims_entry_id", "rule_series_claims", ["entry_id"])
     op.add_column(
         "scan_runs",
         sa.Column("rules_evaluated", sa.Integer, nullable=False, server_default="0"),
@@ -169,6 +173,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_column("scan_runs", "rule_matches")
     op.drop_column("scan_runs", "rules_evaluated")
+    op.drop_index("ix_rule_series_claims_entry_id", table_name="rule_series_claims")
     op.drop_table("rule_series_claims")
     op.drop_index("ix_entry_rule_matches_rule", table_name="entry_rule_matches")
     op.drop_table("entry_rule_matches")
@@ -179,4 +184,6 @@ def downgrade() -> None:
     op.drop_index("ix_events_unattached_occurred", table_name="events")
     op.drop_index("ix_events_diary_id", table_name="events")
     op.drop_column("events", "diary_id")
+    # Remove any unattached events before restoring NOT NULL constraint
+    op.execute("DELETE FROM events WHERE entry_id IS NULL")
     op.alter_column("events", "entry_id", nullable=False)
