@@ -234,9 +234,15 @@ export const api = {
     async create(data: { name: string; timezone: string; subject_name?: string }): Promise<Diary> {
       return apiFetch('/v1/diaries', { method: 'POST', body: JSON.stringify(data) })
     },
-    async triggerScan(id: string): Promise<{ queued: boolean; alreadyRunning: boolean }> {
+    async triggerScan(
+      id: string,
+      options?: { past_days?: number; future_days?: number },
+    ): Promise<{ queued: boolean; alreadyRunning: boolean }> {
       try {
-        await apiFetch(`/v1/diaries/${id}/scan/run`, { method: 'POST' })
+        await apiFetch(`/v1/diaries/${id}/scan/run`, {
+          method: 'POST',
+          body: options ? JSON.stringify(options) : undefined,
+        })
         return { queued: true, alreadyRunning: false }
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : ''
