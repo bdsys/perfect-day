@@ -90,11 +90,6 @@ terminates the public-facing TLS (browser ↔ CF) and forwards to FortiGate over
 (CF ↔ FortiGate) using a Cloudflare Origin Certificate installed on the FortiGate. FortiGate
 decrypts that second hop and forwards plain HTTP to the NUC on the LAN.
 
-**Why Virtual Server + Content Routing, not plain port-forward VIPs:** Two hostnames share one
-WAN IP and one port (443). Plain port-forward VIPs cannot distinguish between them — you cannot
-create two VIPs that both forward WAN:443 to different backend ports. Virtual Server with HTTP
-Content Routing reads the decrypted `Host` header and dispatches to the correct Real Server pool.
-
 **Prerequisite:** Cloudflare proxy must be **on** (orange cloud) for the three A records in your
 Cloudflare DNS dashboard before starting. See [`deploy/cloudflare.md`](cloudflare.md) § DNS and
 § Cloudflare Origin Certificate setup.
@@ -143,9 +138,10 @@ forwarding to your origin.
 
 ### Step 2 — Create the HTTPS Virtual Server on WAN:443
 
-In FortiOS 7.2, real server pools are defined **inline** inside the VIP object — there is no
-separate `firewall server-load-balance` object. Everything (listener, cert, content routing, and
-real servers) lives in one `config firewall vip` block.
+In FortiOS 7.2, a `firewall vip` with `type server-load-balance` and `server-type https` terminates
+the Cloudflare↔origin TLS hop (using the Origin Cert from Step 1) and forwards decrypted traffic
+to a single backend. All Host-header routing happens inside Caddy on the NUC — FortiGate only needs
+one realserver entry pointing at the Caddy edge on port 80.
 
 **Via CLI:**
 
@@ -162,13 +158,7 @@ config firewall vip
         config realservers
             edit 1
                 set ip <NUC_LAN_IP>
-                set port 3000
-                set http-host "diary.perfectday.andrewlass.com"
-            next
-            edit 2
-                set ip <NUC_LAN_IP>
-                set port 8000
-                set http-host "api.diary.perfectday.andrewlass.com"
+                set port 80
             next
         end
     next
@@ -177,13 +167,13 @@ end
 
 Replace `<WAN_IP>` with your FortiGate WAN IP and `<NUC_LAN_IP>` with the NUC's LAN IP.
 
-> **`set http-host`** is FortiOS 7.2's mechanism for Host-header-based routing. Requests where
-> the `Host` header matches `diary.*` are sent to real server 1 (port 3000); requests matching
-> `api.diary.*` are sent to real server 2 (port 8000). This replaces the GUI "HTTP Content
-> Routing" table which may not appear in all 7.2 builds.
-
 > **`set extintf`**: substitute your actual WAN interface name if it differs from `wan1`
 > (check with `get system interface` — look for the interface with your WAN IP).
+
+> **One realserver, port 80:** FortiGate forwards decrypted HTTP to the Caddy edge container on
+> the NUC. Caddy reads the `Host` header and routes to `web:3000` or `api:8000` over the Docker
+> internal network. This is necessary because FortiGate's `firewall vip` does not support
+> Host-header routing — that feature is exclusive to FortiADC, a separate product.
 
 **Via GUI (if preferred):** Policy & Objects → Virtual IPs → New
 
@@ -196,15 +186,32 @@ Replace `<WAN_IP>` with your FortiGate WAN IP and `<NUC_LAN_IP>` with the NUC's 
 | External service port | 443 |
 | Virtual server type | HTTPS |
 | Server SSL certificate | `perfectday-cf-origin` |
-| HTTP content routing | Enable (if available in your build) |
-| Default real server | `<NUC_LAN_IP>:3000` |
 
-Add two real servers inline:
+Add one real server:
 
-| Real server | IP | Port | HTTP Host override |
-|---|---|---|---|
-| 1 | `<NUC_LAN_IP>` | 3000 | `diary.perfectday.andrewlass.com` |
-| 2 | `<NUC_LAN_IP>` | 8000 | `api.diary.perfectday.andrewlass.com` |
+| Real server | IP | Port |
+|---|---|---|
+| 1 | `<NUC_LAN_IP>` | 80 |
+
+---
+
+### NUC-side Caddy edge
+
+The Caddy container handles Host-header routing after FortiGate decrypts the traffic. See
+[`deploy/caddy/Caddyfile`](caddy/Caddyfile) for the routing rules and
+[`deploy/caddy/README.md`](caddy/README.md) for local debugging instructions.
+
+The Caddy service starts automatically when deploying with `--profile nuc`:
+
+```bash
+docker compose --profile nuc up -d
+```
+
+To bring up only the edge service:
+
+```bash
+docker compose --profile nuc up -d edge
+```
 
 ---
 
@@ -264,14 +271,15 @@ openssl s_client -connect <WAN_IP>:443 \
 dig +short diary.perfectday.andrewlass.com
 # Expect: Cloudflare anycast IPs (e.g., 104.16.x.x or 172.64.x.x), NOT your home WAN IP.
 
-# Confirm Host-header routing splits the two vhosts to different backends:
+# Confirm Host-header routing (FortiGate → Caddy → backends):
+# Both subdomains resolve through the same VIP but Caddy dispatches to different backends.
 curl -sk --resolve "diary.perfectday.andrewlass.com:443:<WAN_IP>" \
   https://diary.perfectday.andrewlass.com/healthz
 # Expect: 200 from Next.js
 
 curl -sk --resolve "api.diary.perfectday.andrewlass.com:443:<WAN_IP>" \
   https://api.diary.perfectday.andrewlass.com/healthz
-# Expect: 200 from FastAPI
+# Expect: 200 {"status":"ok"} from FastAPI
 ```
 
 > **Note on direct WAN tests:** With Cloudflare proxy on, `dig` returns CF anycast IPs, not your

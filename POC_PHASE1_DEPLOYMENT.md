@@ -176,28 +176,27 @@ Cloudflare proxy is **on** (orange cloud) for all three diary subdomains — Clo
 public-facing TLS (browser↔CF) via Universal SSL. This is a manual checklist — FortiGate config
 is applied via the web UI or CLI on the FortiGate device itself, not by these scripts.
 
-### Virtual hosts to create
+### Routing topology
 
-| Vhost | Backend | Port | Notes |
+FortiGate terminates the Cloudflare↔origin TLS hop and forwards plain HTTP to the NUC on port 80.
+A Caddy reverse-proxy container on the NUC then handles Host-header routing to the application
+containers. This is necessary because FortiGate's `firewall vip` does not support Host-header
+routing — that feature belongs to FortiADC, a separate Fortinet product.
+
+| Layer | From | To | Notes |
 |---|---|---|---|
-| `diary.perfectday.andrewlass.com` | NUC IP | 3000 | Next.js SSR — all methods; CF-proxied |
-| `api.diary.perfectday.andrewlass.com` | NUC IP | 8000 | FastAPI — all methods; CF-proxied |
-
-> Phase 1 does **not** need the `media.diary.perfectday.andrewlass.com` vhost. Photo serving is deferred to Phase 2 per `design/09-poc-scope.md:43-44`. Do not create it now.
+| FortiGate VIP | WAN:443 | NUC:80 | Single realserver — Caddy edge |
+| Caddy (NUC) | `diary.*` Host | `web:3000` | Docker internal network |
+| Caddy (NUC) | `api.diary.*` Host | `api:8000` | Docker internal network |
 
 ### How to configure
 
 Follow the step-by-step procedure in [`deploy/nuc.md` → FortiGate Virtual Server setup](deploy/nuc.md#fortigate-virtual-server-setup). Summary:
 
-1. Generate a CSR on FortiGate and obtain a Cloudflare Origin Certificate (multi-SAN covering `diary.*`, `api.diary.*`, `media.diary.*`; 15-year validity)
-2. Create two Real Server pools (`<NUC_LAN_IP>:3000`, `<NUC_LAN_IP>:8000`)
-3. Create one HTTPS Virtual Server on WAN:443 with HTTP Content Routing (Host-header routes to the two pools)
-4. Add a firewall policy for HTTPS inbound (restrict source to Cloudflare IP ranges)
-
-> **Why Virtual Server, not plain port-forward VIPs?** Two hostnames share one WAN IP and port 443.
-> Plain port-forward VIPs cannot differentiate by hostname — you can't have two VIPs both forwarding
-> WAN:443 to different backend ports. Virtual Server + Content Routing reads the decrypted `Host`
-> header and dispatches accordingly.
+1. Generate a CSR on FortiGate and obtain a Cloudflare Origin Certificate (multi-SAN; 15-year validity) — see Step 1 in [`deploy/nuc.md`](deploy/nuc.md#fortigate-virtual-server-setup)
+2. Create one HTTPS Virtual Server on WAN:443 with a single realserver → `<NUC_LAN_IP>:80` (Caddy edge)
+3. Add a firewall policy for HTTPS inbound (restrict source to Cloudflare IP ranges)
+4. Bring up the Caddy edge: `docker compose --profile nuc up -d edge` on the NUC
 
 ### TLS
 - Use a **Cloudflare Origin Certificate** (15-year validity, multi-SAN) — see [`deploy/cloudflare.md` § Cloudflare Origin Certificate setup](deploy/cloudflare.md). This cert is installed on FortiGate; it handles the CF↔origin TLS hop. Cloudflare's Universal SSL handles the public-facing cert automatically.

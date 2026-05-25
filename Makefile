@@ -13,13 +13,13 @@ VENV_BIN := $(API_DIR)/.venv/bin
 
 # Option A: run everything in Docker (no hot-reload)
 up:
-	docker compose up -d
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile dev up -d
 
 down:
-	docker compose down
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile dev down
 
 logs:
-	docker compose logs -f
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile dev logs -f
 
 # Option B: infra in Docker + app processes locally (hot-reload dev)
 #   Step 1: make infra          — start postgres, redis, minio only

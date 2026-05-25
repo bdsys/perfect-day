@@ -39,14 +39,14 @@ else
 fi
 
 echo '[2/6] Pulling new images...'
-docker compose pull api worker beat web
+docker compose --profile nuc pull api worker beat web edge
 
 echo '[3/6] Running migrations...'
-docker compose run --rm api alembic upgrade head
+docker compose --profile nuc run --rm api alembic upgrade head
 echo '  Migrations complete'
 
 echo '[4/6] Restarting app services (infra stays up)...'
-docker compose up -d --no-deps api worker beat web
+docker compose --profile nuc up -d --no-deps api worker beat web edge
 echo '  Services restarted'
 
 echo '[5/6] Waiting for readiness...'

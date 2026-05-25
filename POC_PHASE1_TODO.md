@@ -213,9 +213,9 @@ docker compose logs cloudflare-ddns --tail=20
 
 Follow the procedure in [`deploy/nuc.md` → FortiGate Virtual Server setup](deploy/nuc.md#fortigate-virtual-server-setup). It covers:
 
-1. Generating a CSR on FortiGate and obtaining a Cloudflare Origin Certificate (multi-SAN, 15-year validity)
-2. Creating the HTTPS Virtual Server on WAN:443 with inline real servers using `set http-host` for Host-based routing (FortiOS 7.2 syntax — no separate `server-load-balance` object)
-3. One firewall policy permitting inbound HTTPS from Cloudflare IP ranges
+1. Generate a CSR on FortiGate and obtain a Cloudflare Origin Certificate (multi-SAN, 15-year validity)
+2. Create a single HTTPS Virtual Server on WAN:443 with one realserver → NUC:80 (Caddy edge)
+3. One firewall policy permitting inbound HTTPS from Cloudflare IP ranges only
 
 When complete, verify from off-network:
 
@@ -224,6 +224,27 @@ curl -I https://diary.perfectday.andrewlass.com/healthz    # Expect: 200 from Ne
 curl -I https://api.diary.perfectday.andrewlass.com/healthz # Expect: 200 from FastAPI
 dig +short diary.perfectday.andrewlass.com                  # Expect: Cloudflare anycast IPs
 ```
+
+### B5.5 — Bring up the Caddy edge on the NUC
+
+After deploying (B3) and configuring FortiGate (B5), start the Caddy edge container if it is not already running:
+
+```bash
+cd /opt/perfect-day
+docker compose --profile nuc up -d edge
+```
+
+Verify Host-header routing is working from inside the NUC LAN:
+
+```bash
+curl -sH "Host: diary.perfectday.andrewlass.com" http://<NUC_LAN_IP>:80/healthz
+# Expect: 200 response from Next.js
+
+curl -sH "Host: api.diary.perfectday.andrewlass.com" http://<NUC_LAN_IP>:80/healthz
+# Expect: {"status":"ok"} from FastAPI
+```
+
+See [`deploy/caddy/README.md`](deploy/caddy/README.md) for full documentation and local debug workflow.
 
 ### B6 — Add production Google OAuth redirect URI
 

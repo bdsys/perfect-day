@@ -16,6 +16,8 @@ services:
       - /tmp/pd-test-minio:/data
 
   api:
+    ports:
+      - "8000:8000"
     environment:
       ENV: test
       DATABASE_URL: postgresql+asyncpg://perfectday:perfectday@postgres:5432/perfectday_test
