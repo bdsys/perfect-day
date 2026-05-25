@@ -338,9 +338,9 @@ function EntryDetailPageInner() {
               <StatusPanel
                 state={pollingRegen ? 'running' : regenResult!}
                 headline={
-                  pollingRegen ? 'Regenerating draft…' :
-                  regenResult === 'success' ? 'Draft regenerated' :
-                  'Regeneration is taking longer than expected — refresh the page to check'
+                  pollingRegen ? (entry.body_markdown ? 'Regenerating draft…' : 'Generating draft…') :
+                  regenResult === 'success' ? (entry.body_markdown ? 'Draft regenerated' : 'Draft generated') :
+                  'Generation is taking longer than expected — refresh the page to check'
                 }
                 startedAt={regenStartTime ?? undefined}
                 onDismiss={() => { setRegenResult(null); setRegenStartTime(null) }}
@@ -360,7 +360,9 @@ function EntryDetailPageInner() {
                 </button>
               )}
               <button className="btn btn-secondary" onClick={handleRegenerate} disabled={pollingRegen}>
-                {pollingRegen ? 'Regenerating…' : 'Regenerate'}
+                {pollingRegen
+                  ? (entry.body_markdown ? 'Regenerating…' : 'Generating…')
+                  : (entry.body_markdown ? 'Regenerate with AI' : 'Generate with AI')}
               </button>
               <button className="btn btn-danger" onClick={handleDelete} disabled={deleting}>
                 {deleting ? 'Deleting…' : 'Delete'}

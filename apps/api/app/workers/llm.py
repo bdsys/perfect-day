@@ -17,7 +17,7 @@ from app.workers.utils import db_session
 
 log = structlog.get_logger()
 
-PRIMARY_MODEL = "claude-sonnet-4-6"
+PRIMARY_MODEL = "claude-haiku-4-5-20251001"
 
 SYSTEM_PROMPT = """\
 You are a warm, observational diary writer. Your job is to turn a list of calendar events \
@@ -308,6 +308,12 @@ async def generate_draft_for_entry(entry_id: uuid.UUID) -> None:
             return
 
         if entry.status == "published":
+            log.info("generate_draft_skipped_published", entry_id=str(entry_id))
+            from sqlalchemy import update as sql_update
+
+            await db.execute(
+                sql_update(Entry).where(Entry.id == entry_id).values(updated_at=datetime.now(UTC))
+            )
             return
 
         diary_result = await db.execute(select(Diary).where(Diary.id == entry.diary_id))
@@ -322,6 +328,12 @@ async def generate_draft_for_entry(entry_id: uuid.UUID) -> None:
 
         if not events:
             log.info("generate_draft_no_events", entry_id=str(entry_id))
+            entry.body_markdown = (
+                "_No source events are linked to this entry yet — nothing to generate "
+                "from. Run a scan or attach events first._"
+            )
+            entry.body_source = "fallback"
+            entry.flagged_tokens = []
             return
 
     diary_context, entry_data = build_prompt(diary, entry, events, enrichments)
