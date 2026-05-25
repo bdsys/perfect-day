@@ -57,6 +57,9 @@ export default function DiaryDetailPage() {
   const [creating, setCreating] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [statusFilter, setStatusFilter] = useState('')
+  const [showScanOptions, setShowScanOptions] = useState(false)
+  const [pastDays, setPastDays] = useState(90)
+  const [futureDays, setFutureDays] = useState(90)
 
   useEffect(() => {
     if (!authLoading && !user) router.replace('/login')
@@ -91,6 +94,19 @@ export default function DiaryDetailPage() {
   async function handleScan() {
     try {
       const result = await api.diaries.triggerScan(diaryId)
+      if (result.queued || result.alreadyRunning) {
+        setLatestRun(null)
+        setPollingScan(true)
+      }
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Scan failed')
+    }
+  }
+
+  async function handleScanWithOptions() {
+    setShowScanOptions(false)
+    try {
+      const result = await api.diaries.triggerScan(diaryId, { past_days: pastDays, future_days: futureDays })
       if (result.queued || result.alreadyRunning) {
         setLatestRun(null)
         setPollingScan(true)
@@ -183,9 +199,48 @@ export default function DiaryDetailPage() {
                 Connect Google Calendar
               </button>
             )}
-            <button className="btn btn-primary" onClick={handleScan} disabled={pollingScan}>
-              {pollingScan ? 'Scanning…' : 'Scan now'}
-            </button>
+            <div style={{ position: 'relative', display: 'inline-block' }}>
+              <div className="split-btn">
+                <button className="btn btn-primary" onClick={handleScan} disabled={pollingScan}>
+                  {pollingScan ? 'Scanning…' : 'Scan now'}
+                </button>
+                <button
+                  className="btn-gear"
+                  aria-label="Scan options"
+                  onClick={() => setShowScanOptions((v) => !v)}
+                  disabled={pollingScan}
+                >
+                  ⚙
+                </button>
+              </div>
+              {showScanOptions && (
+                <div className="popover" style={{ top: '100%', right: 0, marginTop: '0.4rem' }}>
+                  <label>
+                    Past days
+                    <input
+                      type="number"
+                      min={1}
+                      max={3650}
+                      value={pastDays}
+                      onChange={(e) => setPastDays(Number(e.target.value))}
+                    />
+                  </label>
+                  <label>
+                    Future days
+                    <input
+                      type="number"
+                      min={1}
+                      max={3650}
+                      value={futureDays}
+                      onChange={(e) => setFutureDays(Number(e.target.value))}
+                    />
+                  </label>
+                  <button className="btn btn-primary" style={{ width: '100%' }} onClick={handleScanWithOptions} disabled={pollingScan}>
+                    Run scan
+                  </button>
+                </div>
+              )}
+            </div>
             <button className="btn btn-primary" onClick={handleNewEntry} disabled={creating}>
               {creating ? 'Creating…' : 'New entry'}
             </button>

@@ -316,3 +316,32 @@ input:focus {
   padding: 2rem;
   color: var(--text-muted);
 }
+
+/* Split button + scan options popover */
+.split-btn { display: inline-flex; align-items: stretch; }
+.split-btn > .btn { border-radius: 6px 0 0 6px; }
+.split-btn > .btn-gear {
+  border-radius: 0 6px 6px 0;
+  border-left: 1px solid var(--border);
+  padding: 0 0.6rem;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+  border-top: none;
+  border-right: none;
+  border-bottom: none;
+}
+.split-btn > .btn-gear:hover { background: var(--accent-hover); }
+
+.popover {
+  position: absolute;
+  z-index: 50;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.75rem;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  min-width: 240px;
+}
+.popover label { display: block; font-size: 0.85rem; margin-bottom: 0.4rem; color: var(--text-muted); }
+.popover input[type="number"] { width: 100%; padding: 0.3rem; margin-bottom: 0.75rem; }
