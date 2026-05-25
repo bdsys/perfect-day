@@ -19,13 +19,12 @@ import pytest
 
 from app.workers.calendar_sync import _fetch_events, _scan_window
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
-def _google_response(items: list[dict], next_sync_token: str = "tok123") -> dict:
+def _google_response(items: list[dict], next_sync_token: str = "tok123") -> dict:  # noqa: S107
     """Minimal Google Calendar events.list JSON response."""
     return {"items": items, "nextSyncToken": next_sync_token}
 
@@ -74,7 +73,7 @@ async def test_initial_sync_sends_time_min_and_time_max():
         events, sync_token = await _fetch_events(
             calendar_id="primary",
             sync_token=None,
-            headers={"Authorization": "Bearer x"},
+            headers={"Authorization": "Bearer x"},  # noqa: S106
             time_min=time_min,
             time_max=time_max,
         )
@@ -100,7 +99,7 @@ async def test_initial_sync_sends_time_min_and_time_max():
 
     assert "syncToken" not in captured_params, "Full sync must NOT send syncToken"
     assert events == []
-    assert sync_token == "tok123"
+    assert sync_token == "tok123"  # noqa: S105
 
 
 # ---------------------------------------------------------------------------
@@ -139,8 +138,8 @@ async def test_sync_token_path_does_not_send_time_min_max():
 
         events, sync_token = await _fetch_events(
             calendar_id="primary",
-            sync_token="sometoken",
-            headers={"Authorization": "Bearer x"},
+            sync_token="sometoken",  # noqa: S106
+            headers={"Authorization": "Bearer x"},  # noqa: S106
             time_min=time_min,
             time_max=time_max,
         )
@@ -225,7 +224,7 @@ async def test_post_filter_drops_out_of_window_events():
 
         total = await sync_calendar(
             diary_id=diary_id,
-            access_token="x",
+            access_token="x",  # noqa: S106
             diary_timezone="UTC",
             past_days=90,
             future_days=90,
@@ -337,7 +336,7 @@ async def test_post_filter_handles_all_day_events():
 
         total = await sync_calendar(
             diary_id=diary_id,
-            access_token="x",
+            access_token="x",  # noqa: S106
             diary_timezone="UTC",
             past_days=90,
             future_days=90,
