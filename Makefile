@@ -1,5 +1,5 @@
 .PHONY: up down infra api worker beat web migrate lint typecheck \
-        test test-fast test-all test-e2e test-live test-coverage \
+        test test-fast test-all test-e2e test-live test-smoke test-coverage \
         web-e2e-install seed-bucket bootstrap
 
 API_DIR  := apps/api
@@ -13,13 +13,13 @@ VENV_BIN := $(API_DIR)/.venv/bin
 
 # Option A: run everything in Docker (no hot-reload)
 up:
-	docker compose up -d
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile dev up -d
 
 down:
-	docker compose down
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile dev down
 
 logs:
-	docker compose logs -f
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile dev logs -f
 
 # Option B: infra in Docker + app processes locally (hot-reload dev)
 #   Step 1: make infra          — start postgres, redis, minio only
@@ -91,7 +91,7 @@ test-all:
 	@$(MAKE) test-e2e
 	@echo ""
 	@echo "All checks passed."
-	@echo "Note: 'make test-live' and './scripts/smoke-test.sh' are not included here."
+	@echo "Note: 'make test-live' and 'make test-smoke' are not included here."
 	@echo "See POC_PHASE1_LOCAL_TESTING.md for when to use them."
 
 test-coverage:
@@ -99,7 +99,8 @@ test-coverage:
 	  --cov=app --cov-report=term-missing --cov-report=html:htmlcov -q
 
 test-e2e:
-	docker compose -f docker-compose.yml -f docker-compose.test.yml up -d --build web
+	docker compose -f docker-compose.yml -f docker-compose.test.yml build web
+	docker compose -f docker-compose.yml -f docker-compose.test.yml up -d
 	./scripts/wait-for-healthy.sh http://localhost:8000/readyz 60
 	cd $(API_DIR) && DATABASE_URL_SYNC=postgresql://perfectday:perfectday@localhost:5432/perfectday_test \
 	  $(CURDIR)/$(VENV_BIN)/alembic upgrade head
@@ -113,6 +114,11 @@ web-e2e-install:
 test-live:
 	@echo "Runs live LLM golden tests — never in CI. Requires ANTHROPIC_API_KEY."
 	cd $(API_DIR) && ANTHROPIC_API_KEY=$$(grep '^ANTHROPIC_API_KEY=' .env | cut -d= -f2-) ANTHROPIC_BASE_URL=https://api.anthropic.com $(CURDIR)/$(PYTEST) tests/integration/test_llm_live.py -q -m live
+
+# Curl-based API smoke test against a running stack (default: http://localhost:8000).
+# Override with: make test-smoke BASE=http://example.com
+test-smoke:
+	./scripts/smoke-test.sh $(BASE)
 
 # ---------------------------------------------------------------------------
 # Bootstrap

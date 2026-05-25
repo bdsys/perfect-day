@@ -1,0 +1,26 @@
+# Development override — adds host port bindings for web and api so you can
+# hit them directly from the host (browser, Swagger UI, etc.).
+# Also adds loopback-bound ports for postgres, redis, minio, and pgadmin.
+# Used by: make up, make down, make logs
+# NOT used by: NUC deploy (scripts/nuc/20-deploy.sh)
+services:
+  postgres:
+    ports:
+      - "127.0.0.1:5432:5432"
+
+  redis:
+    ports:
+      - "127.0.0.1:6379:6379"
+
+  minio:
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+
+  web:
+    ports:
+      - "3000:3000"
+
+  api:
+    ports:
+      - "8000:8000"

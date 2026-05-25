@@ -103,6 +103,18 @@ export interface EventItem {
   status: string
 }
 
+export interface CalendarEventSummary {
+  id: string
+  summary: string
+  description: string
+  location: string
+  occurred_at: string | null
+  start: Record<string, string>
+  end: Record<string, string>
+  attendees: Array<{ displayName?: string; email?: string; organizer?: boolean; responseStatus?: string }>
+  status: string
+}
+
 export interface Entry {
   id: string
   diary_id: string
@@ -114,11 +126,13 @@ export interface Entry {
   flagged_tokens: string[] | null
   status: 'draft' | 'published'
   created_by: 'auto' | 'manual'
+  creation_source: 'manual' | 'calendar_pick' | 'rule' | 'legacy_auto'
   published_at: string | null
   deleted_at: string | null
   created_at: string
   updated_at: string
   events: EventItem[]
+  rule_matches: RuleMatchSummary[]
 }
 
 export interface ScanRun {
@@ -131,6 +145,57 @@ export interface ScanRun {
   events_calendar: number
   entries_created: number
   errors?: Array<{ source: string; message: string }> | null
+}
+
+export interface RuleConditionLeaf {
+  field: 'title' | 'description' | 'location' | 'attendee_email'
+  op: 'contains' | 'equals' | 'not_contains'
+  value: string
+  case_sensitive?: boolean
+}
+
+export interface RuleConditionGroup {
+  op: 'AND' | 'OR'
+  children: RuleCondition[]
+}
+
+export type RuleCondition = RuleConditionLeaf | RuleConditionGroup
+
+export interface RuleOptions {
+  recurring?: 'per_instance' | 'per_series'
+  multi_day?: 'per_day' | 'spanning'
+}
+
+export interface Rule {
+  id: string
+  diary_id: string
+  name: string
+  condition: RuleCondition
+  options: RuleOptions
+  enabled: boolean
+  last_applied_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface RuleCreate {
+  name: string
+  condition: RuleCondition
+  options?: RuleOptions
+  enabled?: boolean
+}
+
+export interface RulePreview {
+  matched_count: number
+  total_evaluated: number
+  threshold_exceeded: boolean
+  sample: Array<{ summary: string; occurred_at: string | null; location: string }>
+}
+
+export interface RuleMatchSummary {
+  rule_id: string
+  rule_name: string
+  matched_at: string
 }
 
 // ---------------------------------------------------------------------------
@@ -235,6 +300,70 @@ export const api = {
     },
     async list(): Promise<Integration[]> {
       return apiFetch('/v1/integrations')
+    },
+  },
+
+  calendarEvents: {
+    async list(
+      diaryId: string,
+      params: { attached?: boolean; from?: string; to?: string; limit?: number } = {},
+    ): Promise<CalendarEventSummary[]> {
+      const q = new URLSearchParams()
+      if (params.attached !== undefined) q.set('attached', String(params.attached))
+      if (params.from) q.set('from', params.from)
+      if (params.to) q.set('to', params.to)
+      if (params.limit) q.set('limit', String(params.limit))
+      const qs = q.toString()
+      return apiFetch(`/v1/diaries/${diaryId}/calendar-events${qs ? '?' + qs : ''}`)
+    },
+
+    async createFromEvent(diaryId: string, eventId: string): Promise<Entry> {
+      return apiFetch(`/v1/diaries/${diaryId}/entries/from-event`, {
+        method: 'POST',
+        body: JSON.stringify({ event_id: eventId }),
+      })
+    },
+  },
+
+  rules: {
+    async list(diaryId: string): Promise<Rule[]> {
+      return apiFetch(`/v1/diaries/${diaryId}/rules`)
+    },
+
+    async create(diaryId: string, body: RuleCreate): Promise<Rule> {
+      return apiFetch(`/v1/diaries/${diaryId}/rules`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      })
+    },
+
+    async get(ruleId: string): Promise<Rule> {
+      return apiFetch(`/v1/rules/${ruleId}`)
+    },
+
+    async patch(ruleId: string, body: Partial<RuleCreate>): Promise<Rule> {
+      return apiFetch(`/v1/rules/${ruleId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      })
+    },
+
+    async delete(ruleId: string): Promise<void> {
+      return apiFetch(`/v1/rules/${ruleId}`, { method: 'DELETE' })
+    },
+
+    async preview(diaryId: string, body: { condition: RuleCondition; options?: RuleOptions }): Promise<RulePreview> {
+      return apiFetch(`/v1/diaries/${diaryId}/rules/preview`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      })
+    },
+
+    async apply(ruleId: string, days: number): Promise<{ queued: boolean }> {
+      return apiFetch(`/v1/rules/${ruleId}/apply`, {
+        method: 'POST',
+        body: JSON.stringify({ days }),
+      })
     },
   },
 }

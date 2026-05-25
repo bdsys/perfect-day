@@ -40,12 +40,14 @@ Cloudflare will become the authoritative DNS for `andrewlass.com`. GoDaddy stays
 
 1. In Cloudflare → **DNS** for `andrewlass.com`, add three A records:
    ```
-   Type: A   Name: diary.perfectday                Value: <YOUR_NUC_WAN_IP>   TTL: 300   Proxy: OFF
-   Type: A   Name: api.diary.perfectday             Value: <YOUR_NUC_WAN_IP>   TTL: 300   Proxy: OFF
-   Type: A   Name: media.diary.perfectday           Value: <YOUR_NUC_WAN_IP>   TTL: 300   Proxy: OFF
+   Type: A   Name: diary.perfectday                Value: <YOUR_NUC_WAN_IP>   TTL: 300   Proxy: ON
+   Type: A   Name: api.diary.perfectday             Value: <YOUR_NUC_WAN_IP>   TTL: 300   Proxy: ON
+   Type: A   Name: media.diary.perfectday           Value: <YOUR_NUC_WAN_IP>   TTL: 300   Proxy: ON
    ```
    To find your NUC WAN IP: `curl https://api.ipify.org` (run from the NUC or any home device).
-   Proxy must be **OFF** (grey cloud, not orange) — FortiGate handles TLS; Cloudflare proxying breaks this.
+   Proxy must be **ON** (orange cloud) — Cloudflare handles the public-facing TLS; FortiGate uses a
+   Cloudflare Origin Certificate for the CF↔origin hop. See [`deploy/cloudflare.md`](deploy/cloudflare.md)
+   § Cloudflare Origin Certificate setup.
 
 2. Create a scoped API token for DDNS updates:
    - Cloudflare → **My Profile** → **API Tokens** → **Create Token**
@@ -207,31 +209,42 @@ docker compose logs cloudflare-ddns --tail=20
 
 ### B5 — FortiGate: virtual hosts and TLS certificates
 
-**This step requires A2 (DNS records resolving) to be complete first** — Let's Encrypt needs to reach your NUC via HTTP to verify ownership.
+**This step requires A2 (DNS records resolving and Cloudflare proxy ON) to be complete first.**
 
-In the FortiGate UI:
+Follow the procedure in [`deploy/nuc.md` → FortiGate Virtual Server setup](deploy/nuc.md#fortigate-virtual-server-setup). It covers:
 
-1. **Create two virtual hosts / VIPs:**
+1. Generate a CSR on FortiGate and obtain a Cloudflare Origin Certificate (multi-SAN, 15-year validity)
+2. Create a single HTTPS Virtual Server on WAN:443 with one realserver → NUC:80 (Caddy edge), and bind an HTTP health-check monitor at the VIP level
+3. One firewall policy permitting inbound HTTPS from Cloudflare IP ranges only
 
-   | Virtual Host | Backend IP | Backend Port |
-   |---|---|---|
-   | `diary.perfectday.andrewlass.com` | NUC IP | 3000 |
-   | `api.diary.perfectday.andrewlass.com` | NUC IP | 8000 |
+When complete, verify from off-network:
 
-   For each one: Policy & Objects → Virtual IPs → New
-   - External interface: WAN interface
-   - External IP: WAN IP (or "any")
-   - Mapped IP: NUC internal IP
-   - Port forwarding: 443 → 3000 (or 8000)
+```bash
+curl -I https://diary.perfectday.andrewlass.com/healthz    # Expect: 200 from Next.js
+curl -I https://api.diary.perfectday.andrewlass.com/healthz # Expect: 200 from FastAPI
+dig +short diary.perfectday.andrewlass.com                  # Expect: Cloudflare anycast IPs
+```
 
-2. **Enable Let's Encrypt certificates for both domains:**
-   - System → Certificates → Local → Create/Import → Let's Encrypt
-   - Add `diary.perfectday.andrewlass.com` and `api.diary.perfectday.andrewlass.com`
-   - FortiGate handles ACME HTTP-01 challenge automatically
+### B5.5 — Bring up the Caddy edge on the NUC
 
-3. **Create firewall policies** to allow HTTPS traffic through to each VIP.
+After deploying (B3) and configuring FortiGate (B5), start the Caddy edge container if it is not already running:
 
-4. **Add HTTP→HTTPS redirect** policy for port 80.
+```bash
+cd /opt/perfect-day
+docker compose --profile nuc up -d edge
+```
+
+Verify Host-header routing is working from inside the NUC LAN:
+
+```bash
+curl -sH "Host: diary.perfectday.andrewlass.com" http://<NUC_LAN_IP>:80/healthz
+# Expect: 200 response from Next.js
+
+curl -sH "Host: api.diary.perfectday.andrewlass.com" http://<NUC_LAN_IP>:80/healthz
+# Expect: {"status":"ok"} from FastAPI
+```
+
+See [`deploy/caddy/README.md`](deploy/caddy/README.md) for full documentation and local debug workflow.
 
 ### B6 — Add production Google OAuth redirect URI
 
@@ -256,7 +269,7 @@ Configure rclone for Backblaze B2 when prompted. Sets up daily encrypted `pg_dum
 ### B8 — Validate production deployment
 
 ```bash
-./scripts/smoke-test.sh https://api.diary.perfectday.andrewlass.com
+make test-smoke BASE=https://api.diary.perfectday.andrewlass.com
 # Expect: 16 PASS lines
 ```
 
@@ -356,7 +369,7 @@ After this, push to `main` → build → deploy → smoke test is fully automate
 A1 (Cloudflare account + NS delegation)
   └─ A2 (DNS A records + DDNS token)
        └─ B4 (DDNS updater running)
-            └─ B5 (FortiGate TLS certs)  ← requires DNS resolving to NUC
+            └─ B5 (FortiGate Origin Cert install)  ← requires DNS resolving + CF proxy ON
                  └─ B6 (add prod Google OAuth redirect URI)
 
 A3 (Google Cloud project + OAuth creds)

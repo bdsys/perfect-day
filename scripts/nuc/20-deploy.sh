@@ -62,19 +62,19 @@ echo "  Linked ${ENV_FILE} -> ${DEPLOY_DIR}/apps/api/.env"
 echo '[3/7] Pulling Docker images...'
 cd "${DEPLOY_DIR}"
 # Try GHCR first; fall back to local build if images not yet pushed
-if docker compose pull api worker beat web 2>/dev/null; then
+if docker compose --profile nuc pull api worker beat web edge 2>/dev/null; then
     echo '  Pulled from GHCR'
 else
     echo '  Images not on GHCR yet — building locally (first deploy)'
-    docker compose build api web
+    docker compose --profile nuc build api web
 fi
 
 echo '[4/7] Running Alembic migrations...'
-docker compose run --rm api alembic upgrade head
+docker compose --profile nuc run --rm api alembic upgrade head
 echo '  Migrations complete'
 
 echo '[5/7] Starting all services...'
-docker compose up -d
+docker compose --profile nuc up -d
 echo '  Services started'
 
 echo '[6/7] Seeding MinIO bucket...'

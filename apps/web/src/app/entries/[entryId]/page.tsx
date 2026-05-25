@@ -1,8 +1,8 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { Suspense, useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
-import { useParams, useRouter } from 'next/navigation'
+import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import { api, type Entry, type EventItem } from '@/lib/api'
 import { useAuth } from '@/lib/auth-context'
 import { StatusPanel } from '@/components/StatusPanel'
@@ -38,9 +38,19 @@ function formatEventTime(event: EventItem): string {
 }
 
 export default function EntryDetailPage() {
+  return (
+    <Suspense fallback={<div className="loading">Loading…</div>}>
+      <EntryDetailPageInner />
+    </Suspense>
+  )
+}
+
+function EntryDetailPageInner() {
   const { entryId } = useParams<{ entryId: string }>()
   const { user, loading: authLoading } = useAuth()
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const fromPick = searchParams.get('fromPick') === '1'
 
   const [entry, setEntry] = useState<Entry | null>(null)
   const [loading, setLoading] = useState(true)
@@ -56,6 +66,7 @@ export default function EntryDetailPage() {
   const [regenStartedAt, setRegenStartedAt] = useState<string | null>(null)
   const [regenStartTime, setRegenStartTime] = useState<string | null>(null)
   const [regenResult, setRegenResult] = useState<'success' | 'failed' | null>(null)
+  const [regenSlow, setRegenSlow] = useState(false)
   const [deleting, setDeleting] = useState(false)
 
   useEffect(() => {
@@ -69,10 +80,16 @@ export default function EntryDetailPage() {
         setEntry(e)
         setEditTitle(e.title ?? '')
         setEditBody(e.body_markdown ?? '')
+        // If we arrived from the picker, auto-start polling for LLM body
+        if (fromPick && !e.body_markdown) {
+          setRegenStartedAt(e.updated_at)
+          setRegenStartTime(new Date().toISOString())
+          setPollingRegen(true)
+        }
       })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false))
-  }, [user, entryId])
+  }, [user, entryId, fromPick])
 
   function startEdit() {
     if (!entry) return
@@ -130,6 +147,7 @@ export default function EntryDetailPage() {
       setRegenStartedAt(entry.updated_at)
       setRegenStartTime(new Date().toISOString())
       setRegenResult(null)
+      setRegenSlow(false)
       await api.entries.regenerate(entry.id)
       setPollingRegen(true)
       setError('')
@@ -145,6 +163,7 @@ export default function EntryDetailPage() {
       if (updated.updated_at !== regenStartedAt) {
         setEntry(updated)
         setPollingRegen(false)
+        setRegenSlow(false)
         setRegenResult('success')
       }
     } catch {
@@ -155,11 +174,16 @@ export default function EntryDetailPage() {
 
   useEffect(() => {
     if (!pollingRegen) return
-    const timer = setTimeout(() => {
+    const slowTimer = setTimeout(() => setRegenSlow(true), 9 * 1000)
+    const failTimer = setTimeout(() => {
       setPollingRegen(false)
+      setRegenSlow(false)
       setRegenResult('failed')
-    }, 90 * 1000)
-    return () => clearTimeout(timer)
+    }, 30 * 1000)
+    return () => {
+      clearTimeout(slowTimer)
+      clearTimeout(failTimer)
+    }
   }, [pollingRegen])
 
   useEffect(() => {
@@ -244,6 +268,20 @@ export default function EntryDetailPage() {
               {entry.title ?? <span style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>(no title yet)</span>}
             </h1>
 
+            {entry.rule_matches && entry.rule_matches.length > 0 && (
+              <div style={{ marginBottom: '0.75rem', fontSize: '0.85rem', color: '#555' }}>
+                Captured by rule{entry.rule_matches.length !== 1 ? 's' : ''}:{' '}
+                {entry.rule_matches.map((m, i) => (
+                  <span key={m.rule_id}>
+                    {i > 0 && ', '}
+                    <a href={`/rules/${m.rule_id}`} style={{ color: 'var(--accent)', textDecoration: 'none' }}>
+                      {m.rule_name}
+                    </a>
+                  </span>
+                ))}
+              </div>
+            )}
+
             {entry.body_source === 'fallback' && (
               <p style={{ fontStyle: 'italic', color: '#888', marginBottom: '1rem', fontSize: '0.85rem' }}>
                 Generated from calendar events — LLM draft was not available. Edit or regenerate.
@@ -308,9 +346,13 @@ export default function EntryDetailPage() {
               <StatusPanel
                 state={pollingRegen ? 'running' : regenResult!}
                 headline={
-                  pollingRegen ? 'Regenerating draft…' :
-                  regenResult === 'success' ? 'Draft regenerated' :
-                  'Regeneration is taking longer than expected — refresh the page to check'
+                  pollingRegen
+                    ? (regenSlow
+                        ? 'Still working — this is taking longer than expected…'
+                        : (entry.body_markdown ? 'Regenerating draft…' : 'Generating draft…'))
+                    : regenResult === 'success'
+                      ? (entry.body_markdown ? 'Draft regenerated' : 'Draft generated')
+                      : 'Generation is taking longer than expected — refresh the page to check'
                 }
                 startedAt={regenStartTime ?? undefined}
                 onDismiss={() => { setRegenResult(null); setRegenStartTime(null) }}
@@ -330,7 +372,9 @@ export default function EntryDetailPage() {
                 </button>
               )}
               <button className="btn btn-secondary" onClick={handleRegenerate} disabled={pollingRegen}>
-                {pollingRegen ? 'Regenerating…' : 'Regenerate'}
+                {pollingRegen
+                  ? (entry.body_markdown ? 'Regenerating…' : 'Generating…')
+                  : (entry.body_markdown ? 'Regenerate with AI' : 'Generate with AI')}
               </button>
               <button className="btn btn-danger" onClick={handleDelete} disabled={deleting}>
                 {deleting ? 'Deleting…' : 'Delete'}

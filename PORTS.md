@@ -14,11 +14,11 @@
 
 ## Server (NUC, production-like)
 
-The FortiGate handles TLS termination and reverse-proxies to the NUC. Only ports 80 and 443 are exposed to the network.
+Cloudflare proxy (orange cloud) handles the public-facing TLS. FortiGate terminates the CF↔origin TLS hop using a Cloudflare Origin Certificate and forwards plain HTTP to the NUC on the LAN. Only port 443 is accepted inbound on FortiGate (from Cloudflare IP ranges only). HTTP→HTTPS redirects happen at Cloudflare's edge — port 80 is not opened on FortiGate.
 
 | Port | Service | Public URL |
 |------|---------|------------|
-| 443 | HTTPS (TLS termination, FortiGate) | https://diary.perfectday.andrewlass.com |
-| 80 | HTTP (redirects to HTTPS, FortiGate) | http://diary.perfectday.andrewlass.com |
+| 443 | HTTPS (CF↔origin TLS termination, FortiGate; Cloudflare Origin Certificate) | https://diary.perfectday.andrewlass.com |
+| 8443 | **Reserved** — internal TLS proxy (future e2e TLS to NUC backends via Caddy/Nginx if needed) | — |
 
 Internal container ports on the NUC mirror the local dev setup above but are not exposed externally.

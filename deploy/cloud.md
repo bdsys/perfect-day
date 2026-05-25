@@ -40,7 +40,7 @@ When filling in this doc, cover each of the following topics:
 
 | Topic | NUC approach | Cloud equivalent |
 |---|---|---|
-| Edge / TLS | FortiGate 7.4 (WAF, vhost, TLS termination) | Cloud LB, Cloudflare, Fly proxy, or Caddy on VPS |
+| Edge / TLS | FortiGate 7.2+ (WAF, vhost, TLS termination) | Cloud LB, Cloudflare, Fly proxy, or Caddy on VPS |
 | Secrets | sops + YubiKey at boot | Managed secret manager (AWS Secrets Manager, GCP Secret Manager, 1Password Connect, Fly secrets) |
 | Database | Self-hosted Postgres + pg_dump + age encryption | Managed Postgres with PITR (no `age` layer needed — PITR covers point-in-time restore) |
 | Redis | Self-hosted | Managed (Upstash free tier, Fly Redis, ElastiCache) |

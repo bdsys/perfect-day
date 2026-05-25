@@ -6,12 +6,19 @@
                 ┌──────────────────────────────────────────────┐
                 │            Internet / End Users              │
                 └────────────────┬─────────────────────────────┘
-                                 │ TLS
+                                 │ TLS #1 (Cloudflare Universal SSL)
                   ┌──────────────┴─────────────────┐
-                  │   Edge proxy                   │
-                  │   (TLS termination, WAF, vhost)│
+                  │   Cloudflare edge              │
+                  │   (public TLS, WAF, DDoS,      │
+                  │    bot filter, IP hidden)       │
+                  └──────────────┬─────────────────┘
+                                 │ TLS #2 (Cloudflare Origin Certificate)
+                  ┌──────────────┴─────────────────┐
+                  │   FortiGate edge               │
+                  │   (CF↔origin TLS termination,  │
+                  │    WAF/IPS, vhost routing)      │
                   └──┬─────────────────┬───────────┘
-                     │                 │
+                     │ plain HTTP      │ plain HTTP
        diary.perfectday.andrewlass.com  api.diary.perfectday.andrewlass.com
                      │                 │
         ┌────────────▼──┐    ┌─────────▼────────────┐
@@ -39,7 +46,7 @@
        Photos)        Claude)
 ```
 
-On the home-lab deployment the edge proxy is FortiGate 7.4 — see [`deploy/nuc.md`](../deploy/nuc.md). On a cloud deployment this is the cloud load balancer or Cloudflare.
+On the home-lab deployment the edge is Cloudflare (public TLS, edge WAF, DDoS protection) in front of FortiGate 7.2+ (CF↔origin TLS termination via Cloudflare Origin Certificate, WAF/IPS, host-based routing) — see [`deploy/nuc.md`](../deploy/nuc.md).
 
 ## Deployment targets
 
@@ -58,7 +65,7 @@ Three deployment targets are supported. The application code does not depend on 
   - `diary.perfectday.andrewlass.com` → Next.js
   - `api.diary.perfectday.andrewlass.com` → FastAPI
   - TLS termination and CORS allowlist at the edge proxy. Mobile uses the API subdomain directly.
-  - **CORS policy:** production CORS allowlist is exact-match origins only (`diary.perfectday.andrewlass.com`, `api.diary.perfectday.andrewlass.com`). Expo dev tunnel (`*.exp.direct`, `*.expo.dev`) is added to the allowlist **only when `ENV=development`**. This must be enforced in code — a misconfigured dev tunnel in a production CORS allowlist would allow any Expo app to make cross-origin API calls. Never deploy with `ENV=development` to the production host.
+  - **CORS policy:** Public TLS terminates at Cloudflare; FortiGate terminates the CF↔origin hop and enforces CORS. Production CORS allowlist is exact-match origins only (`diary.perfectday.andrewlass.com`, `api.diary.perfectday.andrewlass.com`). Expo dev tunnel (`*.exp.direct`, `*.expo.dev`) is added to the allowlist **only when `ENV=development`**. This must be enforced in code — a misconfigured dev tunnel in a production CORS allowlist would allow any Expo app to make cross-origin API calls. Never deploy with `ENV=development` to the production host.
 - **LLM placement (C1):** FastAPI/Celery worker calls cloud LLM (Anthropic Claude primary, Gemini fallback) directly over HTTPS. No cloud-side processing service for PoC. Future migration path to a Lambda/Cloud Run shim is left open.
 
 ## Flow notes

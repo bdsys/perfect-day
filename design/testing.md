@@ -154,6 +154,7 @@ Run `pytest --cov=apps/api --cov-report=term-missing`. CI fails if hard-gate pat
 | `make test` | Unit + integration (testcontainers) | Before every commit |
 | `make test-fast` | Unit only | Fast iteration during feature work |
 | `make test-e2e` | Playwright (requires running compose stack) | Before opening a PR |
+| `make test-smoke` | Curl walkthrough against a running stack | After deploy or stack changes |
 | `make test-live` | Live LLM golden tests | After prompt changes |
 | `make test-coverage` | Unit + integration with coverage report | Pre-PR |
 

@@ -25,7 +25,7 @@
   Infrastructure
 
   - Lab: Intel NUC, 4-core x86 1.85GHz, 8GB RAM, shared with other services
-  - Network edge: FortiGate 7.4 — handles Layer 4, WAF, virtual hosting, TLS termination from the internet
+  - Network edge: Cloudflare (public TLS via Universal SSL, edge WAF, DDoS) in front of FortiGate 7.2+ (CF↔origin TLS termination via Cloudflare Origin Certificate, host-based routing, FortiGate WAF/IPS). FortiGate forwards plain HTTP to NUC on the home LAN.
   - Domain: diary.perfectday.andrewlass.com (lab domain for now)
   - Cloud offload: Open to cloud services (AWS, GCP) to offload LLM calls and heavy processing from the NUC
   - Hosting should support two deployment options: (1) fully self-hosted on the NUC, (2) hybrid with cloud offload for LLM/processing
