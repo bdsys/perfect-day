@@ -73,8 +73,12 @@ export default function CalendarPickPage() {
       const msg = e instanceof Error ? e.message : 'Failed to create entry'
       if (msg.includes('409') || msg.includes('event_already_attached')) {
         setError('That event was just claimed. Refreshing the list…')
-        const refreshed = await api.calendarEvents.list(diaryId, { attached: false })
-        setEvents(refreshed)
+        try {
+          const refreshed = await api.calendarEvents.list(diaryId, { attached: false })
+          setEvents(refreshed)
+        } catch {
+          // refresh failed; list may be stale but error message already shown
+        }
       } else {
         setError(msg)
       }
