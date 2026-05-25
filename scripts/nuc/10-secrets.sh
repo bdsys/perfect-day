@@ -169,9 +169,9 @@ if [[ -n "${CLOUDFLARE_API_TOKEN:-}" && -n "${CLOUDFLARE_ZONE_ID:-}" ]]; then
       "authentication": { "api_token": "${CLOUDFLARE_API_TOKEN}" },
       "zone_id": "${CLOUDFLARE_ZONE_ID}",
       "subdomains": [
-        { "name": "diary.perfectday" },
-        { "name": "api.diary.perfectday" },
-        { "name": "media.diary.perfectday" }
+        "diary.perfectday",
+        "api.diary.perfectday",
+        "media.diary.perfectday"
       ],
       "proxied": false
     }

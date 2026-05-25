@@ -155,9 +155,9 @@ sudo tee /etc/perfect-day/cloudflare-ddns.config.json <<'EOF'
       "authentication": { "api_token": "<your-token-here>" },
       "zone_id": "<your-zone-id-here>",
       "subdomains": [
-        { "name": "diary.perfectday" },
-        { "name": "api.diary.perfectday" },
-        { "name": "media.diary.perfectday" }
+        "diary.perfectday",
+        "api.diary.perfectday",
+        "media.diary.perfectday"
       ],
       "proxied": false
     }
@@ -172,7 +172,7 @@ sudo chmod 600 /etc/perfect-day/cloudflare-ddns.config.json
 sudo chown root:docker /etc/perfect-day/cloudflare-ddns.config.json
 ```
 
-> **Note on `subdomains`:** the container prepends the `zone` name automatically. Use only the left-hand portion of the FQDN here. For example, `diary.perfectday.andrewlass.com` → `"name": "diary.perfectday"`.
+> **Note on `subdomains`:** the container prepends the zone name automatically. Use only the left-hand portion of the FQDN here. For example, `diary.perfectday.andrewlass.com` → `"diary.perfectday"`.
 
 > **Note on `proxied`:** leave this `false`. FortiGate handles TLS termination directly. Enabling the Cloudflare proxy would route traffic through Cloudflare's edge, which is not the intended path for this deployment.
 
