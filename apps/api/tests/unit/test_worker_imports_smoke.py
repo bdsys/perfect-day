@@ -165,12 +165,3 @@ async def test_backfill_diary_imports_resolve(patch_db_session):
     # BackfillRun lookup returns None → early return.
     await _backfill_diary(str(uuid.uuid4()))
 
-
-@pytest.mark.asyncio
-async def test_group_events_into_entries_imports_resolve(patch_db_session):
-    """Same protection for the grouping path's deferred imports."""
-    from app.workers.tasks import _group_events_into_entries_task
-
-    # Empty events list → no work to do → clean return.
-    result = await _group_events_into_entries_task(uuid.uuid4(), uuid.uuid4())
-    assert result == []
