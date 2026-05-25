@@ -332,18 +332,95 @@ def _strip_injection(text: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# evaluate_rules_for_event (stub — real implementation added in Part 3)
+# evaluate_rules_for_event
 # ---------------------------------------------------------------------------
 
 
 @celery_app.task(name="app.workers.tasks.evaluate_rules_for_event", bind=True, max_retries=3)
 def evaluate_rules_for_event(self, event_id: str, diary_id: str) -> None:
-    """Evaluate auto-creation rules against a newly ingested event.
+    """Evaluate auto-creation rules against a newly ingested event."""
+    try:
+        run_sync(_evaluate_rules_for_event(event_id, diary_id))
+    except Exception as exc:
+        raise self.retry(exc=exc)
 
-    TODO(P3-T3): Wire to evaluate_event_against_rules via run_sync once
-    the rules engine is fully integrated into the Celery pipeline.
-    """
-    pass
+
+async def _evaluate_rules_for_event(event_id: str, diary_id: str) -> None:
+    from app.workers.rules import evaluate_event_against_rules
+    from app.workers.utils import db_session
+
+    async with db_session() as db:
+        await evaluate_event_against_rules(event_id, diary_id, db)
+
+
+# ---------------------------------------------------------------------------
+# apply_rule_backfill
+# ---------------------------------------------------------------------------
+
+
+@celery_app.task(
+    name="app.workers.tasks.apply_rule_backfill",
+    bind=True,
+    max_retries=3,
+    default_retry_delay=30,
+)
+def apply_rule_backfill(self, rule_id: str, days: int) -> None:
+    """Backfill rule evaluation against past events for the given rule."""
+    run_sync(_apply_rule_backfill(rule_id, days))
+
+
+async def _apply_rule_backfill(rule_id_str: str, days: int) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import select, update
+
+    from app.models import AutoCreationRule, Event
+    from app.workers.rules import evaluate_event_against_rules
+    from app.workers.utils import db_session
+
+    rule_uuid = uuid.UUID(rule_id_str)
+    since = datetime.now(UTC) - timedelta(days=days)
+
+    async with db_session() as db:
+        # Load the rule to get diary_id
+        rule_result = await db.execute(
+            select(AutoCreationRule).where(AutoCreationRule.id == rule_uuid)
+        )
+        rule = rule_result.scalar_one_or_none()
+        if rule is None:
+            log.warning("apply_rule_backfill_rule_not_found", rule_id=rule_id_str)
+            return
+
+        diary_id = rule.diary_id
+
+        # Load all events for this diary in the last `days` days (both attached and unattached)
+        events_result = await db.execute(
+            select(Event)
+            .where(Event.diary_id == diary_id)
+            .where(Event.occurred_at >= since)
+            .order_by(Event.occurred_at.asc())
+        )
+        events = list(events_result.scalars())
+
+        # Update last_applied_at
+        await db.execute(
+            update(AutoCreationRule)
+            .where(AutoCreationRule.id == rule_uuid)
+            .values(last_applied_at=datetime.now(UTC))
+        )
+        await db.commit()
+
+    # Process each event through the rules engine (each call gets its own session)
+    for event in events:
+        try:
+            async with db_session() as db:
+                await evaluate_event_against_rules(str(event.id), str(diary_id), db)
+        except Exception:
+            log.exception(
+                "apply_rule_backfill_event_failed",
+                rule_id=rule_id_str,
+                event_id=str(event.id),
+            )
 
 
 # ---------------------------------------------------------------------------
