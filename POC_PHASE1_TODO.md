@@ -128,7 +128,7 @@ SendGrid is needed because residential IPs are blocked by most mail servers. It 
 
 ```bash
 ssh andrew@<NUC_IP>
-git clone git@github.com:andrewlass/perfect-day.git ~/perfect-day
+git clone git@github.com:bdsys/perfect-day.git ~/perfect-day
 cd ~/perfect-day
 sudo ./scripts/nuc/00-bootstrap.sh
 ```
@@ -144,7 +144,7 @@ sudo cat /root/.ssh/id_ed25519.pub
 
 Add the printed public key to GitHub: repo → **Settings** → **Deploy keys** → **Add deploy key** (read-only).
 
-Verify: `sudo ssh -T git@github.com` → should print "Hi andrewlass/perfect-day! You've successfully authenticated..."
+Verify: `sudo ssh -T git@github.com` → should print "Hi bdsys/perfect-day! You've successfully authenticated..."
 
 ### B2 — Provision secrets on NUC
 

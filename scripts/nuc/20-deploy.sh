@@ -8,7 +8,7 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
-REPO_URL="git@github.com:andrewlass/perfect-day.git"
+REPO_URL="git@github.com:bdsys/perfect-day.git"
 DEPLOY_DIR="/opt/perfect-day"
 ENV_FILE="/etc/perfect-day/app.env"
 HEALTH_URL="https://api.diary.perfectday.andrewlass.com/readyz"

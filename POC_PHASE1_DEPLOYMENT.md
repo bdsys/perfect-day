@@ -40,9 +40,9 @@ Run once on a fresh Ubuntu 26 LTS install. Installs Docker, configures UFW, crea
 ```bash
 # SSH to the NUC as andrew, clone the repo, then run the bootstrap:
 ssh andrew@<NUC_IP>
-git clone git@github.com:andrewlass/perfect-day.git ~/perfect-day
+git clone git@github.com:bdsys/perfect-day.git ~/perfect-day
 # (If your SSH key is not set up yet, use HTTPS for this initial clone:
-#  git clone https://github.com/andrewlass/perfect-day.git ~/perfect-day)
+#  git clone https://github.com/bdsys/perfect-day.git ~/perfect-day)
 cd ~/perfect-day
 sudo ./scripts/nuc/00-bootstrap.sh
 ```
@@ -84,7 +84,7 @@ Add that public key to GitHub:
 Verify the key works:
 ```bash
 sudo ssh -T git@github.com
-# Expected: "Hi andrewlass/perfect-day! You've successfully authenticated..."
+# Expected: "Hi bdsys/perfect-day! You've successfully authenticated..."
 ```
 
 ---
