@@ -106,7 +106,7 @@ export default function DiaryDetailPage() {
       if (runs.length === 0) return
       const run = runs[0]
       setLatestRun(run)
-      if (run.status !== 'running') {
+      if (run.status === 'success' || run.status === 'partial' || run.status === 'failed') {
         setPollingScan(false)
         const updated = await api.entries.list(diaryId, statusFilter ? { status: statusFilter } : {})
         setEntries(updated)
