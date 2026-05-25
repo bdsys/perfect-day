@@ -72,14 +72,23 @@ class TestIngestCalendarEventUnattached:
         """After refactor, ingest_calendar_event must NOT create an Entry."""
         with patch("app.workers.tasks.evaluate_rules_for_event") as mock_rules:
             mock_rules.delay = MagicMock()
-            await _ingest_calendar_event(sample_event_data, diary_id, "America/Chicago")
+            result_id = await _ingest_calendar_event(sample_event_data, diary_id, "America/Chicago")
+
+        # Return value must be a valid UUID string
+        assert result_id is not None
+        uuid.UUID(result_id)  # raises ValueError if not a valid UUID
 
         result = await db_session.execute(select(Event).where(Event.external_id == "abc123"))
         event = result.scalar_one_or_none()
         assert event is not None, "Event row must be created"
         assert event.entry_id is None, "entry_id must be NULL — no Entry auto-created"
         assert event.diary_id == diary_id, "diary_id must be set"
+        assert event.source == "google_calendar"
+        assert event.external_id == "abc123"
         assert event.payload["summary"] == "Soccer practice"
+
+        # Rule evaluation must be queued with the correct event and diary IDs
+        mock_rules.delay.assert_called_once_with(str(event.id), str(diary_id))
 
     async def test_duplicate_event_updates_payload(self, db_session: AsyncSession, diary_id, sample_event_data):
         """Re-ingesting the same external_id updates payload but keeps entry_id unchanged."""
@@ -90,7 +99,10 @@ class TestIngestCalendarEventUnattached:
             await _ingest_calendar_event(sample_event_data, diary_id, "America/Chicago")
 
         result = await db_session.execute(select(Event).where(Event.external_id == "abc123"))
-        events = result.scalars().all()
-        assert len(events) == 1, "Must not create duplicate Event rows"
-        assert events[0].payload["summary"] == "Soccer practice UPDATED"
-        assert events[0].entry_id is None
+        event = result.scalar_one()  # fails loudly if more than one row exists
+        assert event.payload["summary"] == "Soccer practice UPDATED"
+        assert event.entry_id is None
+
+        # Duplicate ingest returns early (before the .delay() call), so rule evaluation
+        # is only queued for genuinely new events — assert exactly 1 call.
+        mock_rules.delay.assert_called_once()
