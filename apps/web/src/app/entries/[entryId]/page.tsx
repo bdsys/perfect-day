@@ -1,8 +1,8 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { Suspense, useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
-import { useParams, useRouter } from 'next/navigation'
+import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import { api, type Entry, type EventItem } from '@/lib/api'
 import { useAuth } from '@/lib/auth-context'
 import { StatusPanel } from '@/components/StatusPanel'
@@ -38,9 +38,19 @@ function formatEventTime(event: EventItem): string {
 }
 
 export default function EntryDetailPage() {
+  return (
+    <Suspense fallback={<div className="loading">Loading…</div>}>
+      <EntryDetailPageInner />
+    </Suspense>
+  )
+}
+
+function EntryDetailPageInner() {
   const { entryId } = useParams<{ entryId: string }>()
   const { user, loading: authLoading } = useAuth()
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const fromPick = searchParams.get('fromPick') === '1'
 
   const [entry, setEntry] = useState<Entry | null>(null)
   const [loading, setLoading] = useState(true)
@@ -69,10 +79,16 @@ export default function EntryDetailPage() {
         setEntry(e)
         setEditTitle(e.title ?? '')
         setEditBody(e.body_markdown ?? '')
+        // If we arrived from the picker, auto-start polling for LLM body
+        if (fromPick && !e.body_markdown) {
+          setRegenStartedAt(e.updated_at)
+          setRegenStartTime(new Date().toISOString())
+          setPollingRegen(true)
+        }
       })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false))
-  }, [user, entryId])
+  }, [user, entryId, fromPick])
 
   function startEdit() {
     if (!entry) return
