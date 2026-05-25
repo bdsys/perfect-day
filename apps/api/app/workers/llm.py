@@ -276,7 +276,7 @@ def _build_fallback_body(events: list, entry_date) -> tuple[str, str]:
     if n == 1 and first_summary:
         title = first_summary
     else:
-        date_str = entry_date.strftime("%B %-d") if entry_date else "unknown date"
+        date_str = f"{entry_date.strftime('%B')} {entry_date.day}" if entry_date else "unknown date"
         title = f"{n} events on {date_str}"
 
     return title, body_markdown
