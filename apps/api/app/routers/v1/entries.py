@@ -67,6 +67,7 @@ class EntryOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     body_source: str = "llm"
+    creation_source: str = "manual"
     events: list[EventOut] = []
 
     model_config = {"from_attributes": True}
@@ -113,6 +114,7 @@ def _entry_out_from_orm(entry: Entry) -> EntryOut:
         created_at=entry.created_at,
         updated_at=entry.updated_at,
         body_source=entry.body_source,
+        creation_source=entry.creation_source,
         events=events_out,
     )
 

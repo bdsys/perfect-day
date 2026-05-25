@@ -56,11 +56,12 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
 
     # v1 routers (imported lazily to keep startup order explicit)
-    from app.routers.v1 import auth, diaries, entries, integrations, scan
+    from app.routers.v1 import auth, calendar_events, diaries, entries, integrations, scan
 
     app.include_router(auth.router, prefix="/v1")
     app.include_router(diaries.router, prefix="/v1")
     app.include_router(entries.router, prefix="/v1")
+    app.include_router(calendar_events.router, prefix="/v1")
     app.include_router(integrations.router, prefix="/v1")
     app.include_router(scan.router, prefix="/v1")
 
