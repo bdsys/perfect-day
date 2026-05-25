@@ -181,6 +181,21 @@ The FortiGate handles TLS termination and virtual hosting. This is a manual chec
 
 > Phase 1 does **not** need the `media.diary.perfectday.andrewlass.com` vhost. Photo serving is deferred to Phase 2 per `design/09-poc-scope.md:43-44`. Do not create it now.
 
+### How to configure
+
+Follow the step-by-step procedure in [`deploy/nuc.md` → FortiGate Virtual Server setup](deploy/nuc.md#fortigate-virtual-server-setup). Summary:
+
+1. Issue a Let's Encrypt cert via FortiGate's ACME client (SANs: `diary.*` and `api.diary.*`)
+2. Create two Real Server pools (`<NUC_LAN_IP>:3000`, `<NUC_LAN_IP>:8000`)
+3. Create one HTTPS Virtual Server on WAN:443 with HTTP Content Routing (Host-header routes to the two pools)
+4. Create an HTTP Virtual Server on WAN:80 with HTTP→HTTPS redirect
+5. Add firewall policies for HTTPS and HTTP inbound
+
+> **Why Virtual Server, not plain port-forward VIPs?** Two hostnames share one WAN IP and port 443.
+> Plain port-forward VIPs cannot differentiate by hostname — you can't have two VIPs both forwarding
+> WAN:443 to different backend ports. Virtual Server + Content Routing reads the decrypted `Host`
+> header and dispatches accordingly.
+
 ### TLS
 - Use Let's Encrypt via FortiGate's built-in ACME client, or upload a cert from Certbot.
 - Both vhosts need valid TLS — Google OAuth callback URLs must be HTTPS.

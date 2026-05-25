@@ -220,7 +220,7 @@ If the WAN IP changes and the updater fails to push within 15 minutes, DNS resol
 
 ### Alternatives (not the recommended path for this deployment)
 
-**FortiGate built-in DDNS:** FortiOS 7.4 may have Cloudflare as a DDNS provider under **Network → DNS → Dynamic DNS**. If so, configure it with the API token from Step 2.1 — this removes any NUC component. Verify against your specific FortiOS 7.4 build; provider support varies by firmware version.
+**FortiGate built-in DDNS:** FortiOS 7.2+ may have Cloudflare as a DDNS provider under **Network → DNS → Dynamic DNS**. If so, configure it with the API token from Step 2.1 — this removes any NUC component. Verify against your specific FortiOS 7.2 build; provider support varies by firmware version.
 
 **`ddclient` on the NUC (systemd):**
 

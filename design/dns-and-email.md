@@ -163,7 +163,7 @@ the current WAN IP to Cloudflare's DNS API on a schedule.
 | **DuckDNS** ([duckdns.org](https://www.duckdns.org/)) | Free, AWS-hosted, simple token-based update URL. Good fallback, but only gives a `*.duckdns.org` hostname — would force a CNAME hop and a second cert SAN. Use only if Cloudflare DDNS goes down. |
 | **No-IP free** ([noip.com/free](https://www.noip.com/free)) | Free tier requires manual confirmation **every 30 days** by clicking an email link, or the hostname expires. Operationally hostile for a passive home server. Skip. |
 | **Dynu, FreeDNS afraid.org** | Workable but adds a vendor for no win over Cloudflare. Skip. |
-| **FortiGate built-in DDNS** | The FortiGate edge supports DDNS to several providers natively, including Cloudflare via custom API endpoints. Worth using if available — removes the need for a script on the NUC. Verify exact provider list against the deployed FortiOS 7.4 config; if Cloudflare is supported, prefer this and drop `ddclient`. |
+| **FortiGate built-in DDNS** | The FortiGate edge supports DDNS to several providers natively, including Cloudflare via custom API endpoints. Worth using if available — removes the need for a script on the NUC. Verify exact provider list against the deployed FortiOS 7.2+ config; if Cloudflare is supported, prefer this and drop `ddclient`. |
 
 ### Failure mode and alert
 

@@ -39,7 +39,7 @@
        Photos)        Claude)
 ```
 
-On the home-lab deployment the edge proxy is FortiGate 7.4 — see [`deploy/nuc.md`](../deploy/nuc.md). On a cloud deployment this is the cloud load balancer or Cloudflare.
+On the home-lab deployment the edge proxy is FortiGate 7.2+ — see [`deploy/nuc.md`](../deploy/nuc.md). On a cloud deployment this is the cloud load balancer or Cloudflare.
 
 ## Deployment targets
 

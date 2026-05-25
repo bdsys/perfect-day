@@ -207,31 +207,23 @@ docker compose logs cloudflare-ddns --tail=20
 
 ### B5 — FortiGate: virtual hosts and TLS certificates
 
-**This step requires A2 (DNS records resolving) to be complete first** — Let's Encrypt needs to reach your NUC via HTTP to verify ownership.
+**This step requires A2 (DNS records resolving) to be complete first** — Let's Encrypt needs to reach your FortiGate's WAN interface via HTTP for ACME HTTP-01 verification.
 
-In the FortiGate UI:
+Follow the procedure in [`deploy/nuc.md` → FortiGate Virtual Server setup](deploy/nuc.md#fortigate-virtual-server-setup). It covers:
 
-1. **Create two virtual hosts / VIPs:**
+1. Issuing a Let's Encrypt cert via FortiGate's built-in ACME client (two SANs: `diary.*` and `api.diary.*`)
+2. Creating two Real Server pools pointing at the NUC (`<NUC_LAN_IP>:3000` and `<NUC_LAN_IP>:8000`)
+3. Creating one HTTPS Virtual Server on WAN:443 with HTTP Content Routing (Host-header dispatch to the two pools)
+4. Creating an HTTP Virtual Server on WAN:80 with HTTP→HTTPS redirect (also keeps the ACME HTTP-01 renewal path open)
+5. Two firewall policies permitting inbound HTTP and HTTPS
 
-   | Virtual Host | Backend IP | Backend Port |
-   |---|---|---|
-   | `diary.perfectday.andrewlass.com` | NUC IP | 3000 |
-   | `api.diary.perfectday.andrewlass.com` | NUC IP | 8000 |
+When complete, verify from off-network:
 
-   For each one: Policy & Objects → Virtual IPs → New
-   - External interface: WAN interface
-   - External IP: WAN IP (or "any")
-   - Mapped IP: NUC internal IP
-   - Port forwarding: 443 → 3000 (or 8000)
-
-2. **Enable Let's Encrypt certificates for both domains:**
-   - System → Certificates → Local → Create/Import → Let's Encrypt
-   - Add `diary.perfectday.andrewlass.com` and `api.diary.perfectday.andrewlass.com`
-   - FortiGate handles ACME HTTP-01 challenge automatically
-
-3. **Create firewall policies** to allow HTTPS traffic through to each VIP.
-
-4. **Add HTTP→HTTPS redirect** policy for port 80.
+```bash
+curl -I https://diary.perfectday.andrewlass.com/healthz    # Expect: 200 from Next.js
+curl -I https://api.diary.perfectday.andrewlass.com/healthz # Expect: 200 from FastAPI
+curl -I http://diary.perfectday.andrewlass.com/             # Expect: 301 → https://...
+```
 
 ### B6 — Add production Google OAuth redirect URI
 

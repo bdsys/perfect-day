@@ -27,7 +27,7 @@ Primary use case: a parent's diary of their child's life.
 ## Infrastructure
 
 - Self-hosted Intel NUC (4-core x86 1.85GHz, 8GB RAM) — shared with other services, resource-constrained
-- Network edge: FortiGate 7.4 — handles WAF, virtual hosting, TLS termination
+- Network edge: FortiGate 7.2+ — handles WAF, virtual hosting, TLS termination
 - Domain: `diary.perfectday.andrewlass.com`
 - Hybrid deployment supported: fully self-hosted on NUC, or NUC + cloud offload for LLM/heavy processing
 
