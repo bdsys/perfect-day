@@ -26,6 +26,9 @@ echo "Date: $(date)"
 echo ""
 
 echo '[1/7] Cloning or updating repository...'
+# /opt/perfect-day is owned by perfectday:docker (per 00-bootstrap.sh) but this
+# script runs as root. Tell git the directory is safe to avoid "dubious ownership".
+git config --global --add safe.directory "${DEPLOY_DIR}"
 if [ -d "${DEPLOY_DIR}/.git" ]; then
     cd "${DEPLOY_DIR}"
     git pull --ff-only
