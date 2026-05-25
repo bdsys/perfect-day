@@ -142,6 +142,19 @@ services:
     volumes:
       - /etc/perfect-day/cloudflare-ddns.config.json:/config.json:ro
 
+  edge:
+    image: caddy:2-alpine
+    profiles:
+      - nuc
+    ports:
+      - "80:80"
+    volumes:
+      - ./deploy/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on:
+      - web
+      - api
+    restart: unless-stopped
+
 volumes:
   postgres_data:
   minio_data:
