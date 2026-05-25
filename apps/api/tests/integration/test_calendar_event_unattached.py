@@ -112,3 +112,33 @@ class TestIngestCalendarEventUnattached:
         # Duplicate ingest returns early (before the .delay() call), so rule evaluation
         # is only queued for genuinely new events — assert exactly 1 call.
         mock_rules.delay.assert_called_once()
+
+    async def test_same_external_id_in_two_diaries_creates_two_rows(
+        self, db_session: AsyncSession, diary_id, sample_event_data
+    ):
+        """The same Google event ingested into two different diaries must
+        produce two distinct Event rows (one per diary)."""
+        user2 = User(email=f"worker-test-2-{uuid.uuid4()}@example.com")
+        db_session.add(user2)
+        await db_session.flush()
+        diary2 = Diary(
+            owner_user_id=user2.id,
+            name="Second Diary",
+            slug=f"second-{uuid.uuid4()}",
+            timezone="America/Chicago",
+        )
+        db_session.add(diary2)
+        await db_session.flush()
+        await db_session.commit()
+
+        with patch("app.workers.tasks.evaluate_rules_for_event") as mock_rules:
+            mock_rules.delay = MagicMock()
+            id1 = await _ingest_calendar_event(sample_event_data, diary_id, "America/Chicago")
+            id2 = await _ingest_calendar_event(sample_event_data, diary2.id, "America/Chicago")
+
+        assert id1 != id2, "Two distinct event rows must be created"
+
+        result = await db_session.execute(select(Event).where(Event.external_id == "abc123"))
+        rows = result.scalars().all()
+        assert len(rows) == 2
+        assert {r.diary_id for r in rows} == {diary_id, diary2.id}

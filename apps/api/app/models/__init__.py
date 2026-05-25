@@ -319,7 +319,7 @@ class Entry(TimestampMixin, SoftDeleteMixin, Base):
         CheckConstraint("created_by IN ('auto','manual')", name="ck_entries_created_by"),
         CheckConstraint("body_source IN ('llm','fallback')", name="ck_entries_body_source"),
         CheckConstraint(
-            "creation_source IN ('manual','calendar_pick','rule','legacy_auto')",
+            "creation_source IN ('manual','calendar_pick','rule')",
             name="ck_entries_creation_source",
         ),
     )
@@ -344,7 +344,8 @@ class Event(TimestampMixin, Base):
 
     __table_args__ = (
         Index(
-            "ix_events_source_external_id",
+            "ix_events_diary_source_external_id",
+            "diary_id",
             "source",
             "external_id",
             unique=True,

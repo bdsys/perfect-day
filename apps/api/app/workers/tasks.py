@@ -266,7 +266,11 @@ async def _ingest_calendar_event(
 
     async with db_session() as db:
         existing_result = await db.execute(
-            select(Event).where(Event.source == source, Event.external_id == external_id)
+            select(Event).where(
+                Event.diary_id == diary_id,
+                Event.source == source,
+                Event.external_id == external_id,
+            )
         )
         existing = existing_result.scalar_one_or_none()
         if existing is not None:

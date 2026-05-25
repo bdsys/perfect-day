@@ -177,6 +177,11 @@ Clones the repo, runs migrations, starts all 7 services. If `/readyz` returns 50
 cd /opt/perfect-day && ./scripts/seed-minio-bucket.sh
 ```
 
+If you have re-run `10-secrets.sh` (which regenerates `POSTGRES_PASSWORD`), you must wipe the Postgres volume first — otherwise the new password won't match what the DB was initialized with:
+```bash
+sudo ./scripts/nuc/20-deploy.sh --clean
+```
+
 ### B4 — Cloudflare DDNS setup
 
 Your home IP changes occasionally. The `cloudflare-ddns` sidecar container (already in `docker-compose.yml`) keeps the DNS A records current.
