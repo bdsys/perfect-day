@@ -85,13 +85,13 @@ Out of scope for PoC. Inbound routing is not configured.
 |---|---|
 | `support@bdsys.net` | Operator's personal inbox (existing MX) |
 | `dmarc-reports@bdsys.net` | Operator's personal inbox (existing MX) |
-| `noreply@bdsys.net` | Send-only (no MX record needed for sending via SendGrid) |
+| `pd@bdsys.net` | Send-only (no MX record needed for sending via SendGrid) |
 
 ## Sender identity
 
 | Field | Value |
 |---|---|
-| From | `Perfect Day <noreply@bdsys.net>` |
+| From | `Perfect Day <pd@bdsys.net>` |
 | Reply-To | `support@bdsys.net` |
 | Sending domain | `andrewlass.com` (verified single sender in SendGrid) |
 

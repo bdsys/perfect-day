@@ -188,6 +188,23 @@ async def create_diary(
     return diary
 
 
+@router.get("/trash", response_model=list[DiaryOut])
+async def list_deleted_diaries(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[Diary]:
+    result = await db.execute(
+        select(Diary)
+        .where(
+            Diary.owner_user_id == user.id,
+            Diary.deleted_at.is_not(None),
+            Diary.hard_delete_after > datetime.now(tz=UTC),
+        )
+        .order_by(Diary.hard_delete_after.asc())
+    )
+    return list(result.scalars())
+
+
 @router.get("/{diary_id}", response_model=DiaryOut)
 async def get_diary(
     diary_id: uuid.UUID,
@@ -245,6 +262,24 @@ async def restore_diary(
         raise HTTPException(status_code=404, detail="not_found")
     if diary.hard_delete_after and diary.hard_delete_after < datetime.now(tz=UTC):
         raise HTTPException(status_code=410, detail="grace_period_expired")
+    # If the slug is now taken by a different active diary, assign a new unique one
+    slug = diary.slug
+    base_slug = slug
+    suffix = 1
+    while True:
+        conflict = await db.execute(
+            select(Diary).where(
+                Diary.owner_user_id == user.id,
+                Diary.slug == slug,
+                Diary.id != diary_id,
+                Diary.deleted_at.is_(None),
+            )
+        )
+        if conflict.scalar_one_or_none() is None:
+            break
+        slug = f"{base_slug}-{suffix}"
+        suffix += 1
+    diary.slug = slug
     diary.deleted_at = None
     diary.hard_delete_after = None
     diary.scan_enabled = True

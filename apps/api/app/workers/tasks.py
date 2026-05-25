@@ -257,6 +257,8 @@ async def _ingest_calendar_event(
         "status": event_data.get("status", ""),
     }
 
+    payload["attendees"] = _build_attendees(event_data.get("attendees"))
+
     occurred_at = None
     start = event_data.get("start", {})
     if "dateTime" in start:
@@ -288,6 +290,30 @@ async def _ingest_calendar_event(
         )
         db.add(event)
         return str(entry_id)
+
+
+def _build_attendees(raw: list | None) -> list[dict]:
+    """Convert a raw attendees value from Google Calendar into a cleaned list.
+
+    Handles three malformed cases Google Calendar can return:
+    - ``None`` / missing key → treated as empty list
+    - Non-dict element inside the list → silently skipped
+    - Valid dict attendee → normalised and included (only if name or email present)
+    """
+    attendees = []
+    for a in raw or []:
+        if not isinstance(a, dict):
+            continue
+        display_name = _strip_injection(str(a.get("displayName", "") or ""))
+        email = str(a.get("email", "") or "")
+        if display_name or email:
+            attendees.append({
+                "displayName": display_name,
+                "email": email,
+                "organizer": bool(a.get("organizer", False)),
+                "responseStatus": str(a.get("responseStatus", "") or ""),
+            })
+    return attendees
 
 
 def _strip_injection(text: str) -> str:

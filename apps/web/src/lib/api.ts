@@ -77,7 +77,30 @@ export interface Diary {
   scan_enabled: boolean
   scan_interval_minutes: number
   deleted_at: string | null
+  hard_delete_after: string | null
   created_at: string
+}
+
+export interface Integration {
+  provider: string
+  scopes_granted: string[]
+  revoked: boolean
+  expires_at: string | null
+  google_email: string | null
+  google_name: string | null
+}
+
+export interface EventItem {
+  id: string
+  source: string
+  occurred_at: string | null
+  summary: string
+  description: string | null
+  location: string | null
+  start: Record<string, string>
+  end: Record<string, string>
+  attendees: Array<{ displayName: string; email: string; organizer: boolean; responseStatus: string }>
+  status: string
 }
 
 export interface Entry {
@@ -87,12 +110,14 @@ export interface Entry {
   entry_end_date: string | null
   title: string | null
   body_markdown: string | null
+  body_source: 'llm' | 'fallback'
   flagged_tokens: string[] | null
   status: 'draft' | 'published'
   created_by: 'auto' | 'manual'
   published_at: string | null
   deleted_at: string | null
   created_at: string
+  events: EventItem[]
 }
 
 // ---------------------------------------------------------------------------
@@ -137,6 +162,12 @@ export const api = {
     async delete(id: string): Promise<Diary> {
       return apiFetch(`/v1/diaries/${id}`, { method: 'DELETE' })
     },
+    async listTrash(): Promise<Diary[]> {
+      return apiFetch('/v1/diaries/trash')
+    },
+    async restore(id: string): Promise<Diary> {
+      return apiFetch(`/v1/diaries/${id}/restore`, { method: 'POST' })
+    },
   },
 
   entries: {
@@ -156,6 +187,12 @@ export const api = {
     async delete(id: string): Promise<void> {
       return apiFetch(`/v1/entries/${id}`, { method: 'DELETE' })
     },
+    async restore(id: string): Promise<Entry> {
+      return apiFetch(`/v1/entries/${id}/restore`, { method: 'POST' })
+    },
+    async listTrash(diaryId: string): Promise<Entry[]> {
+      return apiFetch(`/v1/diaries/${diaryId}/entries/trash`)
+    },
     async publish(id: string): Promise<Entry> {
       return apiFetch(`/v1/entries/${id}/publish`, { method: 'POST' })
     },
@@ -171,7 +208,7 @@ export const api = {
     async getGoogleAuthUrl(scopes = 'calendar'): Promise<{ url: string }> {
       return apiFetch(`/v1/integrations/google/authorize?scopes=${scopes}`)
     },
-    async list() {
+    async list(): Promise<Integration[]> {
       return apiFetch('/v1/integrations')
     },
   },

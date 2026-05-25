@@ -7,10 +7,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.auth import get_current_user
 from app.core.database import get_db
-from app.models import Diary, Entry, LLMGeneration, User
+from app.models import Diary, Entry, Event, LLMGeneration, User
 from app.routers.v1.diaries import _get_diary_or_404
 from app.services.tier import enforce_entry_tier_limit
 
@@ -36,6 +37,21 @@ class EntryPatch(BaseModel):
     entry_end_date: date | None = None
 
 
+class EventOut(BaseModel):
+    id: uuid.UUID
+    source: str
+    occurred_at: datetime | None
+    summary: str
+    description: str
+    location: str
+    start: dict
+    end: dict
+    attendees: list[dict]
+    status: str
+
+    model_config = {"from_attributes": False}  # built manually from payload
+
+
 class EntryOut(BaseModel):
     id: uuid.UUID
     diary_id: uuid.UUID
@@ -49,8 +65,54 @@ class EntryOut(BaseModel):
     published_at: datetime | None
     deleted_at: datetime | None
     created_at: datetime
+    body_source: str = "llm"
+    events: list[EventOut] = []
 
     model_config = {"from_attributes": True}
+
+
+# ---------------------------------------------------------------------------
+# ORM → schema helpers
+# ---------------------------------------------------------------------------
+
+
+def _event_out_from_orm(event: Event) -> EventOut:
+    p = event.payload or {}
+    return EventOut(
+        id=event.id,
+        source=event.source,
+        occurred_at=event.occurred_at,
+        summary=p.get("summary", ""),
+        description=p.get("description", ""),
+        location=p.get("location", ""),
+        start=p.get("start", {}),
+        end=p.get("end", {}),
+        attendees=p.get("attendees", []),
+        status=p.get("status", ""),
+    )
+
+
+def _entry_out_from_orm(entry: Entry) -> EntryOut:
+    events_out = sorted(
+        [_event_out_from_orm(e) for e in entry.events],
+        key=lambda e: e.occurred_at or datetime.min.replace(tzinfo=UTC),
+    )
+    return EntryOut(
+        id=entry.id,
+        diary_id=entry.diary_id,
+        entry_date=entry.entry_date,
+        entry_end_date=entry.entry_end_date,
+        title=entry.title,
+        body_markdown=entry.body_markdown,
+        flagged_tokens=entry.flagged_tokens,
+        status=entry.status,
+        created_by=entry.created_by,
+        published_at=entry.published_at,
+        deleted_at=entry.deleted_at,
+        created_at=entry.created_at,
+        body_source=entry.body_source,
+        events=events_out,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -64,7 +126,11 @@ async def _get_entry_or_404(
     db: AsyncSession,
     require_editor: bool = False,
 ) -> tuple[Entry, Diary, str | None]:
-    result = await db.execute(select(Entry).where(Entry.id == entry_id, Entry.deleted_at.is_(None)))
+    result = await db.execute(
+        select(Entry)
+        .options(selectinload(Entry.events))
+        .where(Entry.id == entry_id, Entry.deleted_at.is_(None))
+    )
     entry = result.scalar_one_or_none()
     if entry is None:
         raise HTTPException(status_code=404, detail="not_found")
@@ -86,6 +152,27 @@ async def _get_entry_or_404(
 # ---------------------------------------------------------------------------
 
 
+@router.get("/diaries/{diary_id}/entries/trash", response_model=list[EntryOut])
+async def list_deleted_entries(
+    diary_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[EntryOut]:
+    # Raw ownership check — intentionally allows deleted diaries so their entries can be restored
+    result = await db.execute(
+        select(Diary).where(Diary.id == diary_id, Diary.owner_user_id == user.id)
+    )
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail="not_found")
+    entry_result = await db.execute(
+        select(Entry)
+        .options(selectinload(Entry.events))
+        .where(Entry.diary_id == diary_id, Entry.deleted_at.is_not(None))
+        .order_by(Entry.deleted_at.desc())
+    )
+    return [_entry_out_from_orm(e) for e in entry_result.scalars()]
+
+
 @router.get("/diaries/{diary_id}/entries", response_model=list[EntryOut])
 async def list_entries(
     diary_id: uuid.UUID,
@@ -96,10 +183,14 @@ async def list_entries(
     limit: int = Query(20, ge=1, le=100),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> list[Entry]:
+) -> list[EntryOut]:
     diary, role = await _get_diary_or_404(diary_id, user, db)
 
-    q = select(Entry).where(Entry.diary_id == diary_id, Entry.deleted_at.is_(None))
+    q = (
+        select(Entry)
+        .options(selectinload(Entry.events))
+        .where(Entry.diary_id == diary_id, Entry.deleted_at.is_(None))
+    )
 
     # Viewers only see published
     if role == "viewer":
@@ -115,7 +206,7 @@ async def list_entries(
     q = q.order_by(Entry.entry_date.desc(), Entry.created_at.desc()).limit(limit)
 
     result = await db.execute(q)
-    return list(result.scalars())
+    return [_entry_out_from_orm(e) for e in result.scalars()]
 
 
 @router.post(
@@ -126,7 +217,7 @@ async def create_entry(
     body: EntryCreate,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Entry:
+) -> EntryOut:
     diary, role = await _get_diary_or_404(diary_id, user, db)
     if role == "viewer":
         raise HTTPException(status_code=403, detail="forbidden")
@@ -150,8 +241,8 @@ async def create_entry(
     )
     db.add(entry)
     await db.flush()
-    await db.refresh(entry)
-    return entry
+    await db.refresh(entry, ["events"])
+    return _entry_out_from_orm(entry)
 
 
 @router.get("/entries/{entry_id}", response_model=EntryOut)
@@ -159,9 +250,9 @@ async def get_entry(
     entry_id: uuid.UUID,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Entry:
+) -> EntryOut:
     entry, _, _ = await _get_entry_or_404(entry_id, user, db)
-    return entry
+    return _entry_out_from_orm(entry)
 
 
 @router.patch("/entries/{entry_id}", response_model=EntryOut)
@@ -170,12 +261,12 @@ async def patch_entry(
     body: EntryPatch,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Entry:
+) -> EntryOut:
     entry, _, _ = await _get_entry_or_404(entry_id, user, db, require_editor=True)
 
     for field, value in body.model_dump(exclude_none=True).items():
         setattr(entry, field, value)
-    return entry
+    return _entry_out_from_orm(entry)
 
 
 @router.post("/entries/{entry_id}/publish", response_model=EntryOut)
@@ -183,10 +274,10 @@ async def publish_entry(
     entry_id: uuid.UUID,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Entry:
+) -> EntryOut:
     entry, diary, role = await _get_entry_or_404(entry_id, user, db, require_editor=True)
     if entry.status == "published":
-        return entry
+        return _entry_out_from_orm(entry)
 
     # Capture edit diff if body was changed from last LLM output
     gen_result = await db.execute(
@@ -203,7 +294,7 @@ async def publish_entry(
 
     entry.status = "published"
     entry.published_at = datetime.now(tz=UTC)
-    return entry
+    return _entry_out_from_orm(entry)
 
 
 @router.post("/entries/{entry_id}/unpublish", response_model=EntryOut)
@@ -211,11 +302,11 @@ async def unpublish_entry(
     entry_id: uuid.UUID,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Entry:
+) -> EntryOut:
     entry, _, _ = await _get_entry_or_404(entry_id, user, db, require_editor=True)
     entry.status = "draft"
     entry.published_at = None
-    return entry
+    return _entry_out_from_orm(entry)
 
 
 @router.delete("/entries/{entry_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -233,14 +324,16 @@ async def restore_entry(
     entry_id: uuid.UUID,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Entry:
-    result = await db.execute(select(Entry).where(Entry.id == entry_id))
+) -> EntryOut:
+    result = await db.execute(
+        select(Entry).options(selectinload(Entry.events)).where(Entry.id == entry_id)
+    )
     entry = result.scalar_one_or_none()
     if entry is None:
         raise HTTPException(status_code=404, detail="not_found")
     await _get_diary_or_404(entry.diary_id, user, db, require_owner=False)
     entry.deleted_at = None
-    return entry
+    return _entry_out_from_orm(entry)
 
 
 @router.post("/entries/{entry_id}/regenerate", response_model=EntryOut)
@@ -248,9 +341,9 @@ async def regenerate_entry(
     entry_id: uuid.UUID,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Entry:
+) -> EntryOut:
     entry, _, _ = await _get_entry_or_404(entry_id, user, db, require_editor=True)
     from app.workers.tasks import generate_entry_draft
 
     generate_entry_draft.delay(str(entry.id))
-    return entry
+    return _entry_out_from_orm(entry)

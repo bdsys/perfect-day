@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
-import { api, type Diary, type Entry } from '@/lib/api'
+import { api, type Diary, type Entry, type Integration } from '@/lib/api'
 import { useAuth } from '@/lib/auth-context'
 
 function formatDate(d: string) {
@@ -17,14 +17,24 @@ function formatDate(d: string) {
 
 function EntryCard({ entry }: { entry: Entry }) {
   const preview = entry.body_markdown?.slice(0, 120) ?? ''
+  const firstEventSummary = !entry.body_markdown && entry.events?.length > 0 ? entry.events[0].summary : null
   return (
     <Link href={`/entries/${entry.id}`} style={{ display: 'block', textDecoration: 'none', color: 'inherit' }}>
       <div className={`entry-card ${entry.status}`}>
         <div className="entry-date">{formatDate(entry.entry_date)}</div>
         <div className="entry-title">{entry.title ?? '(no title yet)'}</div>
-        {preview && <div className="entry-preview">{preview}{entry.body_markdown && entry.body_markdown.length > 120 ? '…' : ''}</div>}
-        <div style={{ marginTop: '0.5rem' }}>
+        {firstEventSummary ? (
+          <div style={{ fontStyle: 'italic', color: '#888', fontSize: '0.85rem', marginTop: '0.25rem' }}>
+            {firstEventSummary}{entry.events.length > 1 ? `, +${entry.events.length - 1} more` : ''}
+          </div>
+        ) : (
+          preview && <div className="entry-preview">{preview}{entry.body_markdown && entry.body_markdown.length > 120 ? '…' : ''}</div>
+        )}
+        <div style={{ marginTop: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
           <span className={`status-badge status-${entry.status}`}>{entry.status}</span>
+          {entry.events && entry.events.length > 0 && (
+            <span style={{ fontSize: '0.75rem', color: '#888' }}>• {entry.events.length} event{entry.events.length !== 1 ? 's' : ''}</span>
+          )}
         </div>
       </div>
     </Link>
@@ -37,6 +47,7 @@ export default function DiaryDetailPage() {
   const router = useRouter()
   const [diary, setDiary] = useState<Diary | null>(null)
   const [entries, setEntries] = useState<Entry[]>([])
+  const [googleIntegration, setGoogleIntegration] = useState<Integration | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [scanning, setScanning] = useState(false)
@@ -47,6 +58,18 @@ export default function DiaryDetailPage() {
   useEffect(() => {
     if (!authLoading && !user) router.replace('/login')
   }, [user, authLoading, router])
+
+  useEffect(() => {
+    if (!user || !diaryId) return
+    api.integrations.list()
+      .then((integrations) => {
+        const google = integrations.find(
+          (i: Integration) => i.provider === 'google' && !i.revoked && i.scopes_granted.includes('calendar.readonly'),
+        )
+        setGoogleIntegration(google ?? null)
+      })
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : 'Failed to load integrations'))
+  }, [user, diaryId])
 
   useEffect(() => {
     if (!user || !diaryId) return
@@ -120,15 +143,25 @@ export default function DiaryDetailPage() {
         <div className="page-header">
           <h1 className="page-title">{diary?.name ?? 'Diary'}</h1>
           <div className="page-actions">
-            <button className="btn btn-secondary" onClick={connectCalendar}>
-              Connect Google Calendar
-            </button>
+            {googleIntegration ? (
+              <span className="btn btn-secondary" style={{ cursor: 'default', opacity: 0.7 }}>
+                Connected: {googleIntegration.google_name ?? 'Google account'}
+                {googleIntegration.google_email ? ` (${googleIntegration.google_email})` : ''} ✓
+              </span>
+            ) : (
+              <button className="btn btn-secondary" onClick={connectCalendar}>
+                Connect Google Calendar
+              </button>
+            )}
             <button className="btn btn-primary" onClick={handleScan} disabled={scanning}>
               {scanning ? 'Scanning…' : 'Scan now'}
             </button>
             <button className="btn btn-primary" onClick={handleNewEntry} disabled={creating}>
               {creating ? 'Creating…' : 'New entry'}
             </button>
+            <Link href={`/diaries/${diaryId}/restore`} className="btn btn-secondary">
+              Deleted entries
+            </Link>
             <button className="btn btn-danger" onClick={handleDeleteDiary} disabled={deleting}>
               {deleting ? 'Deleting…' : 'Delete diary'}
             </button>

@@ -247,6 +247,12 @@ input:focus {
   margin-top: 0.5rem;
 }
 
+.success-message {
+  color: #16a34a;
+  font-size: 0.875rem;
+  margin-top: 0.5rem;
+}
+
 .page-header {
   padding: 1.5rem 0 1rem;
   border-bottom: 1px solid var(--border);

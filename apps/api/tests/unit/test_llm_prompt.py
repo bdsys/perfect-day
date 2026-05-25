@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
-from app.workers.llm import build_prompt
+from app.workers.llm import _format_duration, _format_event_line, build_prompt
 
 
 def _diary(
@@ -118,3 +118,185 @@ class TestBuildPrompt:
         ev.payload = {"summary": "Soccer", "location": ""}
         _, per_entry = build_prompt(diary, entry, [ev], [])
         assert "location" not in per_entry
+
+
+# ---------------------------------------------------------------------------
+# _format_duration
+# ---------------------------------------------------------------------------
+
+
+class TestFormatDuration:
+    def test_minutes_only(self):
+        assert _format_duration(30) == "30m"
+
+    def test_exactly_one_hour(self):
+        assert _format_duration(60) == "1h"
+
+    def test_hours_and_minutes(self):
+        assert _format_duration(90) == "1h 30m"
+
+    def test_multi_hour(self):
+        assert _format_duration(150) == "2h 30m"
+
+    def test_zero_minutes(self):
+        assert _format_duration(0) == "0m"
+
+
+# ---------------------------------------------------------------------------
+# _format_event_line
+# ---------------------------------------------------------------------------
+
+
+def _make_event(
+    *,
+    source: str = "google_calendar",
+    occurred_at: datetime | None = None,
+    payload: dict | None = None,
+) -> MagicMock:
+    ev = MagicMock()
+    ev.source = source
+    ev.occurred_at = occurred_at or datetime(2026, 5, 19, 16, 0, tzinfo=UTC)
+    ev.payload = payload or {}
+    return ev
+
+
+class TestFormatEventLine:
+    def test_basic_summary_and_start_time_falls_back_to_occurred_at(self):
+        ev = _make_event(payload={"summary": "Standup"})
+        line = _format_event_line(1, ev)
+        assert '<event index="1">' in line
+        assert "[google_calendar]" in line
+        assert "Standup" in line
+        assert "2026-05-19" in line  # occurred_at date
+        assert "</event>" in line
+
+    def test_event_with_dateTime_start_only_uses_start_iso(self):
+        ev = _make_event(payload={
+            "summary": "Lunch",
+            "start": {"dateTime": "2026-05-19T12:00:00-07:00"},
+        })
+        line = _format_event_line(1, ev)
+        assert "2026-05-19T12:00:00-07:00" in line
+        assert "Lunch" in line
+        # No duration shown since no end
+        assert "(" not in line
+
+    def test_event_with_end_time_shows_range_and_duration(self):
+        ev = _make_event(payload={
+            "summary": "Standup",
+            "start": {"dateTime": "2026-05-19T09:00:00-07:00"},
+            "end": {"dateTime": "2026-05-19T09:30:00-07:00"},
+        })
+        line = _format_event_line(1, ev)
+        assert "2026-05-19T09:00:00-07:00" in line
+        assert "09:30:00-07:00" in line
+        assert "(30m)" in line
+
+    def test_long_duration_renders_hours_and_minutes(self):
+        ev = _make_event(payload={
+            "summary": "Workshop",
+            "start": {"dateTime": "2026-05-19T09:00:00-07:00"},
+            "end": {"dateTime": "2026-05-19T10:30:00-07:00"},
+        })
+        line = _format_event_line(1, ev)
+        assert "(1h 30m)" in line
+
+    def test_attendees_display_names_joined(self):
+        ev = _make_event(payload={
+            "summary": "Standup",
+            "start": {"dateTime": "2026-05-19T09:00:00-07:00"},
+            "end": {"dateTime": "2026-05-19T09:30:00-07:00"},
+            "attendees": [
+                {"displayName": "Sara", "email": "sara@example.com"},
+                {"displayName": "Andrew", "email": "andrew@example.com"},
+            ],
+        })
+        line = _format_event_line(1, ev)
+        assert 'attendees: "Sara, Andrew"' in line
+
+    def test_attendee_falls_back_to_email_when_no_display_name(self):
+        ev = _make_event(payload={
+            "summary": "1:1",
+            "attendees": [
+                {"displayName": "", "email": "boss@example.com"},
+            ],
+        })
+        line = _format_event_line(1, ev)
+        assert "boss@example.com" in line
+
+    def test_attendee_skipped_when_both_name_and_email_empty(self):
+        ev = _make_event(payload={
+            "summary": "Mystery",
+            "attendees": [{"displayName": "", "email": ""}],
+        })
+        line = _format_event_line(1, ev)
+        assert "attendees" not in line
+
+    def test_empty_attendees_list_omits_attendees(self):
+        ev = _make_event(payload={"summary": "Solo", "attendees": []})
+        line = _format_event_line(1, ev)
+        assert "attendees" not in line
+
+    def test_description_included_when_present(self):
+        ev = _make_event(payload={
+            "summary": "Standup",
+            "description": "Daily eng sync",
+        })
+        line = _format_event_line(1, ev)
+        assert 'description: "Daily eng sync"' in line
+
+    def test_description_omitted_when_empty(self):
+        ev = _make_event(payload={"summary": "Standup", "description": ""})
+        line = _format_event_line(1, ev)
+        assert "description" not in line
+
+    def test_description_omitted_when_absent(self):
+        ev = _make_event(payload={"summary": "Standup"})
+        line = _format_event_line(1, ev)
+        assert "description" not in line
+
+    def test_all_day_event_shows_all_day(self):
+        ev = _make_event(payload={
+            "summary": "Holiday",
+            "start": {"date": "2026-05-19"},
+            "end": {"date": "2026-05-20"},
+        })
+        line = _format_event_line(1, ev)
+        assert "all day" in line
+        assert "Holiday" in line
+        # No duration in parens for all-day
+        assert "(" not in line
+
+    def test_full_event_with_all_fields(self):
+        ev = _make_event(payload={
+            "summary": "Standup",
+            "start": {"dateTime": "2026-05-19T09:00:00-07:00"},
+            "end": {"dateTime": "2026-05-19T09:30:00-07:00"},
+            "location": "Zoom",
+            "attendees": [
+                {"displayName": "Sara", "email": "sara@example.com"},
+                {"displayName": "Andrew", "email": "andrew@example.com"},
+            ],
+            "description": "Daily eng sync",
+        })
+        line = _format_event_line(1, ev)
+        assert "[google_calendar]" in line
+        assert "(30m)" in line
+        assert '"Standup"' in line
+        assert 'location: "Zoom"' in line
+        assert 'attendees: "Sara, Andrew"' in line
+        assert 'description: "Daily eng sync"' in line
+
+    def test_ordering_location_before_attendees_before_description(self):
+        ev = _make_event(payload={
+            "summary": "Meeting",
+            "location": "Room 1",
+            "attendees": [{"displayName": "Bob", "email": "bob@example.com"}],
+            "description": "Catch-up",
+        })
+        line = _format_event_line(1, ev)
+        loc_idx = line.index("location")
+        att_idx = line.index("attendees")
+        desc_idx = line.index("description")
+        assert loc_idx < att_idx < desc_idx
+

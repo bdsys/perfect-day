@@ -137,6 +137,8 @@ class OAuthToken(TimestampMixin, Base):
     scopes_granted: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    google_email: Mapped[str | None] = mapped_column(String(320))
+    google_name: Mapped[str | None] = mapped_column(Text)
 
     user: Mapped[User] = relationship(back_populates="oauth_tokens")
 
@@ -279,6 +281,7 @@ class Entry(TimestampMixin, SoftDeleteMixin, Base):
     title: Mapped[str | None] = mapped_column(Text)
     body_markdown: Mapped[str | None] = mapped_column(Text)
     flagged_tokens: Mapped[list[str] | None] = mapped_column(ARRAY(Text), nullable=True)
+    body_source: Mapped[str] = mapped_column(String(20), nullable=False, server_default="llm")
     status: Mapped[str] = mapped_column(String(10), nullable=False, server_default="draft")
     created_by: Mapped[str] = mapped_column(String(10), nullable=False)
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -302,6 +305,7 @@ class Entry(TimestampMixin, SoftDeleteMixin, Base):
         Index("ix_entries_diary_entry_date", "diary_id", "entry_date"),
         CheckConstraint("status IN ('draft','published')", name="ck_entries_status"),
         CheckConstraint("created_by IN ('auto','manual')", name="ck_entries_created_by"),
+        CheckConstraint("body_source IN ('llm','fallback')", name="ck_entries_body_source"),
     )
 
 

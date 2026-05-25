@@ -70,6 +70,68 @@ def _derive_voice(diary) -> tuple[str, str]:
 # ---------------------------------------------------------------------------
 
 
+def _format_duration(minutes: int) -> str:
+    """Return a human-readable duration string, e.g. '30m' or '1h 30m'."""
+    if minutes < 60:
+        return f"{minutes}m"
+    hours, remainder = divmod(minutes, 60)
+    if remainder == 0:
+        return f"{hours}h"
+    return f"{hours}h {remainder}m"
+
+
+def _format_event_line(i: int, event) -> str:
+    """Render one <event> line with time range, summary, and optional extras."""
+    p = event.payload
+    summary = p.get("summary", "(no title)")
+
+    # --- Time range ---
+    start_dt_str = (p.get("start") or {}).get("dateTime")
+    end_dt_str = (p.get("end") or {}).get("dateTime")
+    is_all_day = not start_dt_str and bool((p.get("start") or {}).get("date"))
+
+    if is_all_day:
+        time_str = "all day"
+    elif start_dt_str and end_dt_str:
+        try:
+            start_dt = datetime.fromisoformat(start_dt_str)
+            end_dt = datetime.fromisoformat(end_dt_str)
+            duration_minutes = int((end_dt - start_dt).total_seconds() / 60)
+            duration_str = _format_duration(duration_minutes)
+            # Strip end time's date portion — just HH:MM:SS+offset for brevity
+            end_time_part = end_dt_str.split("T", 1)[1] if "T" in end_dt_str else end_dt_str
+            time_str = f"{start_dt_str}–{end_time_part} ({duration_str})"
+        except (ValueError, TypeError):
+            # Malformed dateTime — fall back to occurred_at
+            time_str = event.occurred_at.isoformat() if event.occurred_at else "unknown time"
+    elif start_dt_str:
+        time_str = start_dt_str
+    else:
+        time_str = event.occurred_at.isoformat() if event.occurred_at else "unknown time"
+
+    # --- Optional extras ---
+    location = p.get("location", "")
+    loc_str = f', location: "{location}"' if location else ""
+
+    attendees_raw = p.get("attendees") or []
+    attendee_names = []
+    for a in attendees_raw:
+        name = (a.get("displayName") or "").strip()
+        if not name:
+            name = (a.get("email") or "").strip()
+        if name:
+            attendee_names.append(name)
+    attendees_str = f', attendees: "{", ".join(attendee_names)}"' if attendee_names else ""
+
+    description = (p.get("description") or "").strip()
+    desc_str = f', description: "{description}"' if description else ""
+
+    return (
+        f'<event index="{i}">[{event.source}] {time_str}, "{summary}"'
+        f"{loc_str}{attendees_str}{desc_str}</event>"
+    )
+
+
 def build_prompt(diary, entry, events, enrichments) -> tuple[str, str]:
     """Return (diary_context_message, per_entry_message)."""
     voice, pronoun = _derive_voice(diary)
@@ -91,13 +153,7 @@ def build_prompt(diary, entry, events, enrichments) -> tuple[str, str]:
 
     event_lines = []
     for i, event in enumerate(events, 1):
-        p = event.payload
-        summary = p.get("summary", "(no title)")
-        location = p.get("location", "")
-        occurred = event.occurred_at.isoformat() if event.occurred_at else "unknown time"
-        loc_str = f', location: "{location}"' if location else ""
-        line = f'<event index="{i}">[{event.source}] {occurred}, "{summary}"{loc_str}</event>'
-        event_lines.append(line)
+        event_lines.append(_format_event_line(i, event))
 
     enrichment_lines = []
     for enrichment in enrichments:
@@ -142,6 +198,88 @@ def validate_citation(output: dict, events: list) -> tuple[bool, str, list[str]]
             flagged.append(token)
 
     return True, "", flagged
+
+
+# ---------------------------------------------------------------------------
+# Fallback body builder
+# ---------------------------------------------------------------------------
+
+
+def _build_fallback_body(events: list, entry_date) -> tuple[str, str]:
+    """Return (title, body_markdown) built deterministically from sorted events.
+
+    ``events`` must already be sorted by ``occurred_at`` (the caller's responsibility).
+    ``entry_date`` is a ``datetime.date`` used to format the title when there are
+    multiple events.
+
+    Title logic:
+    - Single event with a non-empty summary  → use that summary as title.
+    - Otherwise (multiple events, or first event has no summary) →
+      ``"{N} events on {date}"`` e.g. ``"3 events on May 19"``.
+
+    Body format (one bullet per event):
+        - HH:MM–HH:MM  **Summary** — Location
+    Time display:
+    - Both dateTime start + end present → ``HH:MM–HH:MM``
+    - Only dateTime start → ``HH:MM``
+    - All-day (only ``date`` key, no ``dateTime``) → ``All day``
+    - Fallback → ``occurred_at.strftime("%H:%M")``
+    """
+    lines: list[str] = []
+    for event in events:
+        p = event.payload if isinstance(event.payload, dict) else {}
+        summary = (p.get("summary") or "").strip() or "(no title)"
+
+        start = p.get("start") or {}
+        end = p.get("end") or {}
+        start_dt_str = start.get("dateTime")
+        end_dt_str = end.get("dateTime")
+        is_all_day = not start_dt_str and bool(start.get("date"))
+
+        if is_all_day:
+            time_range = "All day"
+        elif start_dt_str and end_dt_str:
+            try:
+                s = datetime.fromisoformat(start_dt_str)
+                e = datetime.fromisoformat(end_dt_str)
+                time_range = f"{s.strftime('%H:%M')}–{e.strftime('%H:%M')}"
+            except (ValueError, TypeError):
+                time_range = (
+                    event.occurred_at.strftime("%H:%M") if event.occurred_at else "?"
+                )
+        elif start_dt_str:
+            try:
+                s = datetime.fromisoformat(start_dt_str)
+                time_range = s.strftime("%H:%M")
+            except (ValueError, TypeError):
+                time_range = (
+                    event.occurred_at.strftime("%H:%M") if event.occurred_at else "?"
+                )
+        else:
+            time_range = (
+                event.occurred_at.strftime("%H:%M") if event.occurred_at else "?"
+            )
+
+        location = (p.get("location") or "").strip()
+        loc_suffix = f" — {location}" if location else ""
+        lines.append(f"- {time_range}  **{summary}**{loc_suffix}")
+
+    body_markdown = "\n".join(lines)
+
+    # Build title
+    first_summary = ""
+    if events:
+        first_p = events[0].payload if isinstance(events[0].payload, dict) else {}
+        first_summary = (first_p.get("summary") or "").strip()
+
+    n = len(events)
+    if n == 1 and first_summary:
+        title = first_summary
+    else:
+        date_str = f"{entry_date.strftime('%B')} {entry_date.day}" if entry_date else "unknown date"
+        title = f"{n} events on {date_str}"
+
+    return title, body_markdown
 
 
 # ---------------------------------------------------------------------------
@@ -268,15 +406,25 @@ async def generate_draft_for_entry(entry_id: uuid.UUID) -> None:
 
     latency_ms = int(time.time() * 1000) - start_ms
 
+    # Determine whether the LLM result is usable (non-None and has non-empty
+    # title or body).  An empty dict or a result where both fields are falsy
+    # triggers the deterministic fallback.
+    llm_usable = bool(
+        llm_result
+        and (llm_result.get("title") or llm_result.get("body_markdown"))
+    )
+
     async with db_session() as db:
         entry_result = await db.execute(select(Entry).where(Entry.id == entry_id))
         entry_update = entry_result.scalar_one_or_none()
         if entry_update is None:
             return
 
-        if llm_result:
+        if llm_usable:
+            assert llm_result is not None  # guaranteed by llm_usable check above
             entry_update.title = llm_result.get("title")
             entry_update.body_markdown = llm_result.get("body_markdown")
+            entry_update.body_source = "llm"
             entry_update.flagged_tokens = flagged_tokens or []
 
             gen = LLMGeneration(
@@ -289,13 +437,31 @@ async def generate_draft_for_entry(entry_id: uuid.UUID) -> None:
                 output_tokens=response.usage.output_tokens if response else None,
             )
         else:
+            # Deterministic fallback: build a bulleted event list from raw data.
+            # ``events`` was computed in the first db_session block and is still
+            # in scope here.
+            fallback_title, fallback_body = _build_fallback_body(
+                events, entry_update.entry_date
+            )
+            entry_update.title = fallback_title
+            entry_update.body_markdown = fallback_body
+            entry_update.body_source = "fallback"
+            entry_update.flagged_tokens = []
+
+            # Distinguish between API failure (llm_result is None) and an LLM
+            # response that contained no usable content (llm_result is a dict
+            # with empty fields).  Both map to status="failed" because the DB
+            # constraint only allows 'success' | 'failed'.
+            gen_error = error_msg or (
+                "llm returned empty title and body" if llm_result is not None else "unknown"
+            )
             gen = LLMGeneration(
                 entry_id=entry_id,
                 model=model_used,
                 prompt_hash=prompt_hash,
                 latency_ms=latency_ms,
                 status="failed",
-                error=error_msg or "unknown",
+                error=gen_error,
             )
 
         db.add(gen)
@@ -303,5 +469,6 @@ async def generate_draft_for_entry(entry_id: uuid.UUID) -> None:
             "generate_entry_draft_done",
             entry_id=str(entry_id),
             status=gen.status,
+            body_source=entry_update.body_source,
             latency_ms=latency_ms,
         )

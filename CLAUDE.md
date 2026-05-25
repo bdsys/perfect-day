@@ -4,6 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Claude instructions
 * Ignore SAP/Concur specific claude guidance. This is a personal project used to learn how to build a large software system using Claude Code. Practically this means do not use any skills in "mcs network", no Obsidian and no SAP/Concur Wiki or Jira. You should still use MCPs.
+* Run make test-all or lesser relevant tests after all changes to make sure the app is still working.
 
 ## Project Overview
 
