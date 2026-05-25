@@ -58,3 +58,44 @@ class TestScanTrigger:
         auth = {"Authorization": f"Bearer {token}"}
         r = await client.get(f"/v1/diaries/{diary['id']}/scan", headers=auth)
         assert r.status_code == 200
+
+    async def test_trigger_no_body_passes_none_kwargs(self, client):
+        """POST with no body → 202 and scan_diary.delay called with past_days=None, future_days=None."""
+        token, diary = await _setup(client, "scannobody@example.com")
+        auth = {"Authorization": f"Bearer {token}"}
+
+        with patch("app.workers.tasks.scan_diary.delay") as mock_delay:
+            mock_delay.return_value = None
+            r = await client.post(f"/v1/diaries/{diary['id']}/scan/run", headers=auth)
+
+        assert r.status_code == 202
+        mock_delay.assert_called_once_with(str(diary["id"]), past_days=None, future_days=None)
+
+    async def test_trigger_with_window_body_passes_kwargs(self, client):
+        """POST with {past_days: 30, future_days: 30} → 202 and scan_diary.delay called with those values."""
+        token, diary = await _setup(client, "scanwindow@example.com")
+        auth = {"Authorization": f"Bearer {token}"}
+
+        with patch("app.workers.tasks.scan_diary.delay") as mock_delay:
+            mock_delay.return_value = None
+            r = await client.post(
+                f"/v1/diaries/{diary['id']}/scan/run",
+                json={"past_days": 30, "future_days": 30},
+                headers=auth,
+            )
+
+        assert r.status_code == 202
+        mock_delay.assert_called_once_with(str(diary["id"]), past_days=30, future_days=30)
+
+    async def test_trigger_invalid_past_days_returns_422(self, client):
+        """POST with past_days=0 (below ge=1) → 422 validation error."""
+        token, diary = await _setup(client, "scaninvalid@example.com")
+        auth = {"Authorization": f"Bearer {token}"}
+
+        r = await client.post(
+            f"/v1/diaries/{diary['id']}/scan/run",
+            json={"past_days": 0},
+            headers=auth,
+        )
+        assert r.status_code == 422
+

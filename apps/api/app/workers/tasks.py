@@ -37,11 +37,11 @@ def ping() -> str:
     max_retries=3,
     default_retry_delay=60,
 )
-def scan_diary(self, diary_id: str) -> None:
-    run_sync(_scan_diary(diary_id))
+def scan_diary(self, diary_id: str, past_days: int | None = None, future_days: int | None = None) -> None:
+    run_sync(_scan_diary(diary_id, past_days=past_days, future_days=future_days))
 
 
-async def _scan_diary(diary_id_str: str) -> None:
+async def _scan_diary(diary_id_str: str, past_days: int | None = None, future_days: int | None = None) -> None:
     import asyncio
 
     from sqlalchemy import select
@@ -125,10 +125,16 @@ async def _scan_diary(diary_id_str: str) -> None:
                     access_token = await ensure_fresh_access_token(oauth_token_fresh, db)
 
                 if access_token:
+                    kwargs = {}
+                    if past_days is not None:
+                        kwargs["past_days"] = past_days
+                    if future_days is not None:
+                        kwargs["future_days"] = future_days
                     calendar_events_count = await sync_calendar(
                         diary_id=diary_id,
                         access_token=access_token,
                         diary_timezone=diary.timezone,
+                        **kwargs,
                     )
             except Exception as e:
                 log.error("calendar_sync_error", diary_id=diary_id_str, error=str(e))

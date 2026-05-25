@@ -66,6 +66,14 @@ CLOUDFLARE_API_TOKEN=$(prompt_optional CLOUDFLARE_API_TOKEN "CLOUDFLARE_API_TOKE
 CLOUDFLARE_ZONE_ID=$(prompt_optional CLOUDFLARE_ZONE_ID "CLOUDFLARE_ZONE_ID")
 
 echo ""
+echo "--- Caddy edge (FortiGate LAN IP) ---"
+echo "The FortiGate LAN IP is used by Caddy to scope trusted upstream proxies."
+echo "Example: 192.168.1.1 (the IP FortiGate uses on your home LAN)."
+echo "Leave blank for local dev — Caddy will trust all RFC1918 ranges instead."
+echo ""
+FORTIGATE_LAN_IP=$(prompt_optional FORTIGATE_LAN_IP "FORTIGATE_LAN_IP (FortiGate LAN IP, e.g. 192.168.1.1)")
+
+echo ""
 echo "--- Generating cryptographic secrets ---"
 
 # ── Auto-generated secrets ────────────────────────────────────────────────────
@@ -146,6 +154,9 @@ EMAIL_FROM=pd@bdsys.net
 # Rate limiting
 RATE_LIMIT_DEFAULT=100/minute
 RATE_LIMIT_AUTH=10/minute
+
+# Caddy edge
+FORTIGATE_LAN_IP=${FORTIGATE_LAN_IP:-}
 
 # Web (Next.js)
 NEXT_PUBLIC_API_URL=https://api.diary.perfectday.andrewlass.com

@@ -37,7 +37,7 @@ echo "Deploy dir: ${DEPLOY_DIR}"
 echo "Date: $(date)"
 echo ""
 
-echo '[1/8] Cloning or updating repository...'
+echo '[1/9] Cloning or updating repository...'
 # /opt/perfect-day is owned by perfectday:docker (per 00-bootstrap.sh) but this
 # script runs as root. Tell git the directory is safe to avoid "dubious ownership".
 git config --global --add safe.directory "${DEPLOY_DIR}"
@@ -62,7 +62,7 @@ fi
 # because Postgres only honors POSTGRES_PASSWORD on first init — if the data
 # volume survives a secrets regeneration the passwords drift and auth fails.
 if [ "${CLEAN}" = true ]; then
-    echo '[2/8] Wiping Docker volumes (--clean)...'
+    echo '[2/9] Wiping Docker volumes (--clean)...'
     echo '  WARNING: Wiping all perfect-day_* volumes. Postgres data will be lost.'
     cd "${DEPLOY_DIR}"
 
@@ -90,10 +90,10 @@ if [ "${CLEAN}" = true ]; then
         echo "  No perfect-day_* volumes found (already clean)."
     fi
 else
-    echo '[2/8] Skipping volume wipe (no --clean flag).'
+    echo '[2/9] Skipping volume wipe (no --clean flag).'
 fi
 
-echo '[3/8] Linking secrets file...'
+echo '[3/9] Linking secrets file...'
 if [ ! -f "${ENV_FILE}" ]; then
     echo "ERROR: ${ENV_FILE} not found. Run scripts/nuc/10-secrets.sh first." >&2
     exit 1
@@ -107,7 +107,12 @@ ln -sf "${ENV_FILE}" "${DEPLOY_DIR}/apps/api/.env"
 echo "  Linked ${ENV_FILE} -> ${DEPLOY_DIR}/.env"
 echo "  Linked ${ENV_FILE} -> ${DEPLOY_DIR}/apps/api/.env"
 
-echo '[4/8] Pulling Docker images...'
+echo '[4/9] Rendering Caddyfile from template...'
+FORTIGATE_LAN_IP=$(grep -E '^FORTIGATE_LAN_IP=' "${DEPLOY_DIR}/.env" | cut -d= -f2-)
+export FORTIGATE_LAN_IP
+"${DEPLOY_DIR}/scripts/nuc/render-caddyfile.sh"
+
+echo '[5/9] Pulling Docker images...'
 cd "${DEPLOY_DIR}"
 # Try GHCR first; fall back to local build if images not yet pushed
 if docker compose --profile nuc pull api worker beat web edge 2>/dev/null; then
@@ -117,18 +122,18 @@ else
     docker compose --profile nuc build api web
 fi
 
-echo '[5/8] Running Alembic migrations...'
+echo '[6/9] Running Alembic migrations...'
 docker compose --profile nuc run --rm api alembic upgrade head
 echo '  Migrations complete'
 
-echo '[6/8] Starting all services...'
+echo '[7/9] Starting all services...'
 docker compose --profile nuc up -d
 echo '  Services started'
 
-echo '[7/8] Seeding MinIO bucket...'
+echo '[8/9] Seeding MinIO bucket...'
 ./scripts/seed-minio-bucket.sh || true
 
-echo '[8/8] Waiting for readiness...'
+echo '[9/9] Waiting for readiness...'
 ELAPSED=0
 until curl -sf --max-time 5 "${HEALTH_URL}" > /dev/null 2>&1; do
     if [ "${ELAPSED}" -ge "${HEALTH_TIMEOUT}" ]; then

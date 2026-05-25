@@ -41,6 +41,9 @@ apps/api/.env.*
 !apps/api/.env.example
 /run/secrets/
 
+# Rendered deploy configs (generated at deploy time, never committed)
+deploy/caddy/Caddyfile
+
 # Docker volumes (local bind mounts)
 data/
 postgres_data/

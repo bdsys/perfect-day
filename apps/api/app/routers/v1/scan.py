@@ -19,6 +19,11 @@ from app.routers.v1.diaries import _get_diary_or_404
 router = APIRouter(tags=["scan"])
 
 
+class ScanRunRequest(BaseModel):
+    past_days: int | None = Field(default=None, ge=1, le=3650)
+    future_days: int | None = Field(default=None, ge=1, le=3650)
+
+
 class ScanRunOut(BaseModel):
     id: uuid.UUID
     diary_id: uuid.UUID
@@ -53,6 +58,7 @@ async def get_scan_config(
 @router.post("/diaries/{diary_id}/scan/run", status_code=status.HTTP_202_ACCEPTED)
 async def trigger_scan(
     diary_id: uuid.UUID,
+    body: ScanRunRequest | None = None,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
@@ -74,7 +80,9 @@ async def trigger_scan(
     job = result.scalar_one_or_none()
     if job:
         job.next_scan_after = None
-    scan_diary.delay(str(diary_id))
+    past = body.past_days if body else None
+    future = body.future_days if body else None
+    scan_diary.delay(str(diary_id), past_days=past, future_days=future)
     return {"queued": True}
 
 
