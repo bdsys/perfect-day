@@ -260,6 +260,20 @@ function EntryDetailPageInner() {
               {entry.title ?? <span style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>(no title yet)</span>}
             </h1>
 
+            {entry.rule_matches && entry.rule_matches.length > 0 && (
+              <div style={{ marginBottom: '0.75rem', fontSize: '0.85rem', color: '#555' }}>
+                Captured by rule{entry.rule_matches.length !== 1 ? 's' : ''}:{' '}
+                {entry.rule_matches.map((m, i) => (
+                  <span key={m.rule_id}>
+                    {i > 0 && ', '}
+                    <a href={`/rules/${m.rule_id}`} style={{ color: 'var(--accent)', textDecoration: 'none' }}>
+                      {m.rule_name}
+                    </a>
+                  </span>
+                ))}
+              </div>
+            )}
+
             {entry.body_source === 'fallback' && (
               <p style={{ fontStyle: 'italic', color: '#888', marginBottom: '1rem', fontSize: '0.85rem' }}>
                 Generated from calendar events — LLM draft was not available. Edit or regenerate.
