@@ -340,7 +340,8 @@ def _strip_injection(text: str) -> str:
 def evaluate_rules_for_event(self, event_id: str, diary_id: str) -> None:
     """Evaluate auto-creation rules against a newly ingested event.
 
-    Stub — real implementation added in Part 3.
+    TODO(P3-T3): Wire to evaluate_event_against_rules via run_sync once
+    the rules engine is fully integrated into the Celery pipeline.
     """
     pass
 

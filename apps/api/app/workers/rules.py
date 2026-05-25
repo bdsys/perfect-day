@@ -104,9 +104,12 @@ async def evaluate_event_against_rules(
     # Import here to avoid circular imports (tasks → rules → tasks)
     from app.workers.tasks import generate_entry_draft  # noqa: PLC0415
 
+    event_uuid = uuid.UUID(event_id)
+    diary_uuid = uuid.UUID(diary_id)
+
     # 1. Load the event with a row-level lock to prevent concurrent races.
     result = await db.execute(
-        select(Event).where(Event.id == uuid.UUID(event_id)).with_for_update()
+        select(Event).where(Event.id == event_uuid).with_for_update()
     )
     event = result.scalar_one_or_none()
     if event is None:
@@ -120,7 +123,7 @@ async def evaluate_event_against_rules(
     # 2. Load enabled rules for this diary.
     rules_result = await db.execute(
         select(AutoCreationRule)
-        .where(AutoCreationRule.diary_id == uuid.UUID(diary_id))
+        .where(AutoCreationRule.diary_id == diary_uuid)
         .where(AutoCreationRule.enabled.is_(True))
     )
     rules = list(rules_result.scalars())
@@ -128,7 +131,7 @@ async def evaluate_event_against_rules(
         return
 
     # 3. Load diary (needed for timezone + user_id).
-    diary_result = await db.execute(select(Diary).where(Diary.id == uuid.UUID(diary_id)))
+    diary_result = await db.execute(select(Diary).where(Diary.id == diary_uuid))
     diary = diary_result.scalar_one_or_none()
     if diary is None:
         return
@@ -183,7 +186,7 @@ async def evaluate_event_against_rules(
                 # First instance — check tier limit, create entry + claim.
                 ok, reason = await try_enforce_entry_tier_limit(
                     user_id=user.id,
-                    diary_id=uuid.UUID(diary_id),
+                    diary_id=diary_uuid,
                     source="auto",
                     db=db,
                     subscription_tier=user.subscription_tier,
@@ -197,7 +200,7 @@ async def evaluate_event_against_rules(
                     continue
 
                 new_entry = Entry(
-                    diary_id=uuid.UUID(diary_id),
+                    diary_id=diary_uuid,
                     entry_date=entry_date,
                     entry_end_date=None,  # series entries don't span
                     status="draft",
@@ -220,7 +223,7 @@ async def evaluate_event_against_rules(
             # ----------------------------------------------------------------
             ok, reason = await try_enforce_entry_tier_limit(
                 user_id=user.id,
-                diary_id=uuid.UUID(diary_id),
+                diary_id=diary_uuid,
                 source="auto",
                 db=db,
                 subscription_tier=user.subscription_tier,
@@ -237,7 +240,7 @@ async def evaluate_event_against_rules(
                 entry_end_date if options.get("multi_day") == "spanning" else None
             )
             new_entry = Entry(
-                diary_id=uuid.UUID(diary_id),
+                diary_id=diary_uuid,
                 entry_date=entry_date,
                 entry_end_date=use_end_date,
                 status="draft",

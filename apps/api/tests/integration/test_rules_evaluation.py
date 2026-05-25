@@ -320,3 +320,119 @@ class TestEvaluateEventAgainstRules:
         assert entries_result.scalars().all() == []
 
         mock_task.delay.assert_not_called()
+
+    async def test_already_attached_event_skipped(self, db_session: AsyncSession):
+        """An event that already has entry_id set should be skipped entirely."""
+        user = await make_user(db_session)
+        diary = await make_diary(db_session, owner=user, timezone="UTC")
+
+        # Create an existing entry to pre-attach the event to
+        from tests.fixtures.factories import make_entry
+
+        existing_entry = await make_entry(db_session, diary=diary)
+
+        rule = AutoCreationRule(
+            diary_id=diary.id,
+            name="test rule",
+            condition=_SOCCER_CONDITION,
+            options={"recurring": "per_instance", "multi_day": "per_day"},
+            enabled=True,
+        )
+        db_session.add(rule)
+        await db_session.flush()
+
+        event = await make_event(
+            db_session,
+            diary_id=diary.id,
+            payload=_SOCCER_PAYLOAD,
+        )
+        # Pre-attach the event to the existing entry
+        event.entry_id = existing_entry.id
+        await db_session.commit()
+
+        with patch("app.workers.tasks.generate_entry_draft") as mock_task:
+            mock_task.delay = MagicMock()
+            await evaluate_event_against_rules(str(event.id), str(diary.id), db_session)
+
+        # No new entries should have been created beyond the pre-existing one
+        result = await db_session.execute(
+            select(Entry).where(Entry.diary_id == diary.id)
+        )
+        entries = result.scalars().all()
+        assert len(entries) == 1
+        assert entries[0].id == existing_entry.id
+
+        mock_task.delay.assert_not_called()
+
+    async def test_two_rules_matching_same_event(self, db_session: AsyncSession):
+        """Two matching rules create two separate entries; event attaches to the first."""
+        user = await make_user(db_session)
+        diary = await make_diary(db_session, owner=user, timezone="UTC")
+
+        rule1 = AutoCreationRule(
+            diary_id=diary.id,
+            name="rule 1",
+            condition=_SOCCER_CONDITION,
+            options={"recurring": "per_instance", "multi_day": "per_day"},
+            enabled=True,
+        )
+        rule2 = AutoCreationRule(
+            diary_id=diary.id,
+            name="rule 2",
+            condition={
+                "op": "AND",
+                "children": [
+                    {
+                        "field": "title",
+                        "op": "contains",
+                        "value": "practice",
+                        "case_sensitive": False,
+                    }
+                ],
+            },
+            options={"recurring": "per_instance", "multi_day": "per_day"},
+            enabled=True,
+        )
+        db_session.add(rule1)
+        db_session.add(rule2)
+        await db_session.flush()
+
+        event = await make_event(
+            db_session,
+            diary_id=diary.id,
+            payload=_SOCCER_PAYLOAD,  # summary "Soccer practice" matches both rules
+        )
+        await db_session.commit()
+
+        with patch("app.workers.tasks.generate_entry_draft") as mock_task:
+            mock_task.delay = MagicMock()
+            await evaluate_event_against_rules(str(event.id), str(diary.id), db_session)
+
+        await db_session.refresh(event)
+        # Event is attached to some entry
+        assert event.entry_id is not None
+
+        # Two entries were created (one per matching rule)
+        result = await db_session.execute(
+            select(Entry)
+            .where(Entry.diary_id == diary.id)
+            .where(Entry.creation_source == "rule")
+        )
+        entries = result.scalars().all()
+        assert len(entries) == 2
+
+        # Event is attached to exactly one of those entries
+        entry_ids = {e.id for e in entries}
+        assert event.entry_id in entry_ids
+
+        # One EntryRuleMatch per rule (two total)
+        match_result = await db_session.execute(
+            select(EntryRuleMatch).where(
+                EntryRuleMatch.entry_id.in_(entry_ids)
+            )
+        )
+        matches = match_result.scalars().all()
+        assert len(matches) == 2
+
+        # LLM generation queued for both entries
+        assert mock_task.delay.call_count == 2
