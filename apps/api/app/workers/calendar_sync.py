@@ -112,8 +112,7 @@ async def _fetch_events(
         params["syncToken"] = sync_token
     else:
         # Full sync — bound to scan window
-        if time_min is None or time_max is None:
-            time_min, time_max = _scan_window()
+        assert time_min is not None and time_max is not None, "_fetch_events requires time_min and time_max"
         params["timeMin"] = time_min.isoformat()
         params["timeMax"] = time_max.isoformat()
         params["orderBy"] = "startTime"
