@@ -51,7 +51,7 @@ class Settings(BaseSettings):
 
     # Email (SendGrid)
     sendgrid_api_key: str = ""
-    email_from: str = "noreply@bdsys.net"
+    email_from: str = "pd@bdsys.net"
 
     # Rate limiting
     rate_limit_default: str = "100/minute"

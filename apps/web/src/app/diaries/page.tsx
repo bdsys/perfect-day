@@ -1,10 +1,34 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { api, type Diary } from '@/lib/api'
 import { useAuth } from '@/lib/auth-context'
+
+function googleStatusMessage(
+  status: string | null,
+  missing: string | null,
+): { text: string; isError: boolean } | null {
+  if (!status) return null
+  if (status === 'connected') return { text: 'Google Calendar connected successfully.', isError: false }
+  if (status === 'partial' && missing === 'photos') return { text: 'Google Calendar connected. Photos access was not granted (not needed for Phase 1).', isError: false }
+  if (status === 'partial' && missing === 'calendar') return { text: 'Calendar access was not granted. Please reconnect and allow Calendar.', isError: true }
+  if (status === 'partial' && missing === 'all') return { text: 'No Google permissions were granted. Please try connecting again.', isError: true }
+  if (status === 'denied') return { text: 'Google connection was cancelled or failed. Please try again.', isError: true }
+  return null
+}
+
+function GoogleStatusBanner() {
+  const searchParams = useSearchParams()
+  const msg = googleStatusMessage(searchParams.get('google'), searchParams.get('missing'))
+  if (!msg) return null
+  return (
+    <p className={msg.isError ? 'error-message' : 'success-message'} style={{ marginBottom: '1rem' }}>
+      {msg.text}
+    </p>
+  )
+}
 
 function Nav({ onLogout }: { onLogout: () => void }) {
   return (
@@ -72,9 +96,15 @@ export default function DiariesPage() {
       <div className="container" style={{ paddingTop: '1.5rem' }}>
         <div className="page-header">
           <h1 className="page-title">Your diaries</h1>
+          <div className="page-actions">
+            <Link href="/diaries/restore" className="btn btn-secondary">Deleted diaries</Link>
+          </div>
         </div>
 
         {error && <p className="error-message" style={{ marginBottom: '1rem' }}>{error}</p>}
+        <Suspense>
+          <GoogleStatusBanner />
+        </Suspense>
 
         {loading ? (
           <div className="loading">Loading…</div>

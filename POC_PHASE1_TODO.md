@@ -99,7 +99,7 @@ SendGrid is needed because residential IPs are blocked by most mail servers. It 
 3. Complete the required sender identity setup:
    - Go to **Settings** → **Sender Authentication**
    - Choose **Single Sender Verification** (easiest for PoC)
-   - Fill in: From Name = `Perfect Day`, From Email = `noreply@bdsys.net`, Reply To = your email
+   - Fill in: From Name = `Perfect Day`, From Email = `pd@bdsys.net`, Reply To = your email
    - Click **Create** → check your email → click the verification link
 4. Get an API key:
    - **Settings** → **API Keys** → **Create API Key**

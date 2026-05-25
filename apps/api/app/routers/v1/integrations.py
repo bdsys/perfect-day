@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import json
@@ -35,6 +36,31 @@ NONCE_TTL = 600  # 10 minutes
 
 
 # ---------------------------------------------------------------------------
+# id_token helpers
+# ---------------------------------------------------------------------------
+
+
+def _decode_id_token(id_token: str | None) -> dict:
+    """Extract email and name from a Google id_token JWT payload without signature verification.
+
+    The token comes directly from Google over TLS, so we trust the source.
+    Returns {"email": str|None, "name": str|None}; never raises.
+    """
+    try:
+        if not id_token:
+            return {"email": None, "name": None}
+        parts = id_token.split(".")
+        if len(parts) < 2:
+            return {"email": None, "name": None}
+        # Add padding so base64 decode doesn't fail
+        payload_b64 = parts[1] + "=" * (-len(parts[1]) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(payload_b64).decode())
+        return {"email": payload.get("email"), "name": payload.get("name")}
+    except Exception:
+        return {"email": None, "name": None}
+
+
+# ---------------------------------------------------------------------------
 # Schemas
 # ---------------------------------------------------------------------------
 
@@ -44,6 +70,8 @@ class IntegrationOut(BaseModel):
     scopes_granted: list[str]
     revoked: bool
     expires_at: datetime | None
+    google_email: str | None = None
+    google_name: str | None = None
 
     model_config = {"from_attributes": False}
 
@@ -88,6 +116,8 @@ async def list_integrations(
             scopes_granted=t.scopes_granted,
             revoked=t.revoked_at is not None,
             expires_at=t.expires_at,
+            google_email=t.google_email,
+            google_name=t.google_name,
         )
         for t in tokens
     ]
@@ -143,7 +173,7 @@ async def google_callback(
     web_base = settings.cors_origins[0] if settings.cors_origins else "http://localhost:3000"
 
     if error or not code or not state:
-        return RedirectResponse(f"{web_base}/settings?google=denied")
+        return RedirectResponse(f"{web_base}/diaries?google=denied")
 
     payload = _verify_state(state, settings.secret_key)
     nonce = payload.get("nonce", "")
@@ -151,7 +181,7 @@ async def google_callback(
     # Single-use nonce check
     deleted = await r.delete(f"oauth_nonce:{nonce}")
     if not deleted:
-        return RedirectResponse(f"{web_base}/settings?google=denied&reason=nonce_reuse")
+        return RedirectResponse(f"{web_base}/diaries?google=denied&reason=nonce_reuse")
 
     user_id = uuid.UUID(payload["user_id"])
 
@@ -169,10 +199,11 @@ async def google_callback(
         )
         if resp.status_code != 200:
             return RedirectResponse(
-                f"{web_base}/settings?google=denied&reason=token_exchange_failed"
+                f"{web_base}/diaries?google=denied&reason=token_exchange_failed"
             )
         token_data = resp.json()
 
+    identity = _decode_id_token(token_data.get("id_token"))
     access_token = token_data.get("access_token", "")
     refresh_token = token_data.get("refresh_token", "")
     expires_in = token_data.get("expires_in", 3600)
@@ -202,6 +233,8 @@ async def google_callback(
         existing.scopes_granted = granted_scopes
         existing.expires_at = expires_at
         existing.revoked_at = None
+        existing.google_email = identity["email"]
+        existing.google_name = identity["name"]
     else:
         db.add(
             OAuthToken(
@@ -213,6 +246,8 @@ async def google_callback(
                 else None,
                 scopes_granted=granted_scopes,
                 expires_at=expires_at,
+                google_email=identity["email"],
+                google_name=identity["name"],
             )
         )
     await db.commit()
@@ -223,13 +258,13 @@ async def google_callback(
 
     if granted_scopes:
         if not requested_calendar and not requested_photos:
-            return RedirectResponse(f"{web_base}/settings?google=partial&missing=all")
+            return RedirectResponse(f"{web_base}/diaries?google=partial&missing=all")
         elif not requested_photos:
-            return RedirectResponse(f"{web_base}/settings?google=partial&missing=photos")
+            return RedirectResponse(f"{web_base}/diaries?google=partial&missing=photos")
         elif not requested_calendar:
-            return RedirectResponse(f"{web_base}/settings?google=partial&missing=calendar")
-        return RedirectResponse(f"{web_base}/settings?google=connected")
-    return RedirectResponse(f"{web_base}/settings?google=denied")
+            return RedirectResponse(f"{web_base}/diaries?google=partial&missing=calendar")
+        return RedirectResponse(f"{web_base}/diaries?google=connected")
+    return RedirectResponse(f"{web_base}/diaries?google=denied")
 
 
 @router.delete("/google", status_code=status.HTTP_204_NO_CONTENT)
