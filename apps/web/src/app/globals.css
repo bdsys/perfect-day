@@ -378,3 +378,48 @@ input:focus {
 .cal-day.is-other-month { color: var(--text-muted); background: var(--surface); opacity: 0.7; }
 .cal-day:hover { background: var(--draft-bg); }
 .cal-day .num { font-size: 0.8rem; font-weight: 600; display: block; margin-bottom: 2px; }
+.cal-chip {
+  display: block;
+  font-size: 0.72rem;
+  padding: 1px 4px;
+  margin-top: 2px;
+  border-radius: 3px;
+  background: var(--accent);
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  border: none;
+  width: 100%;
+  text-align: left;
+}
+.cal-chip:hover { background: var(--accent-hover); }
+.cal-more {
+  font-size: 0.72rem;
+  color: var(--accent);
+  margin-top: 2px;
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 0;
+}
+.cal-more:hover { text-decoration: underline; }
+.cal-panel {
+  position: fixed;
+  top: 0; right: 0; bottom: 0;
+  width: 360px;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  padding: 1rem;
+  overflow-y: auto;
+  z-index: 40;
+  box-shadow: -4px 0 16px rgba(0,0,0,0.12);
+}
+.cal-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+.cal-panel-header h3 { margin: 0; font-size: 1rem; }

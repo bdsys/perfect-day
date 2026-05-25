@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
 import { api, type CalendarEventSummary } from '@/lib/api'
@@ -27,9 +27,8 @@ function buildMonthDays(monthStart: Date): Date[] {
   })
 }
 
-// ── Event helpers (preserved for Task 9) ─────────────────────────────────────
+// ── Event helpers ─────────────────────────────────────────────────────────────
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function formatOccurredAt(event: CalendarEventSummary): string {
   const dtStr = event.start?.dateTime ?? event.start?.date ?? event.occurred_at
   if (!dtStr) return 'Unknown time'
@@ -42,7 +41,6 @@ function formatOccurredAt(event: CalendarEventSummary): string {
   return `${time}–${endTime}`
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function groupByDate(events: CalendarEventSummary[]): Map<string, CalendarEventSummary[]> {
   const map = new Map<string, CalendarEventSummary[]>()
   for (const ev of events) {
@@ -56,17 +54,6 @@ function groupByDate(events: CalendarEventSummary[]): Map<string, CalendarEventS
   return new Map([...map.entries()].sort((a, b) => b[0].localeCompare(a[0])))
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function formatDateHeading(dateStr: string): string {
-  if (dateStr === 'unknown') return 'Unknown date'
-  return new Date(dateStr + 'T00:00:00').toLocaleDateString(undefined, {
-    weekday: 'long',
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-  })
-}
-
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function CalendarPickPage() {
@@ -74,19 +61,18 @@ export default function CalendarPickPage() {
   const { user, loading: authLoading } = useAuth()
   const router = useRouter()
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [events, setEvents] = useState<CalendarEventSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [creating, setCreating] = useState<string | null>(null)
 
   const [cursorMonth, setCursorMonth] = useState<Date>(() => {
     const d = new Date()
     return new Date(d.getFullYear(), d.getMonth(), 1)
   })
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [selectedDay, setSelectedDay] = useState<string | null>(null)
+
+  const grouped = useMemo(() => groupByDate(events), [events])
 
   useEffect(() => {
     if (!authLoading && !user) router.replace('/login')
@@ -104,7 +90,6 @@ export default function CalendarPickPage() {
       .finally(() => setLoading(false))
   }, [user, diaryId, cursorMonth])
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async function handlePick(event: CalendarEventSummary) {
     setCreating(event.id)
     setError('')
@@ -181,11 +166,77 @@ export default function CalendarPickPage() {
                 onClick={() => setSelectedDay(dayKey)}
               >
                 <span className="num">{d.getDate()}</span>
-                {/* Event chips will be added in Task 9 */}
+                {/* Event chips */}
+                {(() => {
+                  const dayEvs = grouped.get(dayKey) ?? []
+                  return (
+                    <>
+                      {dayEvs.slice(0, 3).map((ev) => (
+                        <button
+                          key={ev.id}
+                          className="cal-chip"
+                          title={ev.summary || '(no title)'}
+                          onClick={(e) => { e.stopPropagation(); setSelectedDay(dayKey) }}
+                        >
+                          {ev.summary || '(no title)'}
+                        </button>
+                      ))}
+                      {dayEvs.length > 3 && (
+                        <button className="cal-more" onClick={(e) => { e.stopPropagation(); setSelectedDay(dayKey) }}>
+                          +{dayEvs.length - 3} more
+                        </button>
+                      )}
+                    </>
+                  )
+                })()}
               </div>
             )
           })}
         </div>
+
+        {/* Day-detail panel */}
+        {selectedDay && (
+          <div className="cal-panel">
+            <div className="cal-panel-header">
+              <h3>
+                {new Date(selectedDay + 'T12:00:00').toLocaleDateString('default', {
+                  weekday: 'long', month: 'long', day: 'numeric', year: 'numeric'
+                })}
+              </h3>
+              <button className="btn" onClick={() => setSelectedDay(null)}>✕</button>
+            </div>
+            {(grouped.get(selectedDay) ?? []).length === 0 ? (
+              <p style={{ color: 'var(--text-muted)' }}>No events on this day.</p>
+            ) : (
+              (grouped.get(selectedDay) ?? []).map((ev) => (
+                <button
+                  key={ev.id}
+                  className="entry-card"
+                  style={{
+                    display: 'block',
+                    width: '100%',
+                    textAlign: 'left',
+                    cursor: creating !== null ? 'not-allowed' : 'pointer',
+                    opacity: creating === ev.id ? 0.5 : 1,
+                    border: 'none',
+                    background: 'var(--card-bg)',
+                    marginBottom: '0.5rem',
+                  }}
+                  disabled={creating !== null}
+                  onClick={() => handlePick(ev)}
+                >
+                  <div className="entry-title">
+                    {creating === ev.id ? 'Creating…' : (ev.summary || '(no title)')}
+                  </div>
+                  <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
+                    {formatOccurredAt(ev)}
+                    {ev.location ? ` · ${ev.location}` : ''}
+                  </div>
+                </button>
+              ))
+            )}
+          </div>
+        )}
       </div>
     </>
   )
