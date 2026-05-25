@@ -189,6 +189,18 @@ export default function DiaryDetailPage() {
             <button className="btn btn-primary" onClick={handleNewEntry} disabled={creating}>
               {creating ? 'Creating…' : 'New entry'}
             </button>
+            <button
+              className="btn btn-secondary"
+              onClick={() => router.push(`/diaries/${diaryId}/calendar-pick`)}
+            >
+              New entry from Google Calendar
+            </button>
+            <button
+              className="btn btn-secondary"
+              onClick={() => router.push(`/diaries/${diaryId}/rules`)}
+            >
+              Auto-Creation Rules
+            </button>
             <Link href={`/diaries/${diaryId}/restore`} className="btn btn-secondary">
               Deleted entries
             </Link>
@@ -234,7 +246,10 @@ export default function DiaryDetailPage() {
 
         {entries.length === 0 ? (
           <div className="empty-state">
-            <p>No entries yet. Connect Google Calendar and trigger a scan.</p>
+            <p>
+              No entries yet. Create one manually, pick from Google Calendar, or{' '}
+              <Link href={`/diaries/${diaryId}/rules`}>set up auto-creation rules</Link>.
+            </p>
           </div>
         ) : (
           entries.map((e) => <EntryCard key={e.id} entry={e} />)
