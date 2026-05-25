@@ -40,12 +40,14 @@ Cloudflare will become the authoritative DNS for `andrewlass.com`. GoDaddy stays
 
 1. In Cloudflare → **DNS** for `andrewlass.com`, add three A records:
    ```
-   Type: A   Name: diary.perfectday                Value: <YOUR_NUC_WAN_IP>   TTL: 300   Proxy: OFF
-   Type: A   Name: api.diary.perfectday             Value: <YOUR_NUC_WAN_IP>   TTL: 300   Proxy: OFF
-   Type: A   Name: media.diary.perfectday           Value: <YOUR_NUC_WAN_IP>   TTL: 300   Proxy: OFF
+   Type: A   Name: diary.perfectday                Value: <YOUR_NUC_WAN_IP>   TTL: 300   Proxy: ON
+   Type: A   Name: api.diary.perfectday             Value: <YOUR_NUC_WAN_IP>   TTL: 300   Proxy: ON
+   Type: A   Name: media.diary.perfectday           Value: <YOUR_NUC_WAN_IP>   TTL: 300   Proxy: ON
    ```
    To find your NUC WAN IP: `curl https://api.ipify.org` (run from the NUC or any home device).
-   Proxy must be **OFF** (grey cloud, not orange) — FortiGate handles TLS; Cloudflare proxying breaks this.
+   Proxy must be **ON** (orange cloud) — Cloudflare handles the public-facing TLS; FortiGate uses a
+   Cloudflare Origin Certificate for the CF↔origin hop. See [`deploy/cloudflare.md`](deploy/cloudflare.md)
+   § Cloudflare Origin Certificate setup.
 
 2. Create a scoped API token for DDNS updates:
    - Cloudflare → **My Profile** → **API Tokens** → **Create Token**
@@ -207,22 +209,21 @@ docker compose logs cloudflare-ddns --tail=20
 
 ### B5 — FortiGate: virtual hosts and TLS certificates
 
-**This step requires A2 (DNS records resolving) to be complete first** — Let's Encrypt needs to reach your FortiGate's WAN interface via HTTP for ACME HTTP-01 verification.
+**This step requires A2 (DNS records resolving and Cloudflare proxy ON) to be complete first.**
 
 Follow the procedure in [`deploy/nuc.md` → FortiGate Virtual Server setup](deploy/nuc.md#fortigate-virtual-server-setup). It covers:
 
-1. Issuing a Let's Encrypt cert via FortiGate's built-in ACME client (two SANs: `diary.*` and `api.diary.*`)
+1. Generating a CSR on FortiGate and obtaining a Cloudflare Origin Certificate (multi-SAN, 15-year validity)
 2. Creating two Real Server pools pointing at the NUC (`<NUC_LAN_IP>:3000` and `<NUC_LAN_IP>:8000`)
 3. Creating one HTTPS Virtual Server on WAN:443 with HTTP Content Routing (Host-header dispatch to the two pools)
-4. Creating an HTTP Virtual Server on WAN:80 with HTTP→HTTPS redirect (also keeps the ACME HTTP-01 renewal path open)
-5. Two firewall policies permitting inbound HTTP and HTTPS
+4. One firewall policy permitting inbound HTTPS from Cloudflare IP ranges
 
 When complete, verify from off-network:
 
 ```bash
 curl -I https://diary.perfectday.andrewlass.com/healthz    # Expect: 200 from Next.js
 curl -I https://api.diary.perfectday.andrewlass.com/healthz # Expect: 200 from FastAPI
-curl -I http://diary.perfectday.andrewlass.com/             # Expect: 301 → https://...
+dig +short diary.perfectday.andrewlass.com                  # Expect: Cloudflare anycast IPs
 ```
 
 ### B6 — Add production Google OAuth redirect URI
@@ -348,7 +349,7 @@ After this, push to `main` → build → deploy → smoke test is fully automate
 A1 (Cloudflare account + NS delegation)
   └─ A2 (DNS A records + DDNS token)
        └─ B4 (DDNS updater running)
-            └─ B5 (FortiGate TLS certs)  ← requires DNS resolving to NUC
+            └─ B5 (FortiGate Origin Cert install)  ← requires DNS resolving + CF proxy ON
                  └─ B6 (add prod Google OAuth redirect URI)
 
 A3 (Google Cloud project + OAuth creds)

@@ -23,8 +23,10 @@ Low TTL (300s) during PoC for easy IP changes. Raise to 3600s before public laun
 
 ### TLS
 
-Let's Encrypt certificates via the edge proxy:
-- **NUC:** FortiGate handles ACME renewal. One cert covers `diary.perfectday.andrewlass.com` + `media.diary.perfectday.andrewlass.com` (SAN or wildcard).
+Two separate TLS hops are used in the NUC deployment:
+
+- **Browser ↔ Cloudflare:** Cloudflare Universal SSL (browser-trusted, auto-renewed by CF).
+- **Cloudflare ↔ FortiGate:** Cloudflare Origin Certificate (multi-SAN covering all three subdomains, 15-year validity, signed by Cloudflare's private CA). Installed on FortiGate — private key generated on FortiGate via CSR, never exported. See [`deploy/cloudflare.md` § Cloudflare Origin Certificate setup](../deploy/cloudflare.md).
 - **Cloud:** provider-native cert manager or Cloudflare's automatic TLS.
 
 Certificate expiry is a page-level alert in `design/observability.md`. Renewal failure must be caught before expiry, not after.
@@ -175,10 +177,15 @@ check (covered in `design/observability.md`) that resolves
 
 ### Verification
 
-1. Note current `dig +short diary.perfectday.andrewlass.com`.
+> **Note:** With Cloudflare proxy **on** (orange cloud), `dig +short diary.perfectday.andrewlass.com`
+> returns Cloudflare anycast IPs, not your home WAN IP. This is expected. To verify the DDNS
+> updater pushed the correct origin IP, check the A record value directly in the Cloudflare dashboard,
+> or compare `docker compose logs cloudflare-ddns` output against `curl https://api.ipify.org`.
+
+1. Note the current A record origin IP in the Cloudflare dashboard (DNS tab) for `diary.perfectday`.
 2. Reboot the Comcast modem (forces a DHCP renew; the lease often, but
    not always, returns a different IP).
-3. Within 10 minutes, `dig +short diary.perfectday.andrewlass.com` should
-   match the new `curl https://api.ipify.org` value from the NUC.
+3. Within 10 minutes, the Cloudflare dashboard A record should match `curl https://api.ipify.org`
+   from the NUC. `dig +short diary.perfectday.andrewlass.com` will return CF anycast IPs — that is correct.
 4. `curl -I https://diary.perfectday.andrewlass.com/healthz` returns 200 from
    off-network (mobile hotspot).

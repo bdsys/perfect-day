@@ -12,7 +12,7 @@ Public hostname: `diary.perfectday.andrewlass.com` (web), `api.diary.perfectday.
 ### Hardware
 - Intel NUC with Ubuntu 26 LTS installed (fresh install recommended)
 - Root SSH access from your workstation
-- Public IPv4 routed through FortiGate 7.4
+- Public IPv4 routed through FortiGate 7.2+
 - At least 20 GB free disk for Docker images and MinIO data
 
 ### On your workstation
@@ -170,14 +170,18 @@ cd /opt/perfect-day && ./scripts/seed-minio-bucket.sh
 
 ## 4 — FortiGate Edge Configuration
 
-The FortiGate handles TLS termination and virtual hosting. This is a manual checklist — FortiGate config is applied via the web UI or CLI on the FortiGate device itself, not by these scripts.
+The FortiGate terminates the Cloudflare↔origin TLS hop using a Cloudflare Origin Certificate and
+runs WAF/IPS on the decrypted traffic. It then forwards plain HTTP to the NUC on the LAN.
+Cloudflare proxy is **on** (orange cloud) for all three diary subdomains — Cloudflare handles the
+public-facing TLS (browser↔CF) via Universal SSL. This is a manual checklist — FortiGate config
+is applied via the web UI or CLI on the FortiGate device itself, not by these scripts.
 
 ### Virtual hosts to create
 
 | Vhost | Backend | Port | Notes |
 |---|---|---|---|
-| `diary.perfectday.andrewlass.com` | NUC IP | 3000 | Next.js SSR — all methods |
-| `api.diary.perfectday.andrewlass.com` | NUC IP | 8000 | FastAPI — all methods |
+| `diary.perfectday.andrewlass.com` | NUC IP | 3000 | Next.js SSR — all methods; CF-proxied |
+| `api.diary.perfectday.andrewlass.com` | NUC IP | 8000 | FastAPI — all methods; CF-proxied |
 
 > Phase 1 does **not** need the `media.diary.perfectday.andrewlass.com` vhost. Photo serving is deferred to Phase 2 per `design/09-poc-scope.md:43-44`. Do not create it now.
 
@@ -185,11 +189,10 @@ The FortiGate handles TLS termination and virtual hosting. This is a manual chec
 
 Follow the step-by-step procedure in [`deploy/nuc.md` → FortiGate Virtual Server setup](deploy/nuc.md#fortigate-virtual-server-setup). Summary:
 
-1. Issue a Let's Encrypt cert via FortiGate's ACME client (SANs: `diary.*` and `api.diary.*`)
+1. Generate a CSR on FortiGate and obtain a Cloudflare Origin Certificate (multi-SAN covering `diary.*`, `api.diary.*`, `media.diary.*`; 15-year validity)
 2. Create two Real Server pools (`<NUC_LAN_IP>:3000`, `<NUC_LAN_IP>:8000`)
 3. Create one HTTPS Virtual Server on WAN:443 with HTTP Content Routing (Host-header routes to the two pools)
-4. Create an HTTP Virtual Server on WAN:80 with HTTP→HTTPS redirect
-5. Add firewall policies for HTTPS and HTTP inbound
+4. Add a firewall policy for HTTPS inbound (restrict source to Cloudflare IP ranges)
 
 > **Why Virtual Server, not plain port-forward VIPs?** Two hostnames share one WAN IP and port 443.
 > Plain port-forward VIPs cannot differentiate by hostname — you can't have two VIPs both forwarding
@@ -197,7 +200,7 @@ Follow the step-by-step procedure in [`deploy/nuc.md` → FortiGate Virtual Serv
 > header and dispatches accordingly.
 
 ### TLS
-- Use Let's Encrypt via FortiGate's built-in ACME client, or upload a cert from Certbot.
+- Use a **Cloudflare Origin Certificate** (15-year validity, multi-SAN) — see [`deploy/cloudflare.md` § Cloudflare Origin Certificate setup](deploy/cloudflare.md). This cert is installed on FortiGate; it handles the CF↔origin TLS hop. Cloudflare's Universal SSL handles the public-facing cert automatically.
 - Both vhosts need valid TLS — Google OAuth callback URLs must be HTTPS.
 
 ### Google OAuth callback URL

@@ -11,12 +11,14 @@ configure each, and the step-by-step setup sequence.
 |---|---|---|
 | Authoritative DNS for `perfectday.andrewlass.com` (subdomain delegation) | All | Free |
 | DDNS — keeps A records tracking the Comcast dynamic WAN IP | NUC (home-lab) | Free |
+| **Proxy (orange cloud)** — public-facing TLS via Universal SSL; hides residential WAN IP | NUC (home-lab) | Free |
+| Origin Certificate — CF↔FortiGate TLS using a Cloudflare-signed cert (15-year validity) | NUC (home-lab) | Free |
 | R2 object storage — encrypted photo chunks | Hybrid (NUC + CX21) | Free at PoC scale |
 
-Cloudflare is **not** used as a reverse proxy / CDN for this project (FortiGate
-on the NUC and Caddy on the CX21 handle TLS termination). You can optionally
-enable the Cloudflare proxy ("orange cloud") on the A records — see the note
-in § 1 below — but it is not required.
+Cloudflare proxy is **on** (orange cloud) for the three diary subdomains. Cloudflare terminates the
+public-facing TLS (browser ↔ CF) via Universal SSL, and forwards to FortiGate over a second TLS
+hop using a Cloudflare Origin Certificate installed on the FortiGate. FortiGate decrypts that hop,
+runs WAF/IPS/Content Routing on the plaintext, and forwards plain HTTP to the NUC on the home LAN.
 
 ---
 
@@ -87,22 +89,19 @@ updates against GoDaddy), create these records:
 
 | Name | Type | Value | TTL | Proxy |
 |---|---|---|---|---|
-| `diary.perfectday.andrewlass.com` | A | `<current NUC WAN IP>` | 300 | Off (grey cloud) for PoC |
-| `api.diary.perfectday.andrewlass.com` | A | `<current NUC WAN IP>` | 300 | Off for PoC |
-| `media.diary.perfectday.andrewlass.com` | A | `<current NUC WAN IP>` | 300 | Off for PoC |
+| `diary.perfectday.andrewlass.com` | A | `<current NUC WAN IP>` | 300 | **On (orange cloud)** |
+| `api.diary.perfectday.andrewlass.com` | A | `<current NUC WAN IP>` | 300 | **On (orange cloud)** |
+| `media.diary.perfectday.andrewlass.com` | A | `<current NUC WAN IP>` | 300 | **On (orange cloud)** |
 
 TTL 300s (5 min) during PoC allows the DDNS updater to converge within ~10 min
 of a Comcast lease change. Raise to 3600s before public launch.
 
-**On the Cloudflare proxy ("orange cloud"):** Enabling the proxy hides your
-real home IP address from the internet — connections terminate at Cloudflare's
-edge and are forwarded to your NUC. This is a meaningful privacy benefit for a
-home server. The trade-off is that TLS terminates at Cloudflare (Cloudflare
-sees plaintext), and the FortiGate sees Cloudflare's IP range rather than the
-real client IP (fixable with Cloudflare's `CF-Connecting-IP` header).
-
-For PoC, leave proxy **off** (grey cloud) to keep the network path simple. The
-FortiGate handles TLS directly. Revisit before public launch.
+**On the Cloudflare proxy ("orange cloud"):** All three diary subdomains use the Cloudflare proxy.
+This means:
+- Browsers see a Cloudflare Universal SSL certificate (auto-renewed by CF, browser-trusted). Your residential WAN IP is never exposed in DNS — `dig` returns Cloudflare anycast IPs.
+- Traffic between CF and FortiGate uses a **Cloudflare Origin Certificate** installed on FortiGate (see § 4 — Cloudflare Origin Certificate setup below).
+- Cloudflare provides free DDoS protection, bot filtering, and edge WAF in front of your FortiGate.
+- **Tradeoffs:** Cloudflare sees request/response plaintext at their edge (acceptable for a personal/family deployment). The real client IP arrives in the `CF-Connecting-IP` header rather than the TCP source — FastAPI should read from that header for rate limiting and logging. Cloudflare availability becomes a SPOF for public access (CF availability is excellent but not 100%).
 
 ---
 
@@ -159,7 +158,7 @@ sudo tee /etc/perfect-day/cloudflare-ddns.config.json <<'EOF'
         "api.diary.perfectday",
         "media.diary.perfectday"
       ],
-      "proxied": false
+      "proxied": true
     }
   ],
   "a": true,
@@ -174,7 +173,9 @@ sudo chown root:docker /etc/perfect-day/cloudflare-ddns.config.json
 
 > **Note on `subdomains`:** the container prepends the zone name automatically. Use only the left-hand portion of the FQDN here. For example, `diary.perfectday.andrewlass.com` → `"diary.perfectday"`.
 
-> **Note on `proxied`:** leave this `false`. FortiGate handles TLS termination directly. Enabling the Cloudflare proxy would route traffic through Cloudflare's edge, which is not the intended path for this deployment.
+> **Note on `proxied`:** set to `true` — the records are CF-proxied (orange cloud). The DDNS
+> updater still needs to push the real WAN IP as the origin A record so CF knows where to forward
+> traffic. With proxy on, `dig` returns CF anycast IPs, not your WAN IP — that is expected.
 
 ### Step 2.3 — Start the DDNS updater
 
@@ -326,19 +327,105 @@ aws s3 rm s3://perfectday-photos/test.txt \
 
 ---
 
+---
+
+## Section 4 — Cloudflare Origin Certificate setup (NUC deployment)
+
+A Cloudflare Origin Certificate is installed on FortiGate to secure the CF↔origin TLS hop.
+It is signed by Cloudflare's private CA (not a public CA), so browsers reject it if they connect
+directly to the FortiGate — but Cloudflare's edge trusts it natively. Validity is 15 years.
+
+### Step 4.1 — Generate a CSR on FortiGate
+
+**FortiGate UI:** System → Certificates → Create/Import → Certificate → Generate CSR
+
+| Field | Value |
+|---|---|
+| Certificate Name | `perfectday-cf-origin` |
+| Subject → Common Name (CN) | `diary.perfectday.andrewlass.com` |
+| Subject Alternative Name | `DNS:diary.perfectday.andrewlass.com,DNS:api.diary.perfectday.andrewlass.com,DNS:media.diary.perfectday.andrewlass.com` |
+| Key Type | RSA |
+| Key Size | 2048 |
+| Enrollment Method | File Based |
+
+Download the resulting `.csr` file.
+
+**Verify all three SANs are present before submitting:**
+
+```bash
+openssl req -in perfectday-cf-origin.csr -noout -text | grep -A1 "Subject Alternative Name"
+# Expect: DNS:diary.perfectday.andrewlass.com, DNS:api.diary.perfectday.andrewlass.com, DNS:media.diary.perfectday.andrewlass.com
+```
+
+### Step 4.2 — Submit the CSR to Cloudflare
+
+Cloudflare dashboard → **SSL/TLS → Origin Server → Create Certificate**
+
+1. **Uncheck** "Generate private key and CSR with Cloudflare" (use your own CSR).
+2. Paste the entire `-----BEGIN CERTIFICATE REQUEST-----` … `-----END CERTIFICATE REQUEST-----` block.
+3. Verify all three hostnames appear in the Hostnames list (auto-populated from the CSR SANs).
+4. Certificate validity: **15 years**.
+5. Click **Create**. Copy the signed certificate PEM — it is shown only once.
+
+### Step 4.3 — Install the signed cert on FortiGate
+
+**FortiGate UI:** System → Certificates → find `perfectday-cf-origin` (in "Pending CSR" state)
+→ Import → Local Certificate. Upload the signed `.crt` file. The cert moves to active state.
+
+### Step 4.4 — Set Cloudflare SSL/TLS mode
+
+Cloudflare dashboard → **SSL/TLS → Overview** → Encryption mode → **Full (strict)**
+
+"Full (strict)" means CF validates the Origin Cert chain before forwarding to your origin. This
+is the correct setting — "Full" (without strict) accepts any cert and is less secure; "Flexible"
+sends plaintext from CF to your origin, which you do not want.
+
+### Step 4.5 — Bind the cert to the FortiGate Virtual Server
+
+Update the `perfectday-https` VIP to use `perfectday-cf-origin` as its SSL certificate (see
+[`deploy/nuc.md` § FortiGate Virtual Server setup](nuc.md#fortigate-virtual-server-setup) Step 3).
+
+### Step 4.6 — Verify
+
+```bash
+# Public-facing cert (browser→CF) — should be CF Universal SSL, not the Origin Cert:
+openssl s_client -connect diary.perfectday.andrewlass.com:443 \
+  -servername diary.perfectday.andrewlass.com </dev/null 2>/dev/null \
+  | openssl x509 -noout -issuer -subject -dates
+# Expect: issuer = Let's Encrypt or Google Trust Services (CF's Universal SSL provider).
+#         Validity ~90 days (auto-renewed by CF).
+
+# Origin cert on FortiGate — bypass Cloudflare, connect directly to WAN IP with SNI:
+openssl s_client -connect <WAN_IP>:443 \
+  -servername diary.perfectday.andrewlass.com </dev/null 2>/dev/null \
+  | openssl x509 -noout -issuer -subject -dates
+# Expect: issuer = CloudFlare Origin SSL Certificate Authority,
+#         validity ~15 years,
+#         SANs include diary.*, api.diary.*, and media.diary.perfectday.andrewlass.com.
+
+# Confirm Cloudflare is in the path (A record resolves to CF anycast, not your WAN IP):
+dig +short diary.perfectday.andrewlass.com
+# Expect: Cloudflare anycast IPs (e.g., 104.16.x.x or 172.64.x.x), NOT your home WAN IP.
+```
+
+---
+
 ## Setup sequence summary
 
 ### NUC-only deployment
 
 1. Add `andrewlass.com` to Cloudflare (or just create a scoped API token if keeping GoDaddy authoritative)
-2. Create the three A records (`diary.*`, `api.diary.*`, `media.diary.*`)
+2. Create the three A records (`diary.*`, `api.diary.*`, `media.diary.*`) with proxy **ON** (orange cloud)
 3. Create the scoped `Zone.DNS:Edit` API token
-4. Deploy the DDNS updater (FortiGate built-in or Docker container)
-5. Verify DNS resolves to current WAN IP
+4. Deploy the DDNS updater (FortiGate built-in or Docker container) — `proxied: true` in config
+5. Verify DNS resolves to Cloudflare anycast IPs (not WAN IP)
+6. Generate CSR on FortiGate, submit to Cloudflare Origin Server, install signed cert on FortiGate
+7. Set CF SSL/TLS mode to Full (strict)
+8. Verify end-to-end (§ 4.6)
 
 ### Hybrid deployment (adds R2)
 
-Steps 1–5 above, then:
+Steps 1–8 above, then:
 
 6. Create the R2 bucket (`perfectday-photos`, public access disabled)
 7. Create the R2 API token (Object R+W on that bucket only)
