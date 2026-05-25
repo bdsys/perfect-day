@@ -172,7 +172,7 @@ cd ~/perfect-day
 sudo ./scripts/nuc/20-deploy.sh
 ```
 
-Clones the repo, runs migrations, starts all 7 services. If `/readyz` returns 503 afterward:
+Clones the repo, runs migrations, starts all 8 services. If `/readyz` returns 503 afterward:
 ```bash
 cd /opt/perfect-day && ./scripts/seed-minio-bucket.sh
 ```
@@ -181,6 +181,37 @@ If you have re-run `10-secrets.sh` (which regenerates `POSTGRES_PASSWORD`), you 
 ```bash
 sudo ./scripts/nuc/20-deploy.sh --clean
 ```
+
+`--clean` wipes all `perfect-day_*` Docker volumes across both `--profile nuc` and `--profile dev` (so pgadmin containers from stray dev invocations don't block the volume wipe). The wipe runs after `git pull` so compose sees the current YAML before stopping services.
+
+### B3.5 — Full reinstall (when incremental cleanup is not working)
+
+When iterative fixes fail, do a full nuke and rebuild from scratch. This is the preferred approach for any "state got messy" situation — it's deterministic and takes about 5 minutes.
+
+```bash
+# 1. Full nuke (stops systemd, all containers, all volumes, removes secrets + repo):
+sudo ./scripts/nuc/99-teardown.sh --yes
+```
+
+Run without `--yes` first to see a dry-run summary of what will be destroyed.
+
+After teardown you **must** have your four API keys ready:
+- `ANTHROPIC_API_KEY`
+- `GOOGLE_CLIENT_ID`
+- `GOOGLE_CLIENT_SECRET`
+- `SENDGRID_API_KEY`
+
+```bash
+# 2. Re-provision secrets (will re-prompt for all four API keys):
+sudo git clone git@github.com:bdsys/perfect-day.git /opt/perfect-day
+cd /opt/perfect-day
+sudo ./scripts/nuc/10-secrets.sh
+
+# 3. Deploy (no --clean needed; volumes are already gone):
+sudo ./scripts/nuc/20-deploy.sh
+```
+
+**Why this fixes the recurring Postgres auth failure:** There are six independent state sources on the NUC (running containers across two Docker profiles, named volumes, `/etc/perfect-day/app.env`, `/opt/perfect-day` repo, systemd unit). The auth failure happens when `10-secrets.sh` regenerates `POSTGRES_PASSWORD` but the `postgres_data` volume survives — Postgres only reads the password on first init, so the env and on-disk hash drift. `99-teardown.sh` clears all six sources simultaneously so the next deploy starts from a known-clean state.
 
 ### B4 — Cloudflare DDNS setup
 
