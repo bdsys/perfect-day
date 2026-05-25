@@ -103,6 +103,18 @@ export interface EventItem {
   status: string
 }
 
+export interface CalendarEventSummary {
+  id: string
+  summary: string
+  description: string
+  location: string
+  occurred_at: string | null
+  start: Record<string, string>
+  end: Record<string, string>
+  attendees: Array<{ displayName?: string; email?: string; organizer?: boolean; responseStatus?: string }>
+  status: string
+}
+
 export interface Entry {
   id: string
   diary_id: string
@@ -114,6 +126,7 @@ export interface Entry {
   flagged_tokens: string[] | null
   status: 'draft' | 'published'
   created_by: 'auto' | 'manual'
+  creation_source: 'manual' | 'calendar_pick' | 'rule' | 'legacy_auto'
   published_at: string | null
   deleted_at: string | null
   created_at: string
@@ -235,6 +248,28 @@ export const api = {
     },
     async list(): Promise<Integration[]> {
       return apiFetch('/v1/integrations')
+    },
+  },
+
+  calendarEvents: {
+    async list(
+      diaryId: string,
+      params: { attached?: boolean; from?: string; to?: string; limit?: number } = {},
+    ): Promise<CalendarEventSummary[]> {
+      const q = new URLSearchParams()
+      if (params.attached !== undefined) q.set('attached', String(params.attached))
+      if (params.from) q.set('from', params.from)
+      if (params.to) q.set('to', params.to)
+      if (params.limit) q.set('limit', String(params.limit))
+      const qs = q.toString()
+      return apiFetch(`/v1/diaries/${diaryId}/calendar-events${qs ? '?' + qs : ''}`)
+    },
+
+    async createFromEvent(diaryId: string, eventId: string): Promise<Entry> {
+      return apiFetch(`/v1/diaries/${diaryId}/entries/from-event`, {
+        method: 'POST',
+        body: JSON.stringify({ event_id: eventId }),
+      })
     },
   },
 }
