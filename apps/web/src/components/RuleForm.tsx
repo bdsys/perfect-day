@@ -21,7 +21,7 @@ function stripIds(node: TreeNode): RuleCondition {
   if (isGroup(node)) {
     return { op: node.op, children: node.children.map(stripIds) }
   }
-  const { _id, ...rest } = node
+  const { _id: _omit, ...rest } = node // eslint-disable-line @typescript-eslint/no-unused-vars
   return rest
 }
 

@@ -88,7 +88,7 @@ function EntryDetailPageInner() {
       })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false))
-  }, [user, entryId])
+  }, [user, entryId, fromPick])
 
   function startEdit() {
     if (!entry) return
