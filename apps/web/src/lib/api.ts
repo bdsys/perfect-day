@@ -95,8 +95,8 @@ export interface EventItem {
   source: string
   occurred_at: string | null
   summary: string
-  description: string
-  location: string
+  description: string | null
+  location: string | null
   start: Record<string, string>
   end: Record<string, string>
   attendees: Array<{ displayName: string; email: string; organizer: boolean; responseStatus: string }>
