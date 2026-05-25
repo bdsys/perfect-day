@@ -13,7 +13,7 @@ This document captures guidance specific to deploying Perfect Day on the home-la
 ## Edge
 
 - **FortiGate 7.2+:** TLS termination, WAF, virtual hosting
-- Two TLS certs: one for `diary.perfectday.andrewlass.com` (web), one for `api.diary.perfectday.andrewlass.com` + `media.diary.perfectday.andrewlass.com` (API + upload target)
+- Two TLS certs (one per hostname, FortiGate ACME issues single-domain certs): `diary.perfectday.andrewlass.com` and `api.diary.perfectday.andrewlass.com`. A third cert for `media.diary.perfectday.andrewlass.com` is added in Phase 2 when photo upload is built.
 - FortiGate WAF rule: `media.*` subdomain accepts PUT only (uploads); all other methods blocked at edge
 - CORS allowlist on the API for the web origin; Expo dev tunnel allowed only when `ENV=dev`
 - **Hybrid mode:** in the hybrid topology, the NUC's FortiGate vhost for `diary.perfectday.andrewlass.com` is deactivated. The NUC is reachable only over WireGuard (or LAN). DNS A records point to the CX21, which handles all public TLS. See [`deploy/hybrid.md`](hybrid.md).
@@ -94,20 +94,22 @@ Content Routing reads the decrypted `Host` header and dispatches to the correct 
 
 ---
 
-### Step 1 — Issue the Let's Encrypt certificate via FortiGate ACME
+### Step 1 — Issue two Let's Encrypt certificates via FortiGate ACME
 
-FortiGate's built-in ACME client handles HTTP-01 challenge and auto-renewal.
+FortiGate's built-in ACME client issues one certificate per entry (no multi-SAN support in the UI).
+Create two separate certs — one per hostname.
 
-In the FortiGate UI:
+In the FortiGate UI, repeat **System → Certificates → Local → Create/Import → Let's Encrypt** twice:
 
-1. **System → Certificates → Local → Create/Import → Let's Encrypt**
-2. Certificate name: `perfectday-le`
-3. Domains: `diary.perfectday.andrewlass.com`, `api.diary.perfectday.andrewlass.com` (add both as SANs)
-4. Email: your contact email
-5. Click **OK** — FortiGate performs HTTP-01 over port 80 and downloads the signed cert.
+| Certificate name | Domain | Email |
+|---|---|---|
+| `perfectday-diary-le` | `diary.perfectday.andrewlass.com` | your contact email |
+| `perfectday-api-le` | `api.diary.perfectday.andrewlass.com` | your contact email |
+
+FortiGate performs HTTP-01 over port 80 and downloads each signed cert. Each cert renews independently — both will auto-renew as long as port 80 is open.
 
 > **Port 80 must reach the FortiGate WAN interface.** If you have an existing firewall policy blocking
-> inbound HTTP, temporarily open port 80 WAN → local before issuing the cert, then close it after.
+> inbound HTTP, temporarily open port 80 WAN → local before issuing the certs, then close it after.
 > The HTTP→HTTPS redirect Virtual Server in Step 4 keeps port 80 open permanently afterward so
 > ACME renewals succeed without manual intervention.
 
@@ -158,8 +160,9 @@ Replace `<NUC_LAN_IP>` with the NUC's LAN IP (e.g., `192.168.1.x`).
 
 ### Step 3 — Create the HTTPS Virtual Server on WAN:443
 
-This is the main listener. FortiGate terminates TLS here (using the cert from Step 1) and forwards
-plain HTTP to the backend.
+This is the main listener. FortiGate terminates TLS here and forwards plain HTTP to the backend.
+Because the two hostnames have separate certs, the Virtual Server uses the `diary.*` cert as the
+listener-level default, and the Content Routing rule for `api.*` overrides with its own cert.
 
 **Via GUI:** Policy & Objects → Virtual IPs → New
 
@@ -171,19 +174,26 @@ plain HTTP to the backend.
 | External IP | `<WAN_IP>` |
 | External service port | 443 |
 | Virtual server type | HTTPS |
-| Server SSL certificate | `perfectday-le` (from Step 1) |
+| Server SSL certificate | `perfectday-diary-le` (default — used for `diary.*` requests) |
 | HTTP content routing | Enable |
 | Default server pool | `nuc-web` |
 
 **Add two HTTP Content Routing rules** (evaluated top-to-bottom):
 
-| # | Match type | Value | Action / Pool |
-|---|---|---|---|
-| 1 | Host | `api.diary.perfectday.andrewlass.com` | Forward to `nuc-api` |
-| 2 | Host | `diary.perfectday.andrewlass.com` | Forward to `nuc-web` |
+| # | Match type | Value | SSL cert override | Action / Pool |
+|---|---|---|---|---|
+| 1 | Host | `api.diary.perfectday.andrewlass.com` | `perfectday-api-le` | Forward to `nuc-api` |
+| 2 | Host | `diary.perfectday.andrewlass.com` | `perfectday-diary-le` | Forward to `nuc-web` |
 
 > Rule order matters: place the API rule first because it is more specific.
 > The default pool (`nuc-web`) handles any request whose `Host` header matches neither rule.
+>
+> If the GUI does not expose a per-rule SSL cert field in your 7.2 build, set the listener cert to
+> `perfectday-diary-le` and leave the API rule without a cert override — the client will receive the
+> `diary.*` cert for `api.*` requests. This is a cert mismatch warning in the browser but does not
+> break TLS or OAuth. The correct fix is to use a single cert covering both SANs (if you get a
+> newer FortiOS build that supports multi-domain ACME) or to split into two separate Virtual Servers
+> on different ports and use a port-based redirect instead.
 
 ---
 
