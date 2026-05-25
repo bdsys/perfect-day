@@ -66,7 +66,8 @@ async def try_enforce_entry_tier_limit(
     """No-raise variant of enforce_entry_tier_limit for use in Celery workers.
 
     Returns (True, None) if within limit, (False, reason_str) if over limit.
-    Never raises HTTPException.
+    Catches HTTPException only — DB/infrastructure errors are intentionally
+    allowed to propagate so the worker surfaces real failures.
     """
     try:
         await enforce_entry_tier_limit(

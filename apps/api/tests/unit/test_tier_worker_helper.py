@@ -70,3 +70,22 @@ async def test_unlimited_tier_returns_true():
 
     assert ok is True
     assert reason is None
+
+
+@pytest.mark.asyncio
+async def test_db_error_propagates():
+    """Non-HTTPException errors (e.g. DB errors) are NOT swallowed — they propagate."""
+    from sqlalchemy.exc import OperationalError
+    mock_db = AsyncMock()
+
+    with patch("app.services.tier.enforce_entry_tier_limit", new_callable=AsyncMock) as mock_enforce:
+        mock_enforce.side_effect = OperationalError("connection refused", params=None, orig=None)
+
+        with pytest.raises(OperationalError):
+            await try_enforce_entry_tier_limit(
+                user_id=uuid.uuid4(),
+                diary_id=uuid.uuid4(),
+                source="auto",
+                db=mock_db,
+                subscription_tier="free",
+            )
