@@ -115,7 +115,7 @@ See [`design/dns-and-email.md`](../design/dns-and-email.md) § Dynamic DNS for
 the full background and alternatives considered. This section is the
 step-by-step setup.
 
-The DDNS updater runs as a Docker sidecar (`timothymiller/cloudflare-ddns`) in
+The DDNS updater runs as a Docker sidecar (`timothyjmiller/cloudflare-ddns`) in
 the same `docker-compose.yml` as the application stack. No manual container
 management is needed — `docker compose up -d` brings it up with everything else.
 

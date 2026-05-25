@@ -113,7 +113,7 @@ services:
       - api
 
   cloudflare-ddns:
-    image: timothymiller/cloudflare-ddns:latest
+    image: timothyjmiller/cloudflare-ddns:latest
     restart: unless-stopped
     environment:
       TZ: America/Chicago
