@@ -7,6 +7,9 @@ services:
       POSTGRES_DB: perfectday_test
       POSTGRES_USER: perfectday
       POSTGRES_PASSWORD: perfectday
+    # Publish to host so `make test-e2e` can run alembic from the host venv.
+    ports:
+      - "127.0.0.1:5432:5432"
 
   redis:
     volumes: []
@@ -47,3 +50,10 @@ services:
       CELERY_RESULT_BACKEND: redis://redis:6379/1
       S3_ENDPOINT_URL: http://minio:9000
       PYTHONHASHSEED: "42"
+
+  web:
+    # Publish to host so Playwright can drive the UI at http://localhost:3000.
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
