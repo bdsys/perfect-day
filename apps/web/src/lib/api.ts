@@ -117,7 +117,20 @@ export interface Entry {
   published_at: string | null
   deleted_at: string | null
   created_at: string
+  updated_at: string
   events: EventItem[]
+}
+
+export interface ScanRun {
+  id: string
+  diary_id: string
+  triggered_by: string
+  started_at: string
+  completed_at: string | null
+  status: 'running' | 'success' | 'partial' | 'failed'
+  events_calendar: number
+  entries_created: number
+  errors?: Array<{ source: string; message: string }> | null
 }
 
 // ---------------------------------------------------------------------------
@@ -156,8 +169,20 @@ export const api = {
     async create(data: { name: string; timezone: string; subject_name?: string }): Promise<Diary> {
       return apiFetch('/v1/diaries', { method: 'POST', body: JSON.stringify(data) })
     },
-    async triggerScan(id: string) {
-      return apiFetch(`/v1/diaries/${id}/scan/run`, { method: 'POST' })
+    async triggerScan(id: string): Promise<{ queued: boolean; alreadyRunning: boolean }> {
+      try {
+        await apiFetch(`/v1/diaries/${id}/scan/run`, { method: 'POST' })
+        return { queued: true, alreadyRunning: false }
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : ''
+        if (msg.includes('scan_in_progress') || msg.includes('409')) {
+          return { queued: false, alreadyRunning: true }
+        }
+        throw e
+      }
+    },
+    async listScanRuns(id: string): Promise<ScanRun[]> {
+      return apiFetch(`/v1/diaries/${id}/scan/runs`)
     },
     async delete(id: string): Promise<Diary> {
       return apiFetch(`/v1/diaries/${id}`, { method: 'DELETE' })
