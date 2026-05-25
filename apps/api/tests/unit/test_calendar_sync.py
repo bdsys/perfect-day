@@ -4,10 +4,13 @@ Tests cover:
   A. Full sync (no sync_token) sends timeMin and timeMax.
   B. Incremental sync (sync_token present) omits timeMin/timeMax, sends syncToken.
   C. Post-filter: events outside the window are dropped before ingest.
+  D. _scan_window returns correct bounds.
+  E. Post-filter: all-day events inside window are included.
 """
 
 from __future__ import annotations
 
+import datetime as dt_module
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -43,12 +46,12 @@ def _make_httpx_response(body: dict, status_code: int = 200) -> httpx.Response:
 async def test_initial_sync_sends_time_min_and_time_max():
     """_fetch_events with sync_token=None must include timeMin and timeMax.
 
-    timeMax must be at least 89 days in the future (the default window is 90 days;
-    we allow 1-day slack for clock drift during test execution).
+    Time is frozen so both the code under test and the assertions use the same
+    `now`, eliminating flakiness near midnight.
     """
-    now = datetime.now(tz=UTC)
-    time_min = now - timedelta(days=90)
-    time_max = now + timedelta(days=90)
+    frozen_now = datetime(2026, 6, 15, 12, 0, 0, tzinfo=UTC)
+    time_min = frozen_now - timedelta(days=90)
+    time_max = frozen_now + timedelta(days=90)
 
     captured_params: dict = {}
 
@@ -61,7 +64,13 @@ async def test_initial_sync_sends_time_min_and_time_max():
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("app.workers.calendar_sync.httpx.AsyncClient", return_value=mock_client):
+    with (
+        patch("app.workers.calendar_sync.httpx.AsyncClient", return_value=mock_client),
+        patch("app.workers.calendar_sync.datetime") as mock_dt,
+    ):
+        mock_dt.now.return_value = frozen_now
+        mock_dt.fromisoformat = dt_module.datetime.fromisoformat
+
         events, sync_token = await _fetch_events(
             calendar_id="primary",
             sync_token=None,
@@ -73,19 +82,21 @@ async def test_initial_sync_sends_time_min_and_time_max():
     assert "timeMin" in captured_params, "Full sync must send timeMin"
     assert "timeMax" in captured_params, "Full sync must send timeMax"
 
-    # Verify timeMax is ≥89 days in the future
+    # Verify timeMax is exactly 90 days in the future
     time_max_returned = datetime.fromisoformat(captured_params["timeMax"])
     if time_max_returned.tzinfo is None:
         time_max_returned = time_max_returned.replace(tzinfo=UTC)
-    days_ahead = (time_max_returned - now).days
-    assert days_ahead >= 89, f"timeMax is only {days_ahead} days in the future (expected ≥89)"
+    assert time_max_returned == time_max, (
+        f"timeMax mismatch: got {time_max_returned}, expected {time_max}"
+    )
 
-    # Verify timeMin is ≥89 days in the past
+    # Verify timeMin is exactly 90 days in the past
     time_min_returned = datetime.fromisoformat(captured_params["timeMin"])
     if time_min_returned.tzinfo is None:
         time_min_returned = time_min_returned.replace(tzinfo=UTC)
-    days_past = (now - time_min_returned).days
-    assert days_past >= 89, f"timeMin is only {days_past} days in the past (expected ≥89)"
+    assert time_min_returned == time_min, (
+        f"timeMin mismatch: got {time_min_returned}, expected {time_min}"
+    )
 
     assert "syncToken" not in captured_params, "Full sync must NOT send syncToken"
     assert events == []
@@ -99,10 +110,14 @@ async def test_initial_sync_sends_time_min_and_time_max():
 
 @pytest.mark.asyncio
 async def test_sync_token_path_does_not_send_time_min_max():
-    """_fetch_events with a sync_token must send syncToken and omit timeMin/timeMax."""
-    now = datetime.now(tz=UTC)
-    time_min = now - timedelta(days=90)
-    time_max = now + timedelta(days=90)
+    """_fetch_events with a sync_token must send syncToken and omit timeMin/timeMax.
+
+    Time is frozen so both the code under test and the assertions use the same
+    `now`, eliminating flakiness near midnight.
+    """
+    frozen_now = datetime(2026, 6, 15, 12, 0, 0, tzinfo=UTC)
+    time_min = frozen_now - timedelta(days=90)
+    time_max = frozen_now + timedelta(days=90)
 
     captured_params: dict = {}
 
@@ -115,7 +130,13 @@ async def test_sync_token_path_does_not_send_time_min_max():
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("app.workers.calendar_sync.httpx.AsyncClient", return_value=mock_client):
+    with (
+        patch("app.workers.calendar_sync.httpx.AsyncClient", return_value=mock_client),
+        patch("app.workers.calendar_sync.datetime") as mock_dt,
+    ):
+        mock_dt.now.return_value = frozen_now
+        mock_dt.fromisoformat = dt_module.datetime.fromisoformat
+
         events, sync_token = await _fetch_events(
             calendar_id="primary",
             sync_token="sometoken",
@@ -142,6 +163,9 @@ async def test_post_filter_drops_out_of_window_events():
     Strategy: mock _fetch_events to return a mix of in-window and out-of-window
     events, mock db_session and ingest_calendar_event.delay, then call
     sync_calendar() and assert only in-window events are enqueued.
+
+    The db mock uses an explicit side_effect list instead of a fragile
+    call-count counter so query-order changes don't silently break the test.
     """
     import uuid
     from contextlib import asynccontextmanager
@@ -165,25 +189,19 @@ async def test_post_filter_drops_out_of_window_events():
     }
 
     # Build a fake db_session that returns no ScanJob (full sync) and no filters.
+    # Use an explicit side_effect list — first call returns ScanJob result,
+    # second call returns CalendarFilter result.  No fragile call-count counter.
     fake_session = MagicMock()
+
     scan_job_result = MagicMock()
     scan_job_result.scalar_one_or_none = MagicMock(return_value=None)  # no existing ScanJob
+
     filter_result = MagicMock()
     filter_result.scalars = MagicMock(
         return_value=MagicMock(all=MagicMock(return_value=[]))
     )  # no filters → "primary"
 
-    call_count = 0
-
-    async def _execute_side_effect(query):
-        nonlocal call_count
-        call_count += 1
-        # First call: ScanJob lookup; second call: DiaryCalendarFilter lookup
-        if call_count == 1:
-            return scan_job_result
-        return filter_result
-
-    fake_session.execute = AsyncMock(side_effect=_execute_side_effect)
+    fake_session.execute = AsyncMock(side_effect=[scan_job_result, filter_result])
     fake_session.commit = AsyncMock()
 
     @asynccontextmanager
@@ -258,3 +276,80 @@ def test_scan_window_custom_bounds():
 
     assert window_max >= before + timedelta(days=7) - tolerance
     assert window_max <= after + timedelta(days=7) + tolerance
+
+
+# ---------------------------------------------------------------------------
+# Test E: post-filter includes all-day events inside the scan window
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_post_filter_handles_all_day_events():
+    """All-day events (start.date only, no dateTime) inside the window are included.
+
+    All-day events use "date": "YYYY-MM-DD" in the start object. The post-filter
+    must parse these correctly and not drop them when they fall within the window.
+    """
+    import uuid
+    from contextlib import asynccontextmanager
+
+    diary_id = uuid.uuid4()
+    today_str = datetime.now(tz=UTC).strftime("%Y-%m-%d")
+
+    # All-day event today (no dateTime, only date)
+    all_day_event = {
+        "id": "evt-allday",
+        "summary": "All-day event",
+        "status": "confirmed",
+        "start": {"date": today_str},
+    }
+
+    fake_session = MagicMock()
+
+    scan_job_result = MagicMock()
+    scan_job_result.scalar_one_or_none = MagicMock(return_value=None)
+
+    filter_result = MagicMock()
+    filter_result.scalars = MagicMock(
+        return_value=MagicMock(all=MagicMock(return_value=[]))
+    )
+
+    fake_session.execute = AsyncMock(side_effect=[scan_job_result, filter_result])
+    fake_session.commit = AsyncMock()
+
+    @asynccontextmanager
+    async def _fake_db_session():
+        yield fake_session
+
+    async def _fake_fetch_events(*args, **kwargs):
+        return [all_day_event], None
+
+    ingest_mock = MagicMock()
+
+    with (
+        patch("app.workers.calendar_sync.db_session", _fake_db_session),
+        patch("app.workers.calendar_sync._fetch_events", new=_fake_fetch_events),
+        patch("app.workers.tasks.ingest_calendar_event") as ingest_task_mock,
+    ):
+        ingest_task_mock.delay = ingest_mock
+
+        from app.workers.calendar_sync import sync_calendar
+
+        total = await sync_calendar(
+            diary_id=diary_id,
+            access_token="x",
+            diary_timezone="UTC",
+            past_days=90,
+            future_days=90,
+        )
+
+    assert total == 1, (
+        f"Expected all-day event to be included (total=1), got total={total}"
+    )
+    assert ingest_mock.call_count == 1, (
+        f"ingest_calendar_event.delay called {ingest_mock.call_count} times, expected 1"
+    )
+    ingested_event = ingest_mock.call_args[0][0]
+    assert ingested_event["id"] == "evt-allday", (
+        f"Wrong event ingested: {ingested_event['id']!r}"
+    )
