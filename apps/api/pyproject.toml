@@ -63,6 +63,7 @@ dev = [
     "boto3-stubs[s3]",
     "celery-types",
     "faker>=33",
+    "click>=8.1",
 ]
 
 [tool.hatch.build.targets.wheel]
