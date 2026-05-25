@@ -48,7 +48,7 @@ After Phase 1 works end-to-end. In rough dependency order:
 | 18 | **Tier enforcement** | Entitlement checks on entry + diary creation. HTTP 403 with structured error. Upgrade prompt in UI. |
 | 19 | **Diary sharing + invitations** | `diary_permissions`, `invitations`, accept flow, role-based visibility. |
 | 20 | **Notifications** | Expo push + SendGrid, `notifications` table, dispatcher, quiet hours (20:00–07:00), coalescing, per-diary mute. |
-| 21 | **Admin panel** | Web UI for admin endpoints: impersonate, force delete, LLM usage, scan fleet view. |
+| 21 | **Admin panel** | Web UI for admin endpoints: user CRUD (create/delete/list, tier changes), diary CRUD, entry CRUD, impersonate, force delete, LLM usage stats, scan fleet view. CLI data tools (`scripts/admin.sh`) are available now for local dev use. |
 | 22 | **Gemini fallback for LLM** | Add after Anthropic integration is stable and tested. |
 
 ---
