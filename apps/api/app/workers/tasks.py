@@ -1,4 +1,4 @@
-"""Main Celery tasks: scan_diary, ingest_calendar_event, group_events_into_entries, generate_entry_draft."""
+"""Main Celery tasks: scan_diary, ingest_calendar_event, evaluate_rules_for_event, generate_entry_draft."""
 
 from __future__ import annotations
 
@@ -141,14 +141,6 @@ async def _scan_diary(diary_id_str: str) -> None:
                     }
                 )
 
-        # Group events into entries and queue LLM generation
-        new_entry_ids: list[uuid.UUID] = []
-        async with db_session() as db:
-            new_entry_ids = await group_events_into_entries_async(diary_id, scan_run_id, db)
-
-        for entry_id in new_entry_ids:
-            generate_entry_draft.delay(str(entry_id))
-
         # Close scan run
         async with db_session() as db:
             run_result = await db.execute(select(ScanRun).where(ScanRun.id == scan_run_id))
@@ -159,7 +151,7 @@ async def _scan_diary(diary_id_str: str) -> None:
             completed = datetime.now(tz=UTC)
             scan_run_update.completed_at = completed
             scan_run_update.events_calendar = calendar_events_count
-            scan_run_update.entries_created = len(new_entry_ids)
+            scan_run_update.entries_created = 0  # rules engine sets this in Part 3
             scan_run_update.errors = errors if errors else None
             scan_run_update.status = "partial" if errors else "success"
 
@@ -230,6 +222,11 @@ def ingest_calendar_event(self, event_data: dict, diary_id: str, diary_timezone:
 async def _ingest_calendar_event(
     event_data: dict, diary_id: uuid.UUID, diary_timezone: str
 ) -> str | None:
+    """Ingest one Google Calendar event; store with entry_id=NULL.
+
+    Returns the event's UUID string, or None if the date could not be parsed.
+    Rule evaluation is queued separately.
+    """
     from sqlalchemy import select
 
     from app.models import Event
@@ -255,9 +252,9 @@ async def _ingest_calendar_event(
         "start": event_data.get("start", {}),
         "end": event_data.get("end", {}),
         "status": event_data.get("status", ""),
+        "recurringEventId": event_data.get("recurringEventId"),
+        "attendees": _build_attendees(event_data.get("attendees")),
     }
-
-    payload["attendees"] = _build_attendees(event_data.get("attendees"))
 
     occurred_at = None
     start = event_data.get("start", {})
@@ -268,28 +265,29 @@ async def _ingest_calendar_event(
             pass
 
     async with db_session() as db:
-        # Check if event already exists
-        existing_event = await db.execute(
+        existing_result = await db.execute(
             select(Event).where(Event.source == source, Event.external_id == external_id)
         )
-        existing = existing_event.scalar_one_or_none()
+        existing = existing_result.scalar_one_or_none()
         if existing is not None:
-            # Update payload, return existing entry_id
             existing.payload = payload
-            return str(existing.entry_id)
-
-        # Find or create entry for this date
-        entry_id = await _upsert_entry(db, diary_id, entry_date, entry_end_date, external_id)
+            return str(existing.id)
 
         event = Event(
-            entry_id=entry_id,
+            diary_id=diary_id,
+            entry_id=None,
             source=source,
             external_id=external_id,
             occurred_at=occurred_at,
             payload=payload,
         )
         db.add(event)
-        return str(entry_id)
+        await db.flush()
+        event_id = event.id
+
+    # Queue rule evaluation
+    evaluate_rules_for_event.delay(str(event_id), str(diary_id))
+    return str(event_id)
 
 
 def _build_attendees(raw: list | None) -> list[dict]:
@@ -327,107 +325,20 @@ def _strip_injection(text: str) -> str:
     return text.strip()
 
 
-async def _upsert_entry(
-    db,
-    diary_id: uuid.UUID,
-    entry_date: date,
-    entry_end_date: date | None,
-    external_id: str | None,
-) -> uuid.UUID:
-    """Find existing draft entry for this date or create a new one."""
-    from sqlalchemy import select
-
-    from app.models import Entry
-
-    # Check for multi-day entry match by external_id first
-    if external_id and entry_end_date:
-        await db.execute(
-            select(Entry)
-            .where(
-                Entry.diary_id == diary_id,
-                Entry.status == "draft",
-                Entry.deleted_at.is_(None),
-            )
-            .order_by(Entry.created_at.asc())
-        )
-        # Look for entry with same external event id already attached
-        # (handled by event dedup above)
-
-    # Single-day: find existing draft for this exact date
-    result = await db.execute(
-        select(Entry)
-        .where(
-            Entry.diary_id == diary_id,
-            Entry.entry_date == entry_date,
-            Entry.status == "draft",
-            Entry.deleted_at.is_(None),
-        )
-        .order_by(Entry.created_at.asc())
-        .limit(1)
-    )
-    existing = result.scalar_one_or_none()
-    if existing is not None:
-        return existing.id
-
-    # Check if published entry exists for this date — if so, create sibling draft
-    # (do not touch published entries)
-
-    entry = Entry(
-        diary_id=diary_id,
-        entry_date=entry_date,
-        entry_end_date=entry_end_date,
-        status="draft",
-        created_by="auto",
-    )
-    db.add(entry)
-    await db.flush()
-    return entry.id
 
 
 # ---------------------------------------------------------------------------
-# group_events_into_entries
+# evaluate_rules_for_event (stub — real implementation added in Part 3)
 # ---------------------------------------------------------------------------
 
 
-@celery_app.task(name="app.workers.tasks.group_events_into_entries")
-def group_events_into_entries(diary_id: str, scan_run_id: str) -> list[str]:
-    return run_sync(_group_events_into_entries_task(uuid.UUID(diary_id), uuid.UUID(scan_run_id)))
+@celery_app.task(name="app.workers.tasks.evaluate_rules_for_event", bind=True, max_retries=3)
+def evaluate_rules_for_event(self, event_id: str, diary_id: str) -> None:
+    """Evaluate auto-creation rules against a newly ingested event.
 
-
-async def _group_events_into_entries_task(diary_id: uuid.UUID, scan_run_id: uuid.UUID) -> list[str]:
-    from app.workers.utils import db_session
-
-    async with db_session() as db:
-        ids = await group_events_into_entries_async(diary_id, scan_run_id, db)
-    return [str(i) for i in ids]
-
-
-async def group_events_into_entries_async(
-    diary_id: uuid.UUID, scan_run_id: uuid.UUID, db
-) -> list[uuid.UUID]:
-    """Returns list of entry IDs that need LLM generation."""
-    from sqlalchemy import select
-
-    from app.models import Entry, Event
-
-    # Find all draft entries for this diary that have events but no LLM body yet
-    result = await db.execute(
-        select(Entry).where(
-            Entry.diary_id == diary_id,
-            Entry.status == "draft",
-            Entry.deleted_at.is_(None),
-            Entry.body_markdown.is_(None),
-        )
-    )
-    entries_needing_llm = result.scalars().all()
-
-    entries_with_events = []
-    for entry in entries_needing_llm:
-        event_result = await db.execute(select(Event).where(Event.entry_id == entry.id).limit(1))
-        if event_result.scalar_one_or_none() is not None:
-            entries_with_events.append(entry.id)
-
-    return entries_with_events
+    Stub — real implementation added in Part 3.
+    """
+    pass
 
 
 # ---------------------------------------------------------------------------
