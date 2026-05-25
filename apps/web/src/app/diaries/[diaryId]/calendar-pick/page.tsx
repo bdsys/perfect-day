@@ -128,7 +128,7 @@ export default function CalendarPickPage() {
           <Link href={`/diaries/${diaryId}`} className="nav-brand">← Diary</Link>
         </div>
       </nav>
-      <div className="container" style={{ paddingTop: '1.5rem', maxWidth: 960 }}>
+      <div className="container" style={{ paddingTop: '1.5rem', maxWidth: 960, paddingRight: selectedDay ? '380px' : undefined }}>
         <h1 className="page-title">New entry from Google Calendar</h1>
         <p style={{ color: 'var(--text-muted)', marginBottom: '1.5rem', fontSize: '0.9rem' }}>
           Click a day to create a diary entry from its events. The LLM will generate a draft using the event details.
