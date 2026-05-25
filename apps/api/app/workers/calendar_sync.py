@@ -56,13 +56,13 @@ async def sync_calendar(
     headers = {"Authorization": f"Bearer {access_token}"}
 
     for calendar_id in calendar_ids:
+        time_min, time_max = _scan_window(past_days, future_days)
         raw_events, new_sync_token = await _fetch_events(
-            calendar_id, sync_token, headers, past_days=past_days, future_days=future_days
+            calendar_id, sync_token, headers, time_min=time_min, time_max=time_max
         )
 
         # Post-filter: drop events outside the scan window (required for delta/sync-token
         # paths where timeMin/timeMax cannot be used).
-        time_min, time_max = _scan_window(past_days, future_days)
         filtered_events = []
         for ev in raw_events:
             start = ev.get("start", {})
@@ -71,20 +71,19 @@ async def sync_calendar(
                 continue
             if "T" in dt_str:
                 # dateTime: ISO 8601 with optional timezone offset
-                occurred_at = datetime.fromisoformat(dt_str)
+                occurred_at = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
                 if occurred_at.tzinfo is None:
                     occurred_at = occurred_at.replace(tzinfo=UTC)
             else:
                 # date-only (all-day event): treat as midnight UTC on that date
-                occurred_at = datetime.fromisoformat(dt_str).replace(tzinfo=UTC)
+                occurred_at = datetime.fromisoformat(dt_str.replace("Z", "+00:00")).replace(tzinfo=UTC)
             if time_min <= occurred_at <= time_max:
                 filtered_events.append(ev)
-
-        total_events += len(filtered_events)
 
         for event in filtered_events:
             if event.get("status") == "cancelled":
                 continue
+            total_events += 1
             ingest_calendar_event.delay(event, str(diary_id), diary_timezone)
 
         if new_sync_token:
@@ -102,8 +101,8 @@ async def _fetch_events(
     sync_token: str | None,
     headers: dict,
     max_retries: int = 3,
-    past_days: int = DEFAULT_SCAN_PAST_DAYS,
-    future_days: int = DEFAULT_SCAN_FUTURE_DAYS,
+    time_min: datetime | None = None,
+    time_max: datetime | None = None,
 ) -> tuple[list[dict], str | None]:
     """Fetch events with incremental sync. Returns (events, next_sync_token)."""
     url = CALENDAR_LIST_URL.format(calendarId=calendar_id)
@@ -113,7 +112,8 @@ async def _fetch_events(
         params["syncToken"] = sync_token
     else:
         # Full sync — bound to scan window
-        time_min, time_max = _scan_window(past_days, future_days)
+        if time_min is None or time_max is None:
+            time_min, time_max = _scan_window()
         params["timeMin"] = time_min.isoformat()
         params["timeMax"] = time_max.isoformat()
         params["orderBy"] = "startTime"
