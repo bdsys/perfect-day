@@ -66,6 +66,13 @@ services:
       - "8000:8000"
     env_file:
       - ./apps/api/.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://perfectday:perfectday@postgres:5432/perfectday
+      DATABASE_URL_SYNC: postgresql://perfectday:perfectday@postgres:5432/perfectday
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      S3_ENDPOINT_URL: http://minio:9000
     depends_on:
       postgres:
         condition: service_healthy
@@ -81,6 +88,12 @@ services:
       dockerfile: Dockerfile
     env_file:
       - ./apps/api/.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://perfectday:perfectday@postgres:5432/perfectday
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      S3_ENDPOINT_URL: http://minio:9000
     depends_on:
       postgres:
         condition: service_healthy
@@ -94,6 +107,12 @@ services:
       dockerfile: Dockerfile
     env_file:
       - ./apps/api/.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://perfectday:perfectday@postgres:5432/perfectday
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      S3_ENDPOINT_URL: http://minio:9000
     depends_on:
       postgres:
         condition: service_healthy
