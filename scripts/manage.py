@@ -360,7 +360,7 @@ def entries_create(diary_id: str, entry_date: str, title: str | None, body: str 
             body_markdown=body,
             status="draft",
             created_by="manual",
-            body_source="manual",
+            body_source="fallback",
         )
         db.add(entry)
         db.commit()
