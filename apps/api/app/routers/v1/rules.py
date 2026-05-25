@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime, timedelta
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -14,6 +15,8 @@ from app.core.auth import get_current_user
 from app.core.database import get_db
 from app.models import AutoCreationRule, Event, User
 from app.routers.v1.diaries import _get_diary_or_404
+
+log = structlog.get_logger()
 
 router = APIRouter(tags=["rules"])
 
@@ -29,18 +32,6 @@ _VALID_GROUP_OPS = {"AND", "OR"}
 # ---------------------------------------------------------------------------
 # Pydantic models
 # ---------------------------------------------------------------------------
-
-
-class RuleConditionLeaf(BaseModel):
-    field: str  # "title" | "description" | "location" | "attendee_email"
-    op: str  # "contains" | "equals" | "not_contains"
-    value: str
-    case_sensitive: bool = False
-
-
-class RuleConditionGroup(BaseModel):
-    op: str  # "AND" | "OR"
-    children: list[dict]  # recursive — use dict to allow nesting
 
 
 class RuleOptions(BaseModel):
@@ -103,7 +94,7 @@ def _validate_condition(
     """Recursively validate a condition tree. Raises ValueError on any problem."""
     if _leaf_count is None:
         _leaf_count = [0]
-    if _depth > 5:
+    if _depth >= 5:
         raise ValueError("condition tree exceeds maximum depth of 5")
     op = condition.get("op")
     if op in _VALID_GROUP_OPS:
@@ -346,9 +337,7 @@ async def apply_rule(
 
         apply_rule_backfill.delay(str(rule.id), body.days)
     except Exception:
-        import logging
-
-        logging.getLogger(__name__).exception(
+        log.exception(
             "Failed to queue apply_rule_backfill for rule %s", rule.id
         )
 

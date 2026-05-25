@@ -266,21 +266,17 @@ class TestApplyRule:
             await client.post(f"/v1/diaries/{diary['id']}/rules", json=body, headers=auth)
         ).json()
 
-        with patch("app.routers.v1.rules.apply_rule_backfill", create=True) as mock_task:
-            mock_task.delay = MagicMock()
-            # Import the actual task into the namespace used by the module at import time.
-            with patch(
-                "app.workers.tasks.apply_rule_backfill"
-            ) as mock_celery_task:
-                mock_celery_task.delay = MagicMock()
-                r = await client.post(
-                    f"/v1/rules/{created['id']}/apply",
-                    json={"days": 30},
-                    headers=auth,
-                )
+        with patch("app.workers.tasks.apply_rule_backfill") as mock_celery_task:
+            mock_celery_task.delay = MagicMock()
+            r = await client.post(
+                f"/v1/rules/{created['id']}/apply",
+                json={"days": 30},
+                headers=auth,
+            )
 
         assert r.status_code == 200
         assert r.json()["queued"] is True
+        mock_celery_task.delay.assert_called_once()
 
     async def test_apply_broker_down_still_200(
         self, client: AsyncClient, db_session: AsyncSession
@@ -303,3 +299,39 @@ class TestApplyRule:
 
         assert r.status_code == 200
         assert r.json()["queued"] is True
+
+
+class TestRuleIsolation:
+    async def test_cannot_access_other_users_rule(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """User B cannot access a rule belonging to User A's diary."""
+        # User A creates a rule
+        _, auth_a, diary_a = await _setup(client, "rules-idor-user-a@example.com")
+        rule = (
+            await client.post(
+                f"/v1/diaries/{diary_a['id']}/rules",
+                json={
+                    "name": "A rule",
+                    "condition": {"op": "AND", "children": [
+                        {
+                            "field": "title",
+                            "op": "contains",
+                            "value": "test",
+                            "case_sensitive": False,
+                        }
+                    ]},
+                },
+                headers=auth_a,
+            )
+        ).json()
+
+        # User B tries to access it
+        r_b = await client.post(
+            "/v1/auth/register",
+            json={"email": "rules-idor-user-b@example.com", "password": "Password1!"},
+        )
+        auth_b = {"Authorization": f"Bearer {r_b.json()['access_token']}"}
+
+        r = await client.get(f"/v1/rules/{rule['id']}", headers=auth_b)
+        assert r.status_code == 404
