@@ -6,12 +6,11 @@ import uuid
 from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
-import pytest
 from httpx import AsyncClient
-from sqlalchemy import select, update
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Entry, Event
+from app.models import Event
 from tests.fixtures.factories import make_event
 
 
