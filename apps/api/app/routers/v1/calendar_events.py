@@ -101,7 +101,9 @@ async def create_entry_from_event(
     if role == "viewer":
         raise HTTPException(status_code=403, detail="forbidden")
 
-    event_result = await db.execute(select(Event).where(Event.id == body.event_id))
+    event_result = await db.execute(
+        select(Event).where(Event.id == body.event_id).with_for_update()
+    )
     event = event_result.scalar_one_or_none()
 
     if event is None or event.diary_id != diary_id:
@@ -137,7 +139,6 @@ async def create_entry_from_event(
     await db.flush()
 
     event.entry_id = entry.id
-    await db.flush()
     await db.refresh(entry, ["events"])
 
     try:

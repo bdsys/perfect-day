@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from httpx import AsyncClient
@@ -133,7 +133,7 @@ class TestCreateFromEvent:
         )
 
         with patch("app.routers.v1.calendar_events.generate_entry_draft") as mock_task:
-            mock_task.delay = lambda entry_id: None
+            mock_task.delay = MagicMock()
             r = await client.post(
                 f"/v1/diaries/{diary['id']}/entries/from-event",
                 json={"event_id": str(ev.id)},
@@ -147,6 +147,8 @@ class TestCreateFromEvent:
         assert data["creation_source"] == "calendar_pick"
         assert len(data["events"]) == 1
         assert data["events"][0]["summary"] == "Soccer practice"
+
+        mock_task.delay.assert_called_once_with(data["id"])
 
         await db_session.refresh(ev)
         assert ev.entry_id == uuid.UUID(data["id"])
@@ -203,3 +205,25 @@ class TestCreateFromEvent:
             headers=auth,
         )
         assert r.status_code == 404
+
+    async def test_task_queue_failure_still_returns_201(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
+        token, auth, diary = await _setup(client, "picker-queue-fail@example.com")
+        diary_id = uuid.UUID(diary["id"])
+
+        ev = await make_event(db_session, diary_id=diary_id)
+
+        with patch("app.routers.v1.calendar_events.generate_entry_draft") as mock_task:
+            mock_task.delay.side_effect = Exception("broker unavailable")
+            r = await client.post(
+                f"/v1/diaries/{diary['id']}/entries/from-event",
+                json={"event_id": str(ev.id)},
+                headers=auth,
+            )
+
+        assert r.status_code == 201
+        data = r.json()
+        assert data["creation_source"] == "calendar_pick"
+        await db_session.refresh(ev)
+        assert ev.entry_id == uuid.UUID(data["id"])
