@@ -137,7 +137,7 @@ export default function RulesListPage() {
                     <button
                       className="btn btn-secondary"
                       style={{ fontSize: '0.8rem', padding: '0.3rem 0.6rem' }}
-                      onClick={() => router.push(`/diaries/${diaryId}/rules/${rule.id}`)}
+                      onClick={() => router.push(`/rules/${rule.id}`)}
                     >
                       Edit
                     </button>
