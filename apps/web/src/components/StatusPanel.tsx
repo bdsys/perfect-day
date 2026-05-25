@@ -55,7 +55,7 @@ export function StatusPanel({ state, headline, detail, errors, startedAt, onDism
           </ul>
         )}
       </div>
-      {state !== 'running' && (
+      {state !== 'running' && onDismiss && (
         <button className="status-panel-dismiss" onClick={onDismiss} aria-label="Dismiss">×</button>
       )}
     </div>

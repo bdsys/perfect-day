@@ -11,8 +11,13 @@ export function usePolling(
 
   useEffect(() => {
     if (!enabled) return
-    fnRef.current()
-    const id = setInterval(() => fnRef.current(), intervalMs)
-    return () => clearInterval(id)
+    let mounted = true
+    const wrappedFn = () => { if (mounted) fnRef.current() }
+    wrappedFn()
+    const id = setInterval(wrappedFn, intervalMs)
+    return () => {
+      mounted = false
+      clearInterval(id)
+    }
   }, [enabled, intervalMs])
 }
