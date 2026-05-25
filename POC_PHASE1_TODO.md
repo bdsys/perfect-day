@@ -214,9 +214,8 @@ docker compose logs cloudflare-ddns --tail=20
 Follow the procedure in [`deploy/nuc.md` → FortiGate Virtual Server setup](deploy/nuc.md#fortigate-virtual-server-setup). It covers:
 
 1. Generating a CSR on FortiGate and obtaining a Cloudflare Origin Certificate (multi-SAN, 15-year validity)
-2. Creating two Real Server pools pointing at the NUC (`<NUC_LAN_IP>:3000` and `<NUC_LAN_IP>:8000`)
-3. Creating one HTTPS Virtual Server on WAN:443 with HTTP Content Routing (Host-header dispatch to the two pools)
-4. One firewall policy permitting inbound HTTPS from Cloudflare IP ranges
+2. Creating the HTTPS Virtual Server on WAN:443 with inline real servers using `set http-host` for Host-based routing (FortiOS 7.2 syntax — no separate `server-load-balance` object)
+3. One firewall policy permitting inbound HTTPS from Cloudflare IP ranges
 
 When complete, verify from off-network:
 

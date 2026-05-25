@@ -141,81 +141,74 @@ forwarding to your origin.
 
 ---
 
-### Step 2 — Create Real Server pools
+### Step 2 — Create the HTTPS Virtual Server on WAN:443
 
-Real Servers define the backend targets. FortiGate 7.2 names this object type differently in the
-GUI depending on build — look for **Server Load Balance → Real Servers** or configure via CLI.
+In FortiOS 7.2, real server pools are defined **inline** inside the VIP object — there is no
+separate `firewall server-load-balance` object. Everything (listener, cert, content routing, and
+real servers) lives in one `config firewall vip` block.
 
-**Via CLI (most reliable across 7.2 builds):**
+**Via CLI:**
 
 ```
-config firewall ldb-monitor
-    edit "nuc-http-check"
-        set type http
-        set port 3000
-        set http-get "/"
-    next
-end
-
-config firewall server-load-balance
-    edit "nuc-web"
-        set type ip
+config firewall vip
+    edit "perfectday-https"
+        set type server-load-balance
+        set extip <WAN_IP>
+        set extintf "wan1"
+        set extport 443
+        set server-type https
+        set ssl-certificate "perfectday-cf-origin"
+        set http-cookie-flag none
         config realservers
             edit 1
                 set ip <NUC_LAN_IP>
                 set port 3000
-                set monitor nuc-http-check
+                set http-host "diary.perfectday.andrewlass.com"
             next
-        end
-    next
-    edit "nuc-api"
-        set type ip
-        config realservers
-            edit 1
+            edit 2
                 set ip <NUC_LAN_IP>
                 set port 8000
+                set http-host "api.diary.perfectday.andrewlass.com"
             next
         end
     next
 end
 ```
 
-Replace `<NUC_LAN_IP>` with the NUC's LAN IP (e.g., `192.168.1.x`).
+Replace `<WAN_IP>` with your FortiGate WAN IP and `<NUC_LAN_IP>` with the NUC's LAN IP.
 
----
+> **`set http-host`** is FortiOS 7.2's mechanism for Host-header-based routing. Requests where
+> the `Host` header matches `diary.*` are sent to real server 1 (port 3000); requests matching
+> `api.diary.*` are sent to real server 2 (port 8000). This replaces the GUI "HTTP Content
+> Routing" table which may not appear in all 7.2 builds.
 
-### Step 3 — Create the HTTPS Virtual Server on WAN:443
+> **`set extintf`**: substitute your actual WAN interface name if it differs from `wan1`
+> (check with `get system interface` — look for the interface with your WAN IP).
 
-This is the main listener. FortiGate terminates the Cloudflare↔origin TLS hop here using the
-Origin Certificate from Step 1, then forwards plain HTTP to the NUC backend.
-
-**Via GUI:** Policy & Objects → Virtual IPs → New
+**Via GUI (if preferred):** Policy & Objects → Virtual IPs → New
 
 | Field | Value |
 |---|---|
 | Name | `perfectday-https` |
-| Type | Virtual Server |
-| External interface | WAN |
+| Type | Server Load Balance |
+| External interface | WAN (`wan1`) |
 | External IP | `<WAN_IP>` |
 | External service port | 443 |
 | Virtual server type | HTTPS |
 | Server SSL certificate | `perfectday-cf-origin` |
-| HTTP content routing | Enable |
-| Default server pool | `nuc-web` |
+| HTTP content routing | Enable (if available in your build) |
+| Default real server | `<NUC_LAN_IP>:3000` |
 
-**Add two HTTP Content Routing rules** (evaluated top-to-bottom):
+Add two real servers inline:
 
-| # | Match type | Value | Action / Pool |
+| Real server | IP | Port | HTTP Host override |
 |---|---|---|---|
-| 1 | Host | `api.diary.perfectday.andrewlass.com` | Forward to `nuc-api` |
-| 2 | Host | `diary.perfectday.andrewlass.com` | Forward to `nuc-web` |
-
-> Rule order matters: place the API rule first because it is more specific.
-> The default pool (`nuc-web`) handles any request whose `Host` header matches neither rule.
+| 1 | `<NUC_LAN_IP>` | 3000 | `diary.perfectday.andrewlass.com` |
+| 2 | `<NUC_LAN_IP>` | 8000 | `api.diary.perfectday.andrewlass.com` |
 
 ---
 
-### Step 4 — Create firewall policies
+### Step 3 — Create firewall policies
 
 Two policies are needed: one for HTTPS inbound from Cloudflare, and one to lock down inbound
 traffic to Cloudflare IP ranges only.
@@ -240,7 +233,7 @@ Enable **NAT** on the policy (FortiGate rewrites the source IP when forwarding t
 
 ---
 
-### Step 5 — Verify
+### Step 4 — Verify
 
 After saving all the above, test from **off-network** (mobile hotspot, not the home LAN):
 
