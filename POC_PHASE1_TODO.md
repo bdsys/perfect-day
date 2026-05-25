@@ -177,22 +177,32 @@ cd /opt/perfect-day && ./scripts/seed-minio-bucket.sh
 
 ### B4 — Cloudflare DDNS setup
 
-Your home IP changes occasionally. The DDNS updater keeps the DNS records current.
+Your home IP changes occasionally. The `cloudflare-ddns` sidecar container (already in `docker-compose.yml`) keeps the DNS A records current.
 
-First, check if your FortiGate has built-in Cloudflare DDNS support:
-- Log in to FortiGate UI → **Network** → **DNS** → **Dynamic DNS**
-- If Cloudflare is listed as a provider, configure it there using the token from A2.
+**What you need from Cloudflare (do this first):**
+1. An API token with `Zone.DNS:Edit` scope on your zone — see `deploy/cloudflare.md` § 2.1 for exact steps.
+2. Your Zone ID — found on the Cloudflare dashboard → your zone → right sidebar.
 
-If FortiGate doesn't support Cloudflare DDNS natively, add the updater to the NUC:
-- SSH to NUC → edit `/opt/perfect-day/docker-compose.yml`
-- Add the `cloudflare-ddns` service as documented in `deploy/cloudflare.md` § 2.2
-- Use the scoped API token from A2
+**Provision the config file on the NUC:**
 
-Verify DDNS is working:
+If you haven't run `10-secrets.sh` yet, you'll be prompted for the token and zone ID automatically. If you already ran it and skipped those prompts, either re-run the script or write the file manually (see `deploy/cloudflare.md` § 2.2 for the one-shot `sudo tee` command).
+
+**Start the updater:**
+
+The DDNS sidecar starts automatically on the next `sudo ./scripts/nuc/20-deploy.sh`. If the NUC is already deployed:
+
 ```bash
-# From any external connection (phone hotspot, etc.):
-curl https://api.ipify.org          # your current WAN IP
-dig +short diary.perfectday.andrewlass.com   # should match
+cd /opt/perfect-day
+docker compose up -d cloudflare-ddns
+```
+
+**Verify:**
+
+```bash
+WAN_IP=$(curl -s https://api.ipify.org)
+DNS_IP=$(dig +short diary.perfectday.andrewlass.com)
+[ "$WAN_IP" = "$DNS_IP" ] && echo "OK: DNS matches WAN" || echo "MISMATCH: WAN=$WAN_IP DNS=$DNS_IP"
+docker compose logs cloudflare-ddns --tail=20
 ```
 
 ### B5 — FortiGate: virtual hosts and TLS certificates

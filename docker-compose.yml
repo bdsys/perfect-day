@@ -112,6 +112,14 @@ services:
     depends_on:
       - api
 
+  cloudflare-ddns:
+    image: timothymiller/cloudflare-ddns:latest
+    restart: unless-stopped
+    environment:
+      TZ: America/Chicago
+    volumes:
+      - /etc/perfect-day/cloudflare-ddns.config.json:/app/config.json:ro
+
 volumes:
   postgres_data:
   minio_data:

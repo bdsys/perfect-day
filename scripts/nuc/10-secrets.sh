@@ -58,6 +58,14 @@ GOOGLE_CLIENT_SECRET=$(prompt_secret GOOGLE_CLIENT_SECRET "GOOGLE_CLIENT_SECRET"
 SENDGRID_API_KEY=$(prompt_optional SENDGRID_API_KEY "SENDGRID_API_KEY (email notifications)")
 
 echo ""
+echo "--- Cloudflare DDNS (optional) ---"
+echo "Skip these if FortiGate handles DDNS or you don't need DDNS yet."
+echo "You will need: API token (Zone.DNS:Edit scope) and Zone ID from the CF dashboard."
+echo ""
+CLOUDFLARE_API_TOKEN=$(prompt_optional CLOUDFLARE_API_TOKEN "CLOUDFLARE_API_TOKEN")
+CLOUDFLARE_ZONE_ID=$(prompt_optional CLOUDFLARE_ZONE_ID "CLOUDFLARE_ZONE_ID")
+
+echo ""
 echo "--- Generating cryptographic secrets ---"
 
 # ── Auto-generated secrets ────────────────────────────────────────────────────
@@ -148,6 +156,45 @@ chown root:docker "${ENV_FILE}"
 
 echo "  Written: ${ENV_FILE}"
 echo "  Mode:    $(stat -c '%a %U:%G' ${ENV_FILE})"
+
+# ── Write Cloudflare DDNS config ──────────────────────────────────────────────
+DDNS_CONFIG=/etc/perfect-day/cloudflare-ddns.config.json
+if [[ -n "${CLOUDFLARE_API_TOKEN:-}" && -n "${CLOUDFLARE_ZONE_ID:-}" ]]; then
+    echo ""
+    echo "--- Writing ${DDNS_CONFIG} ---"
+    cat > "${DDNS_CONFIG}" <<EOF
+{
+  "cloudflare": [
+    {
+      "authentication": { "api_token": "${CLOUDFLARE_API_TOKEN}" },
+      "zone_id": "${CLOUDFLARE_ZONE_ID}",
+      "subdomains": [
+        { "name": "diary.perfectday" },
+        { "name": "api.diary.perfectday" },
+        { "name": "media.diary.perfectday" }
+      ],
+      "proxied": false
+    }
+  ],
+  "a": true,
+  "aaaa": false,
+  "purgeUnknownRecords": false,
+  "ttl": 300
+}
+EOF
+    chmod 600 "${DDNS_CONFIG}"
+    chown root:docker "${DDNS_CONFIG}"
+    echo "  Written: ${DDNS_CONFIG}"
+    echo "  Mode:    $(stat -c '%a %U:%G' ${DDNS_CONFIG})"
+else
+    echo ""
+    echo "  Cloudflare DDNS config skipped."
+    echo "  Note: the cloudflare-ddns container will fail to start until"
+    echo "  ${DDNS_CONFIG} exists. Re-run this script later when you"
+    echo "  have your Cloudflare API token and Zone ID, or stop the service:"
+    echo "    cd /opt/perfect-day && docker compose stop cloudflare-ddns"
+fi
+
 echo ""
 echo "╔══════════════════════════════════════════════════════════════════╗"
 echo "║  CRITICAL: BACK UP THIS FILE NOW                                ║"
