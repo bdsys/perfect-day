@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
-import { api, type Entry } from '@/lib/api'
+import { api, type Entry, type EventItem } from '@/lib/api'
 import { useAuth } from '@/lib/auth-context'
 
 function formatDate(d: string) {
@@ -13,6 +13,26 @@ function formatDate(d: string) {
     month: 'long',
     day: 'numeric',
   })
+}
+
+function formatEventTime(event: EventItem): string {
+  const start = event.start?.dateTime ?? event.start?.date ?? ''
+  const end = event.end?.dateTime ?? event.end?.date ?? ''
+
+  if (!start && !end) {
+    return event.occurred_at ? new Date(event.occurred_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) : 'Unknown time'
+  }
+
+  // All-day event
+  if (event.start?.date && !event.start?.dateTime) {
+    return 'All day'
+  }
+
+  const startTime = new Date(start).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+  if (!end || event.end?.date) return startTime
+
+  const endTime = new Date(end).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+  return `${startTime}–${endTime}`
 }
 
 export default function EntryDetailPage() {
@@ -185,6 +205,12 @@ export default function EntryDetailPage() {
               {entry.title ?? <span style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>(no title yet)</span>}
             </h1>
 
+            {entry.body_source === 'fallback' && (
+              <p style={{ fontStyle: 'italic', color: '#888', marginBottom: '1rem', fontSize: '0.85rem' }}>
+                Generated from calendar events — LLM draft was not available. Edit or regenerate.
+              </p>
+            )}
+
             {entry.status === 'draft' && entry.flagged_tokens && entry.flagged_tokens.length > 0 && (
               <div style={{
                 background: '#fffbeb',
@@ -212,6 +238,31 @@ export default function EntryDetailPage() {
               <div className="empty-state">
                 <p>No content yet. Trigger a scan or regenerate to generate a draft.</p>
               </div>
+            )}
+
+            {entry.events && entry.events.length > 0 && (
+              <details open style={{ marginTop: '1.5rem' }}>
+                <summary style={{ cursor: 'pointer', fontWeight: '600', fontSize: '0.9rem', color: '#555', marginBottom: '0.5rem' }}>
+                  Source events ({entry.events.length})
+                </summary>
+                <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+                  {entry.events.map((event) => (
+                    <li key={event.id} style={{ padding: '0.4rem 0', borderTop: '1px solid #eee' }}>
+                      <div style={{ fontWeight: '500' }}>
+                        {formatEventTime(event)} — {event.summary || '(no title)'}
+                      </div>
+                      {event.location && (
+                        <div style={{ fontSize: '0.8rem', color: '#888' }}>{event.location}</div>
+                      )}
+                      {event.attendees && event.attendees.length > 0 && (
+                        <div style={{ fontSize: '0.8rem', color: '#888' }}>
+                          {event.attendees.length} attendee{event.attendees.length !== 1 ? 's' : ''}
+                        </div>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </details>
             )}
 
             <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1.25rem', flexWrap: 'wrap' }}>
