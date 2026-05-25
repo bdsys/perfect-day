@@ -65,24 +65,32 @@ def test_missing_field_no_match():
 
 
 def test_missing_field_not_contains_match():
-    condition = {"field": "location", "op": "not_contains", "value": "zoom", "case_sensitive": False}
+    condition = {
+        "field": "location", "op": "not_contains", "value": "zoom", "case_sensitive": False
+    }
     assert match_event(condition, {}) is True
 
 
 def test_attendee_email_any_matches():
-    condition = {"field": "attendee_email", "op": "contains", "value": "alice", "case_sensitive": False}
+    condition = {
+        "field": "attendee_email", "op": "contains", "value": "alice", "case_sensitive": False
+    }
     attendees = [{"email": "alice@example.com"}, {"email": "bob@example.com"}]
     assert match_event(condition, _payload(attendees=attendees)) is True
 
 
 def test_attendee_email_none_matches():
-    condition = {"field": "attendee_email", "op": "contains", "value": "charlie", "case_sensitive": False}
+    condition = {
+        "field": "attendee_email", "op": "contains", "value": "charlie", "case_sensitive": False
+    }
     attendees = [{"email": "alice@example.com"}, {"email": "bob@example.com"}]
     assert match_event(condition, _payload(attendees=attendees)) is False
 
 
 def test_attendee_email_empty_list_false():
-    condition = {"field": "attendee_email", "op": "contains", "value": "alice", "case_sensitive": False}
+    condition = {
+        "field": "attendee_email", "op": "contains", "value": "alice", "case_sensitive": False
+    }
     assert match_event(condition, _payload(attendees=[])) is False
 
 
@@ -105,8 +113,9 @@ def test_and_one_false():
             {"field": "location", "op": "contains", "value": "zoom", "case_sensitive": False},
         ],
     }
-    assert match_event(condition, _payload(summary="Soccer practice", location="City Park")) is False
-
+    assert (
+        match_event(condition, _payload(summary="Soccer practice", location="City Park")) is False
+    )
 
 def test_or_one_true():
     condition = {
@@ -137,15 +146,23 @@ def test_nested_and_of_or():
             {
                 "op": "OR",
                 "children": [
-                    {"field": "title", "op": "contains", "value": "soccer", "case_sensitive": False},
-                    {"field": "title", "op": "contains", "value": "swimming", "case_sensitive": False},
+                    {
+                        "field": "title", "op": "contains",
+                        "value": "soccer", "case_sensitive": False,
+                    },
+                    {
+                        "field": "title", "op": "contains",
+                        "value": "swimming", "case_sensitive": False,
+                    },
                 ],
             },
             {"field": "location", "op": "contains", "value": "park", "case_sensitive": False},
         ],
     }
     assert match_event(condition, _payload(summary="Soccer practice", location="City Park")) is True
-    assert match_event(condition, _payload(summary="Soccer practice", location="Indoor gym")) is False
+    assert (
+        match_event(condition, _payload(summary="Soccer practice", location="Indoor gym")) is False
+    )
     assert match_event(condition, _payload(summary="Dentist", location="City Park")) is False
 
 
@@ -157,3 +174,21 @@ def test_empty_and_group_false():
 def test_empty_or_group_false():
     condition = {"op": "OR", "children": []}
     assert match_event(condition, _payload(summary="anything")) is False
+
+
+def test_attendee_email_not_contains_empty_list_true():
+    """not_contains on empty attendees is vacuously True."""
+    condition = {
+        "field": "attendee_email", "op": "not_contains", "value": "zoom", "case_sensitive": False
+    }
+    payload = _payload(attendees=[])
+    assert match_event(condition, payload) is True
+
+
+def test_attendee_email_not_contains_no_match():
+    """not_contains when no attendee email contains the value."""
+    condition = {
+        "field": "attendee_email", "op": "not_contains", "value": "zoom", "case_sensitive": False
+    }
+    payload = _payload(attendees=[{"email": "alice@example.com"}, {"email": "bob@example.com"}])
+    assert match_event(condition, payload) is True

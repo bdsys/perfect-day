@@ -1,4 +1,4 @@
-"""Rule engine: condition tree matcher and async rule evaluation."""
+"""Rule engine: condition tree matcher."""
 
 from __future__ import annotations
 
@@ -60,4 +60,6 @@ def _match_string(field_value: str, op: str, value: str, case_sensitive: bool) -
 
 
 def _match_any(values: list[str], op: str, value: str, case_sensitive: bool) -> bool:
+    if op == "not_contains":
+        return all(_match_string(v, op, value, case_sensitive) for v in values)
     return any(_match_string(v, op, value, case_sensitive) for v in values)
