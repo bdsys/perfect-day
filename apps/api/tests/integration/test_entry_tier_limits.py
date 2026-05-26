@@ -26,7 +26,7 @@ async def _create_entry(client: AsyncClient, auth: dict, diary_id: str, day: int
 
 class TestEntryTierLimits:
     async def test_free_tier_manual_limit_enforced(self, client: AsyncClient):
-        """Free tier allows 5 manual entries, 6th returns 402."""
+        """Free tier allows 5 manual entries, 6th returns 403 with structured detail."""
         token, diary = await _setup(client, "tier-manual@example.com")
         auth = {"Authorization": f"Bearer {token}"}
         diary_id = diary["id"]
@@ -41,10 +41,16 @@ class TestEntryTierLimits:
             json={"entry_date": "2025-06-10"},
             headers=auth,
         )
-        assert r.status_code == 402
+        assert r.status_code == 403
         body = r.json()
-        message = body.get("detail") or body.get("error", {}).get("message", "")
-        assert "limit" in message.lower()
+        detail = body.get("detail", {})
+        assert isinstance(detail, dict)
+        assert detail.get("code") == "tier_limit"
+        inner = detail.get("details", {})
+        assert inner.get("source") == "manual"
+        assert inner.get("limit") == 5
+        assert inner.get("current") == 5
+        assert inner.get("required_tier") == "tier1"
 
     async def test_free_tier_allows_exactly_5_entries(self, client: AsyncClient):
         """Free tier: 5th entry succeeds, counting is exact."""

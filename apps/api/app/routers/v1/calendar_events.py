@@ -112,11 +112,10 @@ async def create_entry_from_event(
         raise HTTPException(status_code=409, detail="event_already_attached")
 
     await enforce_entry_tier_limit(
-        user_id=user.id,
-        diary_id=diary_id,
+        owner_user_id=user.id,
         source="manual",
         db=db,
-        subscription_tier=user.subscription_tier,
+        owner_subscription_tier=user.subscription_tier,
     )
 
     p = event.payload or {}

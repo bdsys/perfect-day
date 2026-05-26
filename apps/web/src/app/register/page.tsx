@@ -3,11 +3,13 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
+import { ApiError } from '@/lib/api'
 import { useAuth } from '@/lib/auth-context'
+import GoogleSignInButton from '@/components/GoogleSignInButton'
 
 export default function RegisterPage() {
   const router = useRouter()
-  const { user, loading: authLoading, register } = useAuth()
+  const { user, loading: authLoading, register, loginWithGoogle } = useAuth()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [displayName, setDisplayName] = useState('')
@@ -29,6 +31,25 @@ export default function RegisterPage() {
       router.push('/diaries')
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Registration failed')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleGoogleCredential(idToken: string) {
+    setError('')
+    setLoading(true)
+    try {
+      await loginWithGoogle(idToken)
+      router.push('/diaries')
+    } catch (err: unknown) {
+      if (err instanceof ApiError && err.status === 409) {
+        setError('An account with this email exists. Sign in with email and password instead.')
+      } else if (err instanceof ApiError && err.status === 401) {
+        setError('This account is unavailable.')
+      } else {
+        setError('Google sign-in failed. Please try again.')
+      }
     } finally {
       setLoading(false)
     }
@@ -86,6 +107,12 @@ export default function RegisterPage() {
             {loading ? 'Creating account…' : 'Create account'}
           </button>
         </form>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', margin: '1rem 0' }}>
+          <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>or</span>
+          <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+        </div>
+        <GoogleSignInButton onCredential={handleGoogleCredential} />
         <p style={{ marginTop: '1rem', fontSize: '0.875rem', textAlign: 'center', color: 'var(--text-muted)' }}>
           Already have an account? <Link href="/login">Sign in</Link>
         </p>

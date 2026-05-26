@@ -9,6 +9,7 @@ interface AuthState {
   login: (email: string, password: string) => Promise<void>
   register: (email: string, password: string, displayName?: string) => Promise<void>
   logout: () => Promise<void>
+  loginWithGoogle: (idToken: string) => Promise<void>
 }
 
 const AuthContext = createContext<AuthState>({
@@ -17,6 +18,7 @@ const AuthContext = createContext<AuthState>({
   login: async () => {},
   register: async () => {},
   logout: async () => {},
+  loginWithGoogle: async () => {},
 })
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -63,7 +65,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(null)
   }, [])
 
-  return <AuthContext.Provider value={{ user, loading, login, register, logout }}>{children}</AuthContext.Provider>
+  const loginWithGoogle = useCallback(async (idToken: string) => {
+    const tokens = await api.auth.socialGoogle(idToken)
+    setAccessToken(tokens.access_token)
+    const me = await api.auth.me()
+    setUser(me as Record<string, unknown>)
+  }, [])
+
+  return <AuthContext.Provider value={{ user, loading, login, register, logout, loginWithGoogle }}>{children}</AuthContext.Provider>
 }
 
 export function useAuth() {

@@ -185,11 +185,10 @@ async def evaluate_event_against_rules(
             else:
                 # First instance — check tier limit, create entry + claim.
                 ok, reason = await try_enforce_entry_tier_limit(
-                    user_id=user.id,
-                    diary_id=diary_uuid,
+                    owner_user_id=user.id,
                     source="auto",
                     db=db,
-                    subscription_tier=user.subscription_tier,
+                    owner_subscription_tier=user.subscription_tier,
                 )
                 if not ok:
                     log.warning(
@@ -222,11 +221,10 @@ async def evaluate_event_against_rules(
             # per_instance / multi_day path: each event → its own entry.
             # ----------------------------------------------------------------
             ok, reason = await try_enforce_entry_tier_limit(
-                user_id=user.id,
-                diary_id=diary_uuid,
+                owner_user_id=user.id,
                 source="auto",
                 db=db,
-                subscription_tier=user.subscription_tier,
+                owner_subscription_tier=user.subscription_tier,
             )
             if not ok:
                 log.warning(

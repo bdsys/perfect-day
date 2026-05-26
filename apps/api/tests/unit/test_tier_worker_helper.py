@@ -21,11 +21,10 @@ async def test_under_limit_returns_true():
         mock_enforce.return_value = None  # no exception = under limit
 
         ok, reason = await try_enforce_entry_tier_limit(
-            user_id=uuid.uuid4(),
-            diary_id=uuid.uuid4(),
+            owner_user_id=uuid.uuid4(),
             source="auto",
             db=mock_db,
-            subscription_tier="free",
+            owner_subscription_tier="free",
         )
 
     assert ok is True
@@ -34,21 +33,31 @@ async def test_under_limit_returns_true():
 
 @pytest.mark.asyncio
 async def test_at_limit_returns_false():
-    """When enforce_entry_tier_limit raises HTTPException, returns (False, detail)."""
+    """When enforce raises HTTPException with structured detail, returns (False, reason)."""
     from fastapi import HTTPException
     mock_db = AsyncMock()
 
     with patch(
         "app.services.tier.enforce_entry_tier_limit", new_callable=AsyncMock
     ) as mock_enforce:
-        mock_enforce.side_effect = HTTPException(status_code=402, detail="entry limit reached")
+        mock_enforce.side_effect = HTTPException(
+            status_code=403,
+            detail={
+                "code": "tier_limit",
+                "details": {
+                    "limit": 3,
+                    "current": 3,
+                    "source": "auto",
+                    "required_tier": "tier1",
+                },
+            },
+        )
 
         ok, reason = await try_enforce_entry_tier_limit(
-            user_id=uuid.uuid4(),
-            diary_id=uuid.uuid4(),
+            owner_user_id=uuid.uuid4(),
             source="auto",
             db=mock_db,
-            subscription_tier="free",
+            owner_subscription_tier="free",
         )
 
     assert ok is False
@@ -67,11 +76,10 @@ async def test_unlimited_tier_returns_true():
         mock_enforce.return_value = None
 
         ok, reason = await try_enforce_entry_tier_limit(
-            user_id=uuid.uuid4(),
-            diary_id=uuid.uuid4(),
+            owner_user_id=uuid.uuid4(),
             source="auto",
             db=mock_db,
-            subscription_tier="tier1",
+            owner_subscription_tier="tier1",
         )
 
     assert ok is True
@@ -91,9 +99,9 @@ async def test_db_error_propagates():
 
         with pytest.raises(OperationalError):
             await try_enforce_entry_tier_limit(
-                user_id=uuid.uuid4(),
-                diary_id=uuid.uuid4(),
+                owner_user_id=uuid.uuid4(),
                 source="auto",
                 db=mock_db,
-                subscription_tier="free",
+                owner_subscription_tier="free",
             )
+

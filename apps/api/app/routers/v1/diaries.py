@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user
@@ -137,9 +137,7 @@ async def create_diary(
 
     # Advisory lock to prevent check-then-create race
     await db.execute(
-        __import__("sqlalchemy", fromlist=["text"]).text(
-            f"SELECT pg_advisory_xact_lock({hash(str(user.id)) & 0x7FFFFFFF})"
-        )
+        text(f"SELECT pg_advisory_xact_lock({hash(str(user.id)) & 0x7FFFFFFF})")
     )
     count_result = await db.execute(
         select(func.count())
@@ -152,7 +150,7 @@ async def create_diary(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={
                 "code": "tier_limit",
-                "details": {"limit": limit, "current": current, "required_tier": "tier1"},
+                "details": {"limit": limit, "current": current, "source": "diary", "required_tier": "tier1"},
             },
         )
 
@@ -262,6 +260,34 @@ async def restore_diary(
         raise HTTPException(status_code=404, detail="not_found")
     if diary.hard_delete_after and diary.hard_delete_after < datetime.now(tz=UTC):
         raise HTTPException(status_code=410, detail="grace_period_expired")
+    # Check tier limit before restoring
+    limit = TIER_DIARY_LIMITS.get(user.subscription_tier, 1)
+    await db.execute(
+        text(f"SELECT pg_advisory_xact_lock({hash(str(user.id)) & 0x7FFFFFFF})")
+    )
+    count_result = await db.execute(
+        select(func.count())
+        .select_from(Diary)
+        .where(Diary.owner_user_id == user.id, Diary.deleted_at.is_(None))
+    )
+    current = count_result.scalar_one()
+    if current >= limit:
+        required_tier = next(
+            (t for t, lim in TIER_DIARY_LIMITS.items() if lim > limit),
+            "tier1",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "tier_limit",
+                "details": {
+                    "limit": limit,
+                    "current": current,
+                    "source": "diary",
+                    "required_tier": required_tier,
+                },
+            },
+        )
     # If the slug is now taken by a different active diary, assign a new unique one
     slug = diary.slug
     base_slug = slug
