@@ -16,6 +16,24 @@ export function getAccessToken(): string | null {
   return _accessToken
 }
 
+export class ApiError extends Error {
+  status: number
+  code?: string
+  details?: Record<string, unknown>
+  constructor(
+    status: number,
+    message: string,
+    code?: string,
+    details?: Record<string, unknown>,
+  ) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+    this.code = code
+    this.details = details
+  }
+}
+
 async function apiFetch<T>(
   path: string,
   options: RequestInit = {},
@@ -55,8 +73,26 @@ async function apiFetch<T>(
   }
 
   if (!res.ok) {
-    const body = await res.text()
-    throw new Error(body || `HTTP ${res.status}`)
+    let code: string | undefined
+    let details: Record<string, unknown> | undefined
+    let message: string
+    try {
+      const json = await res.json() as { detail?: unknown }
+      const detail = json.detail
+      if (detail && typeof detail === 'object' && !Array.isArray(detail)) {
+        const d = detail as Record<string, unknown>
+        code = typeof d.code === 'string' ? d.code : undefined
+        details = typeof d.details === 'object' && d.details !== null
+          ? (d.details as Record<string, unknown>)
+          : undefined
+        message = code ?? JSON.stringify(detail)
+      } else {
+        message = typeof detail === 'string' ? detail : `HTTP ${res.status}`
+      }
+    } catch {
+      message = `HTTP ${res.status}`
+    }
+    throw new ApiError(res.status, message, code, details)
   }
 
   if (res.status === 204) return undefined as T
@@ -219,6 +255,12 @@ export const api = {
     async logout(): Promise<void> {
       return apiFetch('/v1/auth/logout', { method: 'POST' })
     },
+    async socialGoogle(idToken: string): Promise<TokenPair> {
+      return apiFetch('/v1/auth/social/google', {
+        method: 'POST',
+        body: JSON.stringify({ id_token: idToken }),
+      })
+    },
     async me() {
       return apiFetch('/v1/auth/me')
     },
@@ -234,9 +276,15 @@ export const api = {
     async create(data: { name: string; timezone: string; subject_name?: string }): Promise<Diary> {
       return apiFetch('/v1/diaries', { method: 'POST', body: JSON.stringify(data) })
     },
-    async triggerScan(id: string): Promise<{ queued: boolean; alreadyRunning: boolean }> {
+    async triggerScan(
+      id: string,
+      options?: { past_days?: number; future_days?: number },
+    ): Promise<{ queued: boolean; alreadyRunning: boolean }> {
       try {
-        await apiFetch(`/v1/diaries/${id}/scan/run`, { method: 'POST' })
+        await apiFetch(`/v1/diaries/${id}/scan/run`, {
+          method: 'POST',
+          body: options ? JSON.stringify(options) : undefined,
+        })
         return { queued: true, alreadyRunning: false }
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : ''

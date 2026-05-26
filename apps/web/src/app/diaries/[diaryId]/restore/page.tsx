@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
-import { api, type Diary, type Entry } from '@/lib/api'
+import { api, type Diary, type Entry, ApiError } from '@/lib/api'
 import { useAuth } from '@/lib/auth-context'
 
 function formatDate(d: string) {
@@ -28,6 +28,7 @@ export default function EntryRestorePage() {
   const [entries, setEntries] = useState<Entry[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [tierLimitError, setTierLimitError] = useState<{ limit: number; current: number; source: string } | null>(null)
   const [restoring, setRestoring] = useState<string | null>(null)
 
   useEffect(() => {
@@ -47,11 +48,21 @@ export default function EntryRestorePage() {
 
   async function handleRestore(id: string) {
     setRestoring(id)
+    setError('')
+    setTierLimitError(null)
     try {
       await api.entries.restore(id)
       setEntries((prev) => prev.filter((e) => e.id !== id))
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Restore failed')
+      if (e instanceof ApiError && e.code === 'tier_limit' && e.details) {
+        setTierLimitError({
+          limit: typeof e.details.limit === 'number' ? e.details.limit : 0,
+          current: typeof e.details.current === 'number' ? e.details.current : 0,
+          source: typeof e.details.source === 'string' ? e.details.source : 'unknown',
+        })
+      } else {
+        setError(e instanceof Error ? e.message : 'Restore failed')
+      }
     } finally {
       setRestoring(null)
     }
@@ -73,6 +84,15 @@ export default function EntryRestorePage() {
         </div>
 
         {error && <p className="error-message" style={{ marginBottom: '1rem' }}>{error}</p>}
+
+        {tierLimitError && (
+          <div className="error-message" style={{ marginBottom: '1rem' }}>
+            You&apos;re at your free-tier limit ({tierLimitError.current}/{tierLimitError.limit} {tierLimitError.source === 'diary' ? 'diaries' : tierLimitError.source} entries).
+            Free up a slot or{' '}
+            <a href="/account/upgrade" style={{ textDecoration: 'underline' }}>Upgrade</a>
+            {' '}to restore this one.
+          </div>
+        )}
 
         {entries.length === 0 ? (
           <div className="empty-state">

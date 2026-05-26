@@ -60,7 +60,7 @@ class TestScanTrigger:
         assert r.status_code == 200
 
     async def test_trigger_no_body_passes_none_kwargs(self, client):
-        """POST with no body → 202 and scan_diary.delay called with past_days=None, future_days=None."""
+        """POST with no body → 202; delay called with past_days=None, future_days=None."""
         token, diary = await _setup(client, "scannobody@example.com")
         auth = {"Authorization": f"Bearer {token}"}
 
@@ -72,7 +72,7 @@ class TestScanTrigger:
         mock_delay.assert_called_once_with(str(diary["id"]), past_days=None, future_days=None)
 
     async def test_trigger_with_window_body_passes_kwargs(self, client):
-        """POST with {past_days: 30, future_days: 30} → 202 and scan_diary.delay called with those values."""
+        """POST with past_days/future_days → 202; delay called with those kwargs."""
         token, diary = await _setup(client, "scanwindow@example.com")
         auth = {"Authorization": f"Bearer {token}"}
 

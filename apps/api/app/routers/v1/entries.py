@@ -254,11 +254,10 @@ async def create_entry(
         raise HTTPException(status_code=403, detail="forbidden")
 
     await enforce_entry_tier_limit(
-        user_id=user.id,
-        diary_id=diary_id,
+        owner_user_id=user.id,
         source="manual",
         db=db,
-        subscription_tier=user.subscription_tier,
+        owner_subscription_tier=user.subscription_tier,
     )
 
     entry = Entry(
@@ -367,7 +366,15 @@ async def restore_entry(
     entry = result.scalar_one_or_none()
     if entry is None:
         raise HTTPException(status_code=404, detail="not_found")
-    await _get_diary_or_404(entry.diary_id, user, db, require_owner=False)
+    diary, role = await _get_diary_or_404(entry.diary_id, user, db, require_owner=False)
+    owner_result = await db.execute(select(User).where(User.id == diary.owner_user_id))
+    owner = owner_result.scalar_one()
+    await enforce_entry_tier_limit(
+        owner_user_id=owner.id,
+        source=entry.created_by,
+        db=db,
+        owner_subscription_tier=owner.subscription_tier,
+    )
     entry.deleted_at = None
     return _entry_out_from_orm(entry)
 

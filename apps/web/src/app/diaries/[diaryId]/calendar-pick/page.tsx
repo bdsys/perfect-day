@@ -1,10 +1,33 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
 import { api, type CalendarEventSummary } from '@/lib/api'
 import { useAuth } from '@/lib/auth-context'
+
+// ── Date helpers ──────────────────────────────────────────────────────────────
+
+function ymd(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+function startOfMonthGrid(monthStart: Date): Date {
+  const d = new Date(monthStart)
+  d.setDate(1 - monthStart.getDay()) // Go back to the previous Sunday
+  return d
+}
+
+function buildMonthDays(monthStart: Date): Date[] {
+  const start = startOfMonthGrid(monthStart)
+  return Array.from({ length: 42 }, (_, i) => {
+    const d = new Date(start)
+    d.setDate(start.getDate() + i)
+    return d
+  })
+}
+
+// ── Event helpers ─────────────────────────────────────────────────────────────
 
 function formatOccurredAt(event: CalendarEventSummary): string {
   const dtStr = event.start?.dateTime ?? event.start?.date ?? event.occurred_at
@@ -31,15 +54,7 @@ function groupByDate(events: CalendarEventSummary[]): Map<string, CalendarEventS
   return new Map([...map.entries()].sort((a, b) => b[0].localeCompare(a[0])))
 }
 
-function formatDateHeading(dateStr: string): string {
-  if (dateStr === 'unknown') return 'Unknown date'
-  return new Date(dateStr + 'T00:00:00').toLocaleDateString(undefined, {
-    weekday: 'long',
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-  })
-}
+// ── Component ─────────────────────────────────────────────────────────────────
 
 export default function CalendarPickPage() {
   const { diaryId } = useParams<{ diaryId: string }>()
@@ -51,17 +66,29 @@ export default function CalendarPickPage() {
   const [error, setError] = useState('')
   const [creating, setCreating] = useState<string | null>(null)
 
+  const [cursorMonth, setCursorMonth] = useState<Date>(() => {
+    const d = new Date()
+    return new Date(d.getFullYear(), d.getMonth(), 1)
+  })
+  const [selectedDay, setSelectedDay] = useState<string | null>(null)
+
+  const grouped = useMemo(() => groupByDate(events), [events])
+
   useEffect(() => {
     if (!authLoading && !user) router.replace('/login')
   }, [user, authLoading, router])
 
   useEffect(() => {
     if (!user || !diaryId) return
-    api.calendarEvents.list(diaryId, { attached: false })
-      .then(setEvents)
+    setLoading(true)
+    const gridDays = buildMonthDays(cursorMonth)
+    const from = ymd(gridDays[0])
+    const to = ymd(gridDays[gridDays.length - 1])
+    api.calendarEvents.list(diaryId, { attached: false, from, to })
+      .then(data => setEvents(data))
       .catch((e: unknown) => setError(e instanceof Error ? e.message : 'Failed to load events'))
       .finally(() => setLoading(false))
-  }, [user, diaryId])
+  }, [user, diaryId, cursorMonth])
 
   async function handlePick(event: CalendarEventSummary) {
     setCreating(event.id)
@@ -73,8 +100,13 @@ export default function CalendarPickPage() {
       const msg = e instanceof Error ? e.message : 'Failed to create entry'
       if (msg.includes('409') || msg.includes('event_already_attached')) {
         setError('That event was just claimed. Refreshing the list…')
+        const gridDays = buildMonthDays(cursorMonth)
         try {
-          const refreshed = await api.calendarEvents.list(diaryId, { attached: false })
+          const refreshed = await api.calendarEvents.list(diaryId, {
+            attached: false,
+            from: ymd(gridDays[0]),
+            to: ymd(gridDays[gridDays.length - 1]),
+          })
           setEvents(refreshed)
         } catch {
           // refresh failed; list may be stale but error message already shown
@@ -89,8 +121,6 @@ export default function CalendarPickPage() {
   if (authLoading || loading) return <div className="loading">Loading…</div>
   if (!user) return null
 
-  const grouped = groupByDate(events)
-
   return (
     <>
       <nav className="nav">
@@ -98,32 +128,87 @@ export default function CalendarPickPage() {
           <Link href={`/diaries/${diaryId}`} className="nav-brand">← Diary</Link>
         </div>
       </nav>
-      <div className="container" style={{ paddingTop: '1.5rem', maxWidth: 720 }}>
+      <div className="container" style={{ paddingTop: '1.5rem', maxWidth: 960, paddingRight: selectedDay ? '380px' : undefined }}>
         <h1 className="page-title">New entry from Google Calendar</h1>
         <p style={{ color: 'var(--text-muted)', marginBottom: '1.5rem', fontSize: '0.9rem' }}>
-          Click an event to create a diary entry from it. The LLM will generate a draft using the event details.
+          Click a day to create a diary entry from its events. The LLM will generate a draft using the event details.
         </p>
 
         {error && <p className="error-message" style={{ marginBottom: '1rem' }}>{error}</p>}
 
-        {events.length === 0 ? (
-          <div className="empty-state">
-            <p>No unattached calendar events found. Try running a scan first.</p>
-          </div>
-        ) : (
-          [...grouped.entries()].map(([dateKey, dayEvents]) => (
-            <div key={dateKey} style={{ marginBottom: '1.5rem' }}>
-              <div style={{
-                fontSize: '0.8rem',
-                fontWeight: 600,
-                color: 'var(--text-muted)',
-                textTransform: 'uppercase',
-                letterSpacing: '0.05em',
-                marginBottom: '0.5rem',
-              }}>
-                {formatDateHeading(dateKey)}
+        {/* Month navigation toolbar */}
+        <div className="cal-toolbar">
+          <button className="btn btn-secondary" onClick={() => setCursorMonth(m => {
+            const prev = new Date(m)
+            prev.setMonth(prev.getMonth() - 1)
+            return prev
+          })}>←</button>
+          <h2>{cursorMonth.toLocaleString('default', { month: 'long', year: 'numeric' })}</h2>
+          <button className="btn btn-secondary" onClick={() => setCursorMonth(m => {
+            const next = new Date(m)
+            next.setMonth(next.getMonth() + 1)
+            return next
+          })}>→</button>
+        </div>
+
+        {/* Month grid */}
+        <div className="cal-grid">
+          {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => (
+            <div key={d} className="cal-head">{d}</div>
+          ))}
+          {buildMonthDays(cursorMonth).map((d) => {
+            const dayKey = ymd(d)
+            const isOtherMonth = d.getMonth() !== cursorMonth.getMonth()
+            return (
+              <div
+                key={dayKey}
+                className={`cal-day${isOtherMonth ? ' is-other-month' : ''}`}
+                onClick={() => setSelectedDay(dayKey)}
+              >
+                <span className="num">{d.getDate()}</span>
+                {/* Event chips */}
+                {(() => {
+                  const dayEvs = grouped.get(dayKey) ?? []
+                  return (
+                    <>
+                      {dayEvs.slice(0, 3).map((ev) => (
+                        <button
+                          key={ev.id}
+                          className="cal-chip"
+                          title={ev.summary || '(no title)'}
+                          onClick={(e) => { e.stopPropagation(); setSelectedDay(dayKey) }}
+                        >
+                          {ev.summary || '(no title)'}
+                        </button>
+                      ))}
+                      {dayEvs.length > 3 && (
+                        <button className="cal-more" onClick={(e) => { e.stopPropagation(); setSelectedDay(dayKey) }}>
+                          +{dayEvs.length - 3} more
+                        </button>
+                      )}
+                    </>
+                  )
+                })()}
               </div>
-              {dayEvents.map((ev) => (
+            )
+          })}
+        </div>
+
+        {/* Day-detail panel */}
+        {selectedDay && (
+          <div className="cal-panel">
+            <div className="cal-panel-header">
+              <h3>
+                {new Date(selectedDay + 'T12:00:00').toLocaleDateString('default', {
+                  weekday: 'long', month: 'long', day: 'numeric', year: 'numeric'
+                })}
+              </h3>
+              <button className="btn" onClick={() => setSelectedDay(null)}>✕</button>
+            </div>
+            {(grouped.get(selectedDay) ?? []).length === 0 ? (
+              <p style={{ color: 'var(--text-muted)' }}>No events on this day.</p>
+            ) : (
+              (grouped.get(selectedDay) ?? []).map((ev) => (
                 <button
                   key={ev.id}
                   className="entry-card"
@@ -146,17 +231,11 @@ export default function CalendarPickPage() {
                   <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
                     {formatOccurredAt(ev)}
                     {ev.location ? ` · ${ev.location}` : ''}
-                    {ev.attendees?.length > 0 ? ` · ${ev.attendees.length} attendee${ev.attendees.length !== 1 ? 's' : ''}` : ''}
                   </div>
-                  {ev.description && (
-                    <div style={{ fontSize: '0.8rem', color: '#999', marginTop: '0.2rem' }}>
-                      {ev.description.slice(0, 80)}{ev.description.length > 80 ? '…' : ''}
-                    </div>
-                  )}
                 </button>
-              ))}
-            </div>
-          ))
+              ))
+            )}
+          </div>
         )}
       </div>
     </>

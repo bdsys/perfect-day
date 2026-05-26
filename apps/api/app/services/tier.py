@@ -16,17 +16,17 @@ TIER_ENTRY_LIMITS: dict[str, dict[str, int | None]] = {
 
 
 async def enforce_entry_tier_limit(
-    user_id: uuid.UUID,
-    diary_id: uuid.UUID,
+    *,
+    owner_user_id: uuid.UUID,
     source: str,
     db: AsyncSession,
-    subscription_tier: str = "free",
+    owner_subscription_tier: str = "free",
 ) -> None:
-    """Raise 402 if the user has reached their entry limit for this source type.
+    """Raise 403 if the user has reached their entry limit for this source type.
 
     source: 'manual' | 'auto'
     """
-    limits = TIER_ENTRY_LIMITS.get(subscription_tier, TIER_ENTRY_LIMITS["free"])
+    limits = TIER_ENTRY_LIMITS.get(owner_subscription_tier, TIER_ENTRY_LIMITS["free"])
     cap = limits.get(source)
     if cap is None:
         return  # unlimited tier
@@ -38,7 +38,7 @@ async def enforce_entry_tier_limit(
         .select_from(Entry)
         .join(Diary, Diary.id == Entry.diary_id)
         .where(
-            Diary.owner_user_id == user_id,
+            Diary.owner_user_id == owner_user_id,
             Entry.created_by == source,
             Entry.deleted_at.is_(None),
         )
@@ -46,22 +46,30 @@ async def enforce_entry_tier_limit(
     current = count_result.scalar_one()
 
     if current >= cap:
-        label = "Manual entry" if source == "manual" else "Auto-generated entry"
+        required_tier = next(
+            (t for t, lims in TIER_ENTRY_LIMITS.items() if lims.get(source) is None),
+            "tier1",
+        )
         raise HTTPException(
-            status_code=402,
-            detail=(
-                f"{label} limit reached for {subscription_tier} tier "
-                f"({current}/{cap}). Upgrade to create more."
-            ),
+            status_code=403,
+            detail={
+                "code": "tier_limit",
+                "details": {
+                    "limit": cap,
+                    "current": current,
+                    "source": source,
+                    "required_tier": required_tier,
+                },
+            },
         )
 
 
 async def try_enforce_entry_tier_limit(
-    user_id: uuid.UUID,
-    diary_id: uuid.UUID,
+    *,
+    owner_user_id: uuid.UUID,
     source: str,
     db: AsyncSession,
-    subscription_tier: str = "free",
+    owner_subscription_tier: str = "free",
 ) -> tuple[bool, str | None]:
     """No-raise variant of enforce_entry_tier_limit for use in Celery workers.
 
@@ -71,12 +79,20 @@ async def try_enforce_entry_tier_limit(
     """
     try:
         await enforce_entry_tier_limit(
-            user_id=user_id,
-            diary_id=diary_id,
+            owner_user_id=owner_user_id,
             source=source,
             db=db,
-            subscription_tier=subscription_tier,
+            owner_subscription_tier=owner_subscription_tier,
         )
         return True, None
     except HTTPException as exc:
-        return False, str(exc.detail)
+        detail = exc.detail
+        if isinstance(detail, dict) and "details" in detail:
+            d = detail["details"]
+            reason_str = (
+                f"{detail.get('code', 'tier_limit')}: "
+                f"{d.get('source', '?')} limit {d.get('current', '?')}/{d.get('limit', '?')}"
+            )
+        else:
+            reason_str = str(detail)
+        return False, reason_str
