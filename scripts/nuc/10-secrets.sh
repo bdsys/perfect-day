@@ -160,6 +160,7 @@ FORTIGATE_LAN_IP=${FORTIGATE_LAN_IP:-}
 
 # Web (Next.js)
 NEXT_PUBLIC_API_URL=https://api.diary.perfectday.andrewlass.com
+NEXT_PUBLIC_GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
 EOF
 
 chmod 600 "${ENV_FILE}"

@@ -26,10 +26,13 @@ test.describe('Restore tier-limit upgrade CTA', () => {
       data: { name: 'Diary A', timezone: 'UTC' },
     })
     if (!diaryAResp.ok()) throw new Error(`Create Diary A failed: ${diaryAResp.status()} ${await diaryAResp.text()}`)
-    const { id: diaryAId } = await diaryAResp.json() as { id: string }
+    const diaryAJson = await diaryAResp.json() as { id: string; owner_user_id?: string }
+    const { id: diaryAId } = diaryAJson
+    console.log('CREATE_DIARY_A', JSON.stringify(diaryAJson))
 
     const delResp = await request.delete(`${API}/v1/diaries/${diaryAId}`, { headers })
-    if (!delResp.ok()) throw new Error(`Delete Diary A failed: ${delResp.status()}`)
+    const delText = await delResp.text()
+    if (!delResp.ok()) throw new Error(`Delete Diary A failed: ${delResp.status()} id=${diaryAId} body=${delText}`)
 
     const diaryBResp = await request.post(`${API}/v1/diaries`, {
       headers,

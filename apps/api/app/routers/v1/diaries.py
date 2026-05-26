@@ -183,6 +183,9 @@ async def create_diary(
     # Create 1:1 scan job
     db.add(ScanJob(diary_id=diary.id))
     await db.refresh(diary)
+    # Commit before returning so the row is visible to concurrent requests that
+    # receive this response and immediately issue follow-up calls (e.g. DELETE).
+    await db.commit()
     return diary
 
 

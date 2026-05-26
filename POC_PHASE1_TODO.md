@@ -31,6 +31,38 @@ Bootstrap → secrets → first deploy → DDNS → FortiGate certs → Google p
 
 ### Phase C — Web UI audit and fixes
 
+#### C0 — Set up Google Client ID for local dev
+
+The Google Sign-In button on `/login` and `/register` silently hides itself when `NEXT_PUBLIC_GOOGLE_CLIENT_ID` is not set. Complete this before the route audit below.
+
+**Get the credentials** (full instructions in [`deploy/nuc-ops.md` § A3](deploy/nuc-ops.md#a3--google-cloud-create-a-project-and-oauth-credentials)):
+
+1. Go to [console.cloud.google.com](https://console.cloud.google.com) → select your `perfect-day-poc` project (or create one per A3).
+2. **APIs & Services** → **Credentials** → click your existing **OAuth 2.0 Client ID** (named `perfect-day-poc-web`).
+3. Copy the **Client ID** (ends in `.apps.googleusercontent.com`) and **Client secret** — save both to your password manager if you haven't already.
+4. Make sure `http://localhost:8000/v1/integrations/google/callback` is in **Authorized redirect URIs** (should already be there from A3 — add it now if not).
+
+**Wire up the frontend** (local dev only):
+
+5. Create `apps/web/.env.local` (gitignored — never commit this):
+   ```
+   NEXT_PUBLIC_API_URL=http://localhost:8000
+   NEXT_PUBLIC_GOOGLE_CLIENT_ID=<client_id from step 3>
+   ```
+6. Restart the Next.js dev server (`make web` or `pnpm dev` inside `apps/web`) — Next.js bakes public env vars in at startup, so a restart is required.
+7. Navigate to `http://localhost:3000/login` — the **Continue with Google** button should appear below the "or" divider.
+
+**Wire up the backend** (local dev only):
+
+8. Check `apps/api/.env` (or wherever your local backend env lives). It needs:
+   ```
+   GOOGLE_CLIENT_ID=<client_id from step 3>
+   GOOGLE_CLIENT_SECRET=<client_secret from step 3>
+   ```
+9. Restart the API if you changed its env.
+
+---
+
 **Do this locally before NUC deployment** (much easier to debug). Walk every route against the local stack:
 
 | Route | What to check |
