@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from httpx import AsyncClient
 import pytest
+from httpx import AsyncClient
 
 pytestmark = pytest.mark.asyncio
 
@@ -227,6 +227,7 @@ class TestBackfillDelete:
     async def test_delete_completed_run_returns_409(self, client: AsyncClient, db_session):
         import uuid as _uuid
         from datetime import date as _d
+
         from app.models import BackfillRun as _BackfillRun
         token, diary = await _setup(client)
         auth = {"Authorization": f"Bearer {token}"}

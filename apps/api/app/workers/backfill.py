@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Iterator
 from datetime import UTC, date, datetime, timedelta
 
 import structlog
@@ -14,7 +15,7 @@ log = structlog.get_logger()
 
 def _iter_week_chunks(
     from_date: date, to_date: date
-) -> tuple[date, date]:
+) -> Iterator[tuple[date, date]]:
     """Yield (chunk_start, chunk_end_inclusive) windows of up to 7 days.
     Final chunk may be shorter; if from_date == to_date, yields one (d, d).
     """

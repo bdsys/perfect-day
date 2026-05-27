@@ -1,7 +1,6 @@
 """Integration tests for backfill worker: chunking, lock, cancellation."""
 from __future__ import annotations
 
-import uuid
 from datetime import UTC, date, datetime
 from unittest.mock import AsyncMock, patch
 
@@ -61,7 +60,7 @@ async def test_run_backfill_fetches_each_weekly_chunk(client, db_session):
             diary_id=diary.id,
             from_date=run.from_date,
             to_date=run.to_date,
-            access_token="tok",
+            access_token="tok",  # noqa: S106
             diary_timezone="UTC",
         )
 
@@ -92,7 +91,7 @@ async def test_run_backfill_acquires_and_releases_lock(client, db_session):
             diary_id=diary.id,
             from_date=run.from_date,
             to_date=run.to_date,
-            access_token="tok",
+            access_token="tok",  # noqa: S106
             diary_timezone="UTC",
         )
 
@@ -119,7 +118,7 @@ async def test_run_backfill_skips_when_lock_held(client, db_session):
             diary_id=diary.id,
             from_date=run.from_date,
             to_date=run.to_date,
-            access_token="tok",
+            access_token="tok",  # noqa: S106
             diary_timezone="UTC",
         )
     finally:
@@ -158,7 +157,7 @@ async def test_run_backfill_breaks_on_cancellation(client, db_session):
             diary_id=diary.id,
             from_date=run.from_date,
             to_date=run.to_date,
-            access_token="tok",
+            access_token="tok",  # noqa: S106
             diary_timezone="UTC",
         )
 
@@ -188,7 +187,7 @@ async def test_post_then_delete_then_worker_exits_cleanly(client, db_session):
             diary_id=diary.id,
             from_date=run.from_date,
             to_date=run.to_date,
-            access_token="tok",
+            access_token="tok",  # noqa: S106
             diary_timezone="UTC",
         )
 
