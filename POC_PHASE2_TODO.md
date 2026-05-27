@@ -12,7 +12,7 @@ Items must be built in wave order. Within a wave, items are independent and can 
 | # | Feature | Status |
 |---|---|---|
 | 22 | Gemini fallback for LLM | **done** |
-| 17 | Backfill — slice 1 (Calendar-only, spec-compliant) | pending |
+| 17 | Backfill — slice 1 (Calendar-only, spec-compliant) | **done** |
 | 15 | Multi-day entry support | pending |
 
 Build 22 first within Wave A — it introduces the LLM provider abstraction that 15 and 16 build on.
