@@ -544,6 +544,7 @@ async def _backfill_diary(backfill_run_id_str: str) -> None:
 
     try:
         events_ingested, entries_created = await run_backfill(
+            backfill_run_id=backfill_run_id,
             diary_id=backfill_run.diary_id,
             from_date=backfill_run.from_date,
             to_date=backfill_run.to_date,
