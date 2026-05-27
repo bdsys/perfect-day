@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -107,8 +107,24 @@ async def list_scan_runs(
 # ---------------------------------------------------------------------------
 
 
+ALLOWED_BACKFILL_SOURCES = {"google_calendar"}
+
+
 class BackfillRequest(BaseModel):
-    days: int = Field(ge=1, le=365, description="How many days back to backfill")
+    from_date: date
+    to_date: date
+    sources: list[str] = Field(default_factory=lambda: ["google_calendar"])
+
+    @model_validator(mode="after")
+    def _validate_range_and_sources(self) -> BackfillRequest:
+        if self.from_date > self.to_date:
+            raise ValueError("from_date must be <= to_date")
+        if (self.to_date - self.from_date).days > 365:
+            raise ValueError("range must be <= 365 days")
+        unknown = set(self.sources) - ALLOWED_BACKFILL_SOURCES
+        if unknown or not self.sources:
+            raise ValueError(f"unsupported sources: {sorted(unknown) or 'empty'}")
+        return self
 
 
 class BackfillRunOut(BaseModel):
@@ -116,6 +132,7 @@ class BackfillRunOut(BaseModel):
     diary_id: uuid.UUID
     from_date: date
     to_date: date
+    sources: list[str]
     status: str
     started_at: datetime | None
     completed_at: datetime | None
@@ -139,14 +156,11 @@ async def trigger_backfill(
 ) -> BackfillRun:
     await _get_diary_or_404(diary_id, user, db, require_owner=True)
 
-    to_date = datetime.now(tz=UTC).date()
-    from_date = to_date - timedelta(days=body.days)
-
     backfill_run = BackfillRun(
         diary_id=diary_id,
-        from_date=from_date,
-        to_date=to_date,
-        sources=["google_calendar"],
+        from_date=body.from_date,
+        to_date=body.to_date,
+        sources=body.sources,
         status="pending",
     )
     db.add(backfill_run)
