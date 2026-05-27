@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field, model_validator
@@ -202,4 +202,42 @@ async def get_backfill_run(
     run = result.scalar_one_or_none()
     if run is None:
         raise HTTPException(status_code=404, detail="backfill_run_not_found")
+    return run
+
+
+_CANCELLABLE_BACKFILL_STATES = {"pending", "running"}
+
+
+@router.delete(
+    "/diaries/{diary_id}/scan/backfill/{run_id}",
+    response_model=BackfillRunOut,
+)
+async def cancel_backfill_run(
+    diary_id: uuid.UUID,
+    run_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> BackfillRun:
+    await _get_diary_or_404(diary_id, user, db, require_owner=True)
+    result = await db.execute(
+        select(BackfillRun).where(
+            BackfillRun.id == run_id,
+            BackfillRun.diary_id == diary_id,
+        )
+    )
+    run = result.scalar_one_or_none()
+    if run is None:
+        raise HTTPException(status_code=404, detail="backfill_run_not_found")
+    if run.status == "cancelled":
+        return run
+    if run.status not in _CANCELLABLE_BACKFILL_STATES:
+        raise HTTPException(
+            status_code=409,
+            detail=f"cannot cancel run in status {run.status!r}",
+        )
+    run.status = "cancelled"
+    if run.completed_at is None:
+        run.completed_at = datetime.now(tz=UTC)
+    await db.flush()
+    await db.refresh(run)
     return run

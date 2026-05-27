@@ -182,3 +182,99 @@ class TestBackfillGet:
             headers=auth,
         )
         assert r2.status_code == 404
+
+
+class TestBackfillDelete:
+    async def test_delete_pending_returns_cancelled(self, client: AsyncClient):
+        token, diary = await _setup(client)
+        auth = {"Authorization": f"Bearer {token}"}
+        with patch("app.workers.tasks.backfill_diary.delay"):
+            r = await client.post(
+                f"/v1/diaries/{diary['id']}/scan/backfill",
+                json={"from_date": "2026-05-01", "to_date": "2026-05-15"},
+                headers=auth,
+            )
+        run_id = r.json()["id"]
+
+        r2 = await client.delete(
+            f"/v1/diaries/{diary['id']}/scan/backfill/{run_id}",
+            headers=auth,
+        )
+        assert r2.status_code == 200
+        assert r2.json()["status"] == "cancelled"
+
+    async def test_delete_already_cancelled_is_idempotent(self, client: AsyncClient):
+        token, diary = await _setup(client)
+        auth = {"Authorization": f"Bearer {token}"}
+        with patch("app.workers.tasks.backfill_diary.delay"):
+            r = await client.post(
+                f"/v1/diaries/{diary['id']}/scan/backfill",
+                json={"from_date": "2026-05-01", "to_date": "2026-05-15"},
+                headers=auth,
+            )
+        run_id = r.json()["id"]
+        # First cancel
+        await client.delete(
+            f"/v1/diaries/{diary['id']}/scan/backfill/{run_id}", headers=auth
+        )
+        # Second cancel — should still be 200
+        r3 = await client.delete(
+            f"/v1/diaries/{diary['id']}/scan/backfill/{run_id}", headers=auth
+        )
+        assert r3.status_code == 200
+        assert r3.json()["status"] == "cancelled"
+
+    async def test_delete_completed_run_returns_409(self, client: AsyncClient, db_session):
+        import uuid as _uuid
+        from datetime import date as _d
+        from app.models import BackfillRun as _BackfillRun
+        token, diary = await _setup(client)
+        auth = {"Authorization": f"Bearer {token}"}
+        run = _BackfillRun(
+            diary_id=_uuid.UUID(diary["id"]),
+            from_date=_d(2026, 5, 1),
+            to_date=_d(2026, 5, 15),
+            sources=["google_calendar"],
+            status="completed",
+        )
+        db_session.add(run)
+        await db_session.commit()
+        await db_session.refresh(run)
+
+        r = await client.delete(
+            f"/v1/diaries/{diary['id']}/scan/backfill/{run.id}",
+            headers=auth,
+        )
+        assert r.status_code == 409
+
+    async def test_delete_404_when_missing(self, client: AsyncClient):
+        token, diary = await _setup(client)
+        auth = {"Authorization": f"Bearer {token}"}
+        fake_id = "00000000-0000-0000-0000-000000000000"
+        r = await client.delete(
+            f"/v1/diaries/{diary['id']}/scan/backfill/{fake_id}",
+            headers=auth,
+        )
+        assert r.status_code == 404
+
+    async def test_delete_403_when_not_owner(self, client: AsyncClient):
+        token, diary = await _setup(client)
+        auth = {"Authorization": f"Bearer {token}"}
+        with patch("app.workers.tasks.backfill_diary.delay"):
+            r = await client.post(
+                f"/v1/diaries/{diary['id']}/scan/backfill",
+                json={"from_date": "2026-05-01", "to_date": "2026-05-15"},
+                headers=auth,
+            )
+        run_id = r.json()["id"]
+
+        r2 = await client.post(
+            "/v1/auth/register",
+            json={"email": "stranger@example.com", "password": "Password1!"},
+        )
+        other_auth = {"Authorization": f"Bearer {r2.json()['access_token']}"}
+        r3 = await client.delete(
+            f"/v1/diaries/{diary['id']}/scan/backfill/{run_id}",
+            headers=other_auth,
+        )
+        assert r3.status_code in (403, 404)
