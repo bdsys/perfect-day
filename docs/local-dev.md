@@ -1,6 +1,6 @@
-# POC Phase 1 — Local Testing Guide
+# Local Development Guide
 
-This guide walks through setting up, running, and validating the Phase 1 PoC of Perfect Day on your local machine. The goal is to exercise the complete golden path: **sign in → connect Google Calendar → scan → draft entry → edit → publish**.
+This guide walks through setting up, running, and validating Perfect Day on your local machine. The goal is to exercise the complete golden path: **sign in → connect Google Calendar → scan → draft entry → edit → publish**.
 
 Covers: macOS and Linux (x86_64 and ARM). Requires Docker.
 
@@ -344,49 +344,8 @@ curl -s -X POST http://localhost:8000/v1/diaries/<diary_id>/scan/run \
 
 ---
 
-## Outstanding Phase 1 TODOs
-
-These items are in scope for Phase 1 but not yet implemented. Pick them up before
-considering Phase 1 complete.
-
-### 1 — Restore UI for soft-deleted diaries and entries
-
-**Status:** Backend endpoints exist and work; frontend UI is missing.
-
-The API already has:
-- `POST /v1/diaries/{id}/restore` — restores a soft-deleted diary within the 30-day window
-- `POST /v1/entries/{id}/restore` — restores a soft-deleted entry (no grace-period constraint currently)
-
-What's needed in the web UI:
-- `/diaries` page: list soft-deleted diaries (separate section or filter) with a Restore button each.
-- `/diaries/{id}` page: list soft-deleted entries (toggle or separate tab) with a Restore button each.
-- Wire `api.diaries.restore(id)` and `api.entries.restore(id)` into the API client (`apps/web/src/lib/api.ts`).
-- Update the delete confirm dialogs to say something accurate (e.g. "You can restore it from this page within 30 days").
-
-### 2 — Entry hard-delete (30-day grace) + matching UI
-
-**Status:** Entries are soft-deleted indefinitely; no hard-delete path exists for them. The design doc
-(`design/02-data-model.md` § Behavior decisions) says entries are "soft indefinitely; recoverable from UI"
-but the confirm dialog currently implies a 30-day window which is inaccurate.
-
-Two sub-tasks:
-
-**a) Fix the confirm dialog (quick):**
-Change the entry delete confirm in `apps/web/src/app/entries/[entryId]/page.tsx` to not imply a deadline,
-since entries are intentionally soft-deleted indefinitely per the design doc.
-
-**b) Decide and document the intended behaviour:**
-The design doc says entries are soft-indefinitely. If that's the final decision, update the confirm
-dialog to reflect it and make sure the restore UI (TODO #1 above) surfaces soft-deleted entries
-with no expiry warning. If a 30-day grace window is preferred instead, add `hard_delete_after` to the
-`Entry` model, wire it into `process_hard_deletes` in `apps/api/app/workers/beat_tasks.py`, add an
-Alembic migration, and update the restore endpoint to enforce the deadline (matching the diary flow
-in `apps/api/app/routers/v1/diaries.py:246`).
-
----
-
 ## Security notes for local dev
 
 - Generated secrets in `apps/api/.env` are for local use only. Never commit `.env` (it's in `.gitignore`).
-- `MASTER_SECRET` and `OAUTH_TOKEN_SECRET` are AES-256-GCM encryption keys. If you rotate them after the database has data, existing encrypted rows become unreadable. See `POC_PHASE1_DEPLOYMENT.md` for the upgrade path to sops+YubiKey.
+- `MASTER_SECRET` and `OAUTH_TOKEN_SECRET` are AES-256-GCM encryption keys. If you rotate them after the database has data, existing encrypted rows become unreadable. See [`deploy/nuc-ops.md`](../deploy/nuc-ops.md) for the production secrets workflow and the upgrade path to sops+YubiKey.
 - MinIO admin credentials (`minioadmin`/`minioadmin`) are only used locally. The NUC deployment uses random credentials via `scripts/nuc/10-secrets.sh`.

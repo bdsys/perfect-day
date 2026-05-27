@@ -92,7 +92,7 @@ test-all:
 	@echo ""
 	@echo "All checks passed."
 	@echo "Note: 'make test-live' and 'make test-smoke' are not included here."
-	@echo "See POC_PHASE1_LOCAL_TESTING.md for when to use them."
+	@echo "See docs/local-dev.md for when to use them."
 
 test-coverage:
 	cd $(API_DIR) && $(CURDIR)/$(PYTEST) tests/unit tests/integration \

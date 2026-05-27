@@ -6,7 +6,6 @@
 [![Web Build](https://img.shields.io/github/actions/workflow/status/bdsys/perfect-day/ci.yml?label=web%20build&style=flat-square)](https://github.com/bdsys/perfect-day/actions/workflows/ci.yml)
 [![Docker Build](https://img.shields.io/github/actions/workflow/status/bdsys/perfect-day/ci.yml?label=docker%20build&style=flat-square)](https://github.com/bdsys/perfect-day/actions/workflows/ci.yml)
 [![Security Scan](https://img.shields.io/github/actions/workflow/status/bdsys/perfect-day/ci.yml?label=security%20scan&style=flat-square)](https://github.com/bdsys/perfect-day/actions/workflows/ci.yml)
-[![Coverage](https://codecov.io/gh/bdsys/perfect-day/graph/badge.svg)](https://codecov.io/gh/bdsys/perfect-day)
 
 > An automated diary app that synthesizes Google Calendar, Google Photos, weather, and Spotify into warm, narrative diary entries using Claude — always saved as drafts for human review before publishing.
 
@@ -21,7 +20,7 @@ make web         # Next.js on :3000
 make test-all    # lint + typecheck + unit + integration + e2e
 ```
 
-For the full walkthrough see [POC_PHASE1_LOCAL_TESTING.md](POC_PHASE1_LOCAL_TESTING.md).
+For the full walkthrough see [docs/local-dev.md](docs/local-dev.md).
 
 ---
 
@@ -29,9 +28,9 @@ For the full walkthrough see [POC_PHASE1_LOCAL_TESTING.md](POC_PHASE1_LOCAL_TEST
 
 | If you want to… | File |
 |---|---|
-| Get the stack running locally | [POC_PHASE1_LOCAL_TESTING.md](POC_PHASE1_LOCAL_TESTING.md) |
+| Get the stack running locally | [docs/local-dev.md](docs/local-dev.md) |
 | See what's left to build | [POC_PHASE1_TODO.md](POC_PHASE1_TODO.md) |
-| Deploy to the NUC | [POC_PHASE1_DEPLOYMENT.md](POC_PHASE1_DEPLOYMENT.md) |
+| Deploy to the NUC | [deploy/nuc-ops.md](deploy/nuc-ops.md) |
 | Understand the architecture | [design/01-architecture.md](design/01-architecture.md) |
 
 ---
@@ -60,6 +59,7 @@ For the full walkthrough see [POC_PHASE1_LOCAL_TESTING.md](POC_PHASE1_LOCAL_TEST
 | [design/testing.md](design/testing.md) | Test pyramid, coverage targets, CI integration |
 | [design/time-and-tz.md](design/time-and-tz.md) | Timezone rules, DST handling |
 | [design/THREATMODEL.md](design/THREATMODEL.md) | STRIDE threat surfaces and mitigations |
+| [design/known-issues.md](design/known-issues.md) | Technical debt and flagged issues |
 
 ### Deployment (`deploy/`)
 
@@ -76,7 +76,7 @@ For the full walkthrough see [POC_PHASE1_LOCAL_TESTING.md](POC_PHASE1_LOCAL_TEST
 | File | Topic |
 |---|---|
 | [PORTS.md](PORTS.md) | Port assignments for all services |
-| [POC_PHASE1_LOCAL_TESTING.md](POC_PHASE1_LOCAL_TESTING.md) | Local dev setup walkthrough |
-| [POC_PHASE1_DEPLOYMENT.md](POC_PHASE1_DEPLOYMENT.md) | NUC deployment step-by-step |
-| [POC_PHASE1_TODO.md](POC_PHASE1_TODO.md) | Current state and next steps |
+| [docs/local-dev.md](docs/local-dev.md) | Local dev setup and testing walkthrough |
+| [POC_PHASE1_TODO.md](POC_PHASE1_TODO.md) | Phase status and what's next |
+| [design/known-issues.md](design/known-issues.md) | Technical debt and flagged issues |
 | [CLAUDE.md](CLAUDE.md) | AI assistant instructions for this repo |
