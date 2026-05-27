@@ -12,6 +12,25 @@ from app.workers.utils import db_session
 log = structlog.get_logger()
 
 
+def _iter_week_chunks(
+    from_date: date, to_date: date
+) -> tuple[date, date]:
+    """Yield (chunk_start, chunk_end_inclusive) windows of up to 7 days.
+    Final chunk may be shorter; if from_date == to_date, yields one (d, d).
+    """
+    if from_date == to_date:
+        yield (from_date, to_date)
+        return
+
+    cur = from_date
+    while cur <= to_date:
+        nxt = min(cur + timedelta(days=7), to_date)
+        yield (cur, nxt)
+        if nxt == to_date:
+            break
+        cur = nxt
+
+
 async def run_backfill(
     diary_id: uuid.UUID,
     from_date: date,
