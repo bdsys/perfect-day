@@ -132,13 +132,13 @@ export default function DiaryDetailPage() {
       setBackfillError('Start date must be before end date.')
       return
     }
-    setShowBackfillOptions(false)
     try {
       const result = await api.diaries.triggerBackfill(diaryId, backfillFrom, backfillTo)
       if ('alreadyRunning' in result) {
         setBackfillError('A scan or backfill is already running. Try again in a minute.')
         return
       }
+      setShowBackfillOptions(false)
       setLatestBackfillRun(result)
       setPollingBackfill(true)
     } catch (e: unknown) {
