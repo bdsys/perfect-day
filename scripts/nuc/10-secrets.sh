@@ -53,6 +53,7 @@ echo "--- API Keys (operator-provided) ---"
 echo ""
 
 ANTHROPIC_API_KEY=$(prompt_secret ANTHROPIC_API_KEY "ANTHROPIC_API_KEY")
+GEMINI_API_KEY=$(prompt_optional GEMINI_API_KEY "GEMINI_API_KEY (LLM fallback, leave blank to disable)")
 GOOGLE_CLIENT_ID=$(prompt_secret GOOGLE_CLIENT_ID "GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET=$(prompt_secret GOOGLE_CLIENT_SECRET "GOOGLE_CLIENT_SECRET")
 SENDGRID_API_KEY=$(prompt_optional SENDGRID_API_KEY "SENDGRID_API_KEY (email notifications)")
@@ -146,6 +147,9 @@ GOOGLE_REDIRECT_URI=https://api.diary.perfectday.andrewlass.com/v1/integrations/
 
 # Anthropic
 ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+
+# Gemini (optional — used as LLM fallback when Anthropic fails)
+GEMINI_API_KEY=${GEMINI_API_KEY:-}
 
 # SendGrid (optional — email notifications)
 SENDGRID_API_KEY=${SENDGRID_API_KEY:-}

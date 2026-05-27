@@ -1,7 +1,8 @@
-"""LLM draft generation: prompt builder, citation validator, Anthropic call."""
+"""LLM draft generation: prompt builder, citation validator, provider orchestration."""
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import re
@@ -9,15 +10,18 @@ import time
 import uuid
 from datetime import UTC, datetime
 
-import anthropic
 import structlog
 
-from app.core.config import get_settings
+from app.workers.llm_providers import (
+    AnthropicProvider,
+    GeminiProvider,
+    LLMPermanentError,
+    LLMProvider,
+    LLMTransientError,
+)
 from app.workers.utils import db_session
 
 log = structlog.get_logger()
-
-PRIMARY_MODEL = "claude-haiku-4-5-20251001"
 
 SYSTEM_PROMPT = """\
 You are a warm, observational diary writer. Your job is to turn a list of calendar events \
@@ -338,83 +342,115 @@ async def generate_draft_for_entry(entry_id: uuid.UUID) -> None:
 
     diary_context, entry_data = build_prompt(diary, entry, events, enrichments)
 
-    settings = get_settings()
-    client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
-
     prompt_text = diary_context + "\n\n" + entry_data
     prompt_hash = hashlib.sha256(prompt_text.encode()).hexdigest()
 
     start_ms = int(time.time() * 1000)
     llm_result = None
     error_msg = None
-    model_used = PRIMARY_MODEL
-    response = None
+    model_used = "unknown"
     flagged_tokens: list[str] = []
+    input_tokens: int | None = None
+    output_tokens: int | None = None
 
     MAX_ATTEMPTS = 3
-    user_message_extra = ""
 
-    for attempt in range(MAX_ATTEMPTS):
-        try:
-            response = client.messages.create(
-                model=PRIMARY_MODEL,
-                max_tokens=1024,
-                system=SYSTEM_PROMPT,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": diary_context,
-                                "cache_control": {"type": "ephemeral"},
-                            },
-                            {"type": "text", "text": entry_data + user_message_extra},
-                        ],
-                    }
-                ],  # type: ignore[list-item]  # anthropic SDK types don't model cache_control blocks
-            )
-            raw = response.content[0].text  # type: ignore[union-attr]
-            try:
-                llm_result = json.loads(raw)
-            except json.JSONDecodeError:
-                match = re.search(r"\{.*\}", raw, re.DOTALL)
-                if match:
-                    llm_result = json.loads(match.group())
-                else:
-                    raise ValueError("no JSON in response")
+    _all_providers: list[LLMProvider] = [AnthropicProvider(), GeminiProvider()]
+    providers: list[LLMProvider] = [p for p in _all_providers if p.is_configured()]
+    citation_exhausted = False  # True when all retries failed on citation validation — don't failover
 
-            valid, err, flagged_tokens = validate_citation(llm_result, events)
-            if not valid:
-                log.warning("citation_validation_failed", entry_id=str(entry_id), err=err)
-                if attempt < MAX_ATTEMPTS - 1:
-                    # Retry with explicit correction instruction appended
-                    user_message_extra = (
-                        f"\n\nPREVIOUS RESPONSE FAILED CITATION VALIDATION: {err}. "
-                        f"Reply again with valid JSON where every facts_used index is in "
-                        f"[1..{len(events)}] and references only events in the EVENTS section."
-                    )
-                    llm_result = None
-                    continue
-                else:
-                    error_msg = f"citation validation failed after {MAX_ATTEMPTS} attempts: {err}"
-                    llm_result = None
-
+    for provider in providers:
+        if citation_exhausted:
             break
+        model_used = provider.name  # overwritten with actual model id after first API call
+        user_message_extra = ""
 
-        except anthropic.APIError as e:
-            import asyncio
+        for attempt in range(MAX_ATTEMPTS):
+            try:
+                result = await provider.generate(
+                    SYSTEM_PROMPT, diary_context, entry_data + user_message_extra
+                )
+                # Capture provider metadata before parsing so a parse failure
+                # still writes an accurate LLMGeneration row with the real model
+                # id and token counts we were billed for.
+                model_used = result.model
+                input_tokens = result.input_tokens
+                output_tokens = result.output_tokens
 
-            log.error("anthropic_error", entry_id=str(entry_id), attempt=attempt, error=str(e))
-            if attempt < MAX_ATTEMPTS - 1:
-                await asyncio.sleep(4**attempt)
-            else:
+                raw = result.raw_text
+                try:
+                    parsed = json.loads(raw)
+                except json.JSONDecodeError:
+                    match = re.search(r"\{.*\}", raw, re.DOTALL)
+                    if match:
+                        parsed = json.loads(match.group())
+                    else:
+                        log.warning(
+                            "llm_response_no_json",
+                            entry_id=str(entry_id),
+                            provider=provider.name,
+                            model=model_used,
+                            raw_len=len(raw),
+                            raw_preview=raw[:500],
+                            input_tokens=input_tokens,
+                            output_tokens=output_tokens,
+                        )
+                        raise ValueError("no JSON in response")
+
+                valid, err, flagged_tokens = validate_citation(parsed, events)
+                if not valid:
+                    log.warning(
+                        "citation_validation_failed",
+                        entry_id=str(entry_id),
+                        provider=provider.name,
+                        err=err,
+                    )
+                    if attempt < MAX_ATTEMPTS - 1:
+                        user_message_extra = (
+                            f"\n\nPREVIOUS RESPONSE FAILED CITATION VALIDATION: {err}. "
+                            f"Reply again with valid JSON where every facts_used index is in "
+                            f"[1..{len(events)}] and references only events in the EVENTS section."
+                        )
+                        continue
+                    else:
+                        error_msg = f"citation validation failed after {MAX_ATTEMPTS} attempts: {err}"
+                        llm_result = None
+                        citation_exhausted = True  # prompt/data issue — don't try another provider
+                        break
+
+                llm_result = parsed
+                break  # success — exit attempt loop
+
+            except LLMTransientError as e:
+                log.error(
+                    "llm_transient_error",
+                    entry_id=str(entry_id),
+                    provider=provider.name,
+                    attempt=attempt,
+                    error=str(e),
+                )
+                if attempt < MAX_ATTEMPTS - 1:
+                    await asyncio.sleep(4**attempt)
+                else:
+                    error_msg = str(e)
+
+            except LLMPermanentError as e:
+                log.error(
+                    "llm_permanent_error",
+                    entry_id=str(entry_id),
+                    provider=provider.name,
+                    error=str(e),
+                )
+                error_msg = str(e)
+                break  # don't retry within this provider
+
+            except Exception as e:
                 error_msg = str(e)
                 llm_result = None
-        except Exception as e:
-            error_msg = str(e)
-            llm_result = None
-            break
+                break
+
+        if llm_result is not None:
+            break  # provider succeeded — skip remaining providers
 
     latency_ms = int(time.time() * 1000) - start_ms
 
@@ -438,6 +474,7 @@ async def generate_draft_for_entry(entry_id: uuid.UUID) -> None:
             entry_update.body_markdown = llm_result.get("body_markdown")
             entry_update.body_source = "llm"
             entry_update.flagged_tokens = flagged_tokens or []
+            entry_update.updated_at = datetime.now(UTC)
 
             gen = LLMGeneration(
                 entry_id=entry_id,
@@ -445,8 +482,8 @@ async def generate_draft_for_entry(entry_id: uuid.UUID) -> None:
                 prompt_hash=prompt_hash,
                 latency_ms=latency_ms,
                 status="success",
-                input_tokens=response.usage.input_tokens if response else None,
-                output_tokens=response.usage.output_tokens if response else None,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
             )
         else:
             # Deterministic fallback: build a bulleted event list from raw data.
@@ -459,6 +496,11 @@ async def generate_draft_for_entry(entry_id: uuid.UUID) -> None:
             entry_update.body_markdown = fallback_body
             entry_update.body_source = "fallback"
             entry_update.flagged_tokens = []
+            # Force an UPDATE even when fallback content is byte-identical to the existing
+            # row — SQLAlchemy's dirty-check would otherwise skip the write and onupdate
+            # would not fire, leaving updated_at unchanged and stalling the frontend's
+            # updated_at-based polling.
+            entry_update.updated_at = datetime.now(UTC)
 
             # Distinguish between API failure (llm_result is None) and an LLM
             # response that contained no usable content (llm_result is a dict
@@ -473,6 +515,8 @@ async def generate_draft_for_entry(entry_id: uuid.UUID) -> None:
                 prompt_hash=prompt_hash,
                 latency_ms=latency_ms,
                 status="failed",
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
                 error=gen_error,
             )
 

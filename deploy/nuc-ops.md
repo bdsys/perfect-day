@@ -386,7 +386,4 @@ If rollback also fails, fall back to [B3.5 — Full reinstall](#b35--full-reinst
 
 ## Known gaps and flagged issues
 
-- **`require_reauth` in `app/core/auth.py:59`** — calls `loop.run_until_complete()` inside a running async loop. Not triggered in Phase 1 (no admin endpoints use it yet); will break in Phase 2. Flag for fixing before Phase 2.
-- **Google Photos integration is deferred** — Calendar only for Phase 1; Photos in Phase 2.
-- **LLM draft generation** requires `ANTHROPIC_API_KEY` and won't run in test mode. Use `make test-live` to exercise it manually once keys are set.
-- **Web UI soft-delete restore flows** — entry/diary restore UI not yet built (Phase 1 gap, non-blocking).
+See [`design/known-issues.md`](../design/known-issues.md) for the full list of open issues and technical debt.

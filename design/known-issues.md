@@ -15,13 +15,6 @@ Calls `loop.run_until_complete()` inside a running async loop. Not currently tri
 
 ---
 
-### Web UI soft-delete restore flows
-**Flagged:** 2026-05-25. **Resolved:** 2026-05-27.
-
-Restore page (`/diaries/restore`) ships with the grace-period countdown UI. Closing this entry once verified end-to-end against the live stack.
-
----
-
 ## Deferred by design (not a bug — captured so it's findable)
 
 ### Google Photos integration
@@ -29,3 +22,12 @@ Calendar only for Phase 1. Photos integration is Phase 2 (`design/09-poc-scope.m
 
 ### LLM draft generation requires `ANTHROPIC_API_KEY`
 LLM does not run in test mode. Use `make test-live` to exercise it manually once `ANTHROPIC_API_KEY` is set in `apps/api/.env`. CI uses recorded cassettes (`tests/cassettes/llm_draft_simple.yaml`).
+
+---
+
+## Resolved
+
+### Web UI soft-delete restore flows
+**Flagged:** 2026-05-25. **Resolved:** 2026-05-27.
+
+Restore page (`/diaries/restore`) ships with the grace-period countdown UI. Verified end-to-end against the live stack.

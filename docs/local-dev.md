@@ -146,7 +146,7 @@ make test-e2e
 This:
 1. Boots the full stack via `docker-compose.test.yml` overlay (ephemeral volumes, deterministic `PYTHONHASHSEED`).
 2. Waits for `/readyz`.
-3. Runs `apps/web/e2e/golden-path.spec.ts` — the 5-step Phase 1 smoke.
+3. Runs `apps/web/e2e/golden-path.spec.ts` — the 5-step golden-path smoke.
 4. Tears down and removes volumes.
 
 Playwright report on failure: `apps/web/playwright-report/`.
@@ -164,7 +164,7 @@ Calls the real Anthropic API. Use this to refresh `tests/cassettes/llm_draft_sim
 
 ## Automated Smoke (curl)
 
-`make test-smoke` (wrapping `scripts/smoke-test.sh`) runs a full curl walkthrough and asserts HTTP status codes at each step. It exercises every Phase 1 API endpoint and exits non-zero on any failure. Requires a running stack.
+`make test-smoke` (wrapping `scripts/smoke-test.sh`) runs a full curl walkthrough and asserts HTTP status codes at each step. It exercises all core API endpoints and exits non-zero on any failure. Requires a running stack.
 
 ```bash
 make test-smoke                                                    # default: http://localhost:8000
@@ -173,9 +173,9 @@ make test-smoke BASE=https://api.diary.perfectday.andrewlass.com  # against depl
 
 ---
 
-## Phase 1 Validation Matrix
+## Validation Matrix
 
-Each row maps a Phase 1 scope item (`design/09-poc-scope.md` items 1–10) to the command that validates it.
+Each row maps a scope item (`design/09-poc-scope.md` items 1–10) to the command that validates it.
 
 | # | Scope item | Validated by |
 |---|---|---|
@@ -223,7 +223,7 @@ export MASTER_SECRET=$(python3 -c "import secrets; print(secrets.token_hex(32))"
 ```
 
 **`docker compose up web` fails with `dockerfile not found`**
-`apps/web/Dockerfile` is required. It was created as part of this repo's Phase 1 setup and should exist at `apps/web/Dockerfile`. If it's missing, check git status.
+`apps/web/Dockerfile` is required and should exist at `apps/web/Dockerfile`. If it's missing, check git status.
 
 ---
 

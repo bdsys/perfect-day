@@ -29,7 +29,7 @@ For the full walkthrough see [docs/local-dev.md](docs/local-dev.md).
 | If you want to… | File |
 |---|---|
 | Get the stack running locally | [docs/local-dev.md](docs/local-dev.md) |
-| See what's left to build | [POC_PHASE1_TODO.md](POC_PHASE1_TODO.md) |
+| See what's left to build | [POC_PHASE2_TODO.md](POC_PHASE2_TODO.md) |
 | Deploy to the NUC | [deploy/nuc-ops.md](deploy/nuc-ops.md) |
 | Understand the architecture | [design/01-architecture.md](design/01-architecture.md) |
 
@@ -77,6 +77,6 @@ For the full walkthrough see [docs/local-dev.md](docs/local-dev.md).
 |---|---|
 | [PORTS.md](PORTS.md) | Port assignments for all services |
 | [docs/local-dev.md](docs/local-dev.md) | Local dev setup and testing walkthrough |
-| [POC_PHASE1_TODO.md](POC_PHASE1_TODO.md) | Phase status and what's next |
+| [POC_PHASE2_TODO.md](POC_PHASE2_TODO.md) | Phase 2 status and what's next |
 | [design/known-issues.md](design/known-issues.md) | Technical debt and flagged issues |
 | [CLAUDE.md](CLAUDE.md) | AI assistant instructions for this repo |
