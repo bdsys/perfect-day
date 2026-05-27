@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
-import { api, type Diary, type Entry, type Integration, type ScanRun } from '@/lib/api'
+import { api, type Diary, type Entry, type Integration, type ScanRun, type BackfillRun } from '@/lib/api'
 import { useAuth } from '@/lib/auth-context'
 import { StatusPanel } from '@/components/StatusPanel'
 import { usePolling } from '@/lib/usePolling'
@@ -60,6 +60,12 @@ export default function DiaryDetailPage() {
   const [showScanOptions, setShowScanOptions] = useState(false)
   const [pastDays, setPastDays] = useState(90)
   const [futureDays, setFutureDays] = useState(90)
+  const [showBackfillOptions, setShowBackfillOptions] = useState(false)
+  const [backfillFrom, setBackfillFrom] = useState('')
+  const [backfillTo, setBackfillTo] = useState('')
+  const [pollingBackfill, setPollingBackfill] = useState(false)
+  const [latestBackfillRun, setLatestBackfillRun] = useState<BackfillRun | null>(null)
+  const [backfillError, setBackfillError] = useState('')
 
   useEffect(() => {
     if (!authLoading && !user) router.replace('/login')
@@ -116,6 +122,41 @@ export default function DiaryDetailPage() {
     }
   }
 
+  async function handleBackfill() {
+    setBackfillError('')
+    if (!backfillFrom || !backfillTo) {
+      setBackfillError('Both dates are required.')
+      return
+    }
+    if (backfillFrom > backfillTo) {
+      setBackfillError('Start date must be before end date.')
+      return
+    }
+    setShowBackfillOptions(false)
+    try {
+      const result = await api.diaries.triggerBackfill(diaryId, backfillFrom, backfillTo)
+      if ('alreadyRunning' in result) {
+        setBackfillError('A scan or backfill is already running. Try again in a minute.')
+        return
+      }
+      setLatestBackfillRun(result)
+      setPollingBackfill(true)
+    } catch (e: unknown) {
+      setBackfillError(e instanceof Error ? e.message : 'Backfill failed')
+    }
+  }
+
+  async function handleCancelBackfill() {
+    if (!latestBackfillRun) return
+    try {
+      const run = await api.diaries.cancelBackfillRun(diaryId, latestBackfillRun.id)
+      setLatestBackfillRun(run)
+      setPollingBackfill(false)
+    } catch (e: unknown) {
+      setBackfillError(e instanceof Error ? e.message : 'Cancel failed')
+    }
+  }
+
   const pollScan = useCallback(async () => {
     try {
       const runs = await api.diaries.listScanRuns(diaryId)
@@ -141,6 +182,38 @@ export default function DiaryDetailPage() {
     }, 5 * 60 * 1000)
     return () => clearTimeout(timer)
   }, [pollingScan])
+
+  const pollBackfill = useCallback(async () => {
+    if (!latestBackfillRun) return
+    try {
+      const run = await api.diaries.getBackfillRun(diaryId, latestBackfillRun.id)
+      setLatestBackfillRun(run)
+      if (run.status === 'completed' || run.status === 'failed' || run.status === 'cancelled') {
+        setPollingBackfill(false)
+        if (run.status === 'completed') {
+          const updated = await api.entries.list(diaryId, statusFilter ? { status: statusFilter } : {})
+          setEntries(updated)
+        }
+      }
+    } catch {
+      // ignore transient poll errors
+    }
+  }, [diaryId, latestBackfillRun, statusFilter])
+
+  usePolling(pollBackfill, 3000, pollingBackfill)
+
+  useEffect(() => {
+    if (!pollingBackfill) return
+    const timer = setTimeout(() => {
+      setPollingBackfill(false)
+      setLatestBackfillRun(prev =>
+        prev?.status === 'running' || prev?.status === 'pending'
+          ? { ...prev, status: 'failed', error: 'Timed out' }
+          : prev,
+      )
+    }, 5 * 60 * 1000)
+    return () => clearTimeout(timer)
+  }, [pollingBackfill])
 
   async function connectCalendar() {
     try {
@@ -241,6 +314,48 @@ export default function DiaryDetailPage() {
                 </div>
               )}
             </div>
+            <div style={{ position: 'relative', display: 'inline-block' }}>
+              <button
+                className="btn btn-secondary"
+                onClick={() => setShowBackfillOptions((v) => !v)}
+                disabled={pollingBackfill}
+              >
+                {pollingBackfill ? 'Backfilling…' : 'Backfill'}
+              </button>
+              {showBackfillOptions && (
+                <div className="popover" style={{ top: '100%', right: 0, marginTop: '0.4rem' }}>
+                  <label>
+                    From date
+                    <input
+                      type="date"
+                      value={backfillFrom}
+                      onChange={(e) => setBackfillFrom(e.target.value)}
+                      style={{ width: '100%', padding: '0.3rem', marginBottom: '0.75rem' }}
+                    />
+                  </label>
+                  <label>
+                    To date
+                    <input
+                      type="date"
+                      value={backfillTo}
+                      onChange={(e) => setBackfillTo(e.target.value)}
+                      style={{ width: '100%', padding: '0.3rem', marginBottom: '0.75rem' }}
+                    />
+                  </label>
+                  {backfillError && (
+                    <p className="error-message" style={{ marginBottom: '0.5rem' }}>{backfillError}</p>
+                  )}
+                  <button
+                    className="btn btn-primary"
+                    style={{ width: '100%' }}
+                    onClick={handleBackfill}
+                    disabled={pollingBackfill}
+                  >
+                    Start backfill
+                  </button>
+                </div>
+              )}
+            </div>
             <button className="btn btn-primary" onClick={handleNewEntry} disabled={creating}>
               {creating ? 'Creating…' : 'New entry'}
             </button>
@@ -285,6 +400,41 @@ export default function DiaryDetailPage() {
             startedAt={latestRun.started_at}
             onDismiss={() => setLatestRun(null)}
           />
+        )}
+
+        {latestBackfillRun && (
+          <StatusPanel
+            state={
+              latestBackfillRun.status === 'completed' ? 'success' :
+              latestBackfillRun.status === 'failed' ? 'failed' :
+              latestBackfillRun.status === 'cancelled' ? 'failed' :
+              'running'
+            }
+            headline={
+              latestBackfillRun.status === 'running' || latestBackfillRun.status === 'pending'
+                ? 'Backfilling…' :
+              latestBackfillRun.status === 'completed' ? 'Backfill complete' :
+              latestBackfillRun.status === 'cancelled' ? 'Backfill cancelled' :
+              'Backfill failed'
+            }
+            detail={
+              latestBackfillRun.status === 'completed'
+                ? `${latestBackfillRun.events_ingested} events · ${latestBackfillRun.entries_created} new entries`
+                : latestBackfillRun.error ?? undefined
+            }
+            startedAt={latestBackfillRun.started_at ?? undefined}
+            onDismiss={() => setLatestBackfillRun(null)}
+          />
+        )}
+        {latestBackfillRun &&
+          (latestBackfillRun.status === 'pending' || latestBackfillRun.status === 'running') && (
+          <button
+            className="btn btn-secondary"
+            style={{ marginBottom: '0.75rem' }}
+            onClick={handleCancelBackfill}
+          >
+            Cancel backfill
+          </button>
         )}
 
         <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>

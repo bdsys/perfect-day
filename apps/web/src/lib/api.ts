@@ -234,6 +234,20 @@ export interface RuleMatchSummary {
   matched_at: string
 }
 
+export interface BackfillRun {
+  id: string
+  diary_id: string
+  from_date: string
+  to_date: string
+  sources: string[]
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
+  started_at: string | null
+  completed_at: string | null
+  events_ingested: number
+  entries_created: number
+  error: string | null
+}
+
 // ---------------------------------------------------------------------------
 // API functions
 // ---------------------------------------------------------------------------
@@ -296,6 +310,30 @@ export const api = {
     },
     async listScanRuns(id: string): Promise<ScanRun[]> {
       return apiFetch(`/v1/diaries/${id}/scan/runs`)
+    },
+    async triggerBackfill(
+      id: string,
+      from_date: string,
+      to_date: string,
+    ): Promise<BackfillRun | { alreadyRunning: true }> {
+      try {
+        return await apiFetch<BackfillRun>(`/v1/diaries/${id}/scan/backfill`, {
+          method: 'POST',
+          body: JSON.stringify({ from_date, to_date, sources: ['google_calendar'] }),
+        })
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : ''
+        if (msg.includes('scan_in_progress') || (e instanceof ApiError && e.status === 409)) {
+          return { alreadyRunning: true }
+        }
+        throw e
+      }
+    },
+    async getBackfillRun(id: string, runId: string): Promise<BackfillRun> {
+      return apiFetch(`/v1/diaries/${id}/scan/backfill/${runId}`)
+    },
+    async cancelBackfillRun(id: string, runId: string): Promise<BackfillRun> {
+      return apiFetch(`/v1/diaries/${id}/scan/backfill/${runId}`, { method: 'DELETE' })
     },
     async delete(id: string): Promise<Diary> {
       return apiFetch(`/v1/diaries/${id}`, { method: 'DELETE' })
