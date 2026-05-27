@@ -156,6 +156,15 @@ async def trigger_backfill(
 ) -> BackfillRun:
     await _get_diary_or_404(diary_id, user, db, require_owner=True)
 
+    r = get_redis()
+    lock_key = f"scan_lock:{diary_id}"
+    if await r.exists(lock_key):
+        raise HTTPException(
+            status_code=409,
+            detail="scan_in_progress",
+            headers={"Retry-After": "60"},
+        )
+
     backfill_run = BackfillRun(
         diary_id=diary_id,
         from_date=body.from_date,

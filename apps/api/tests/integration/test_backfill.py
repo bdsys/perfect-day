@@ -89,6 +89,26 @@ class TestBackfillEndpoint:
             )
         assert r.status_code == 202
 
+    async def test_backfill_returns_409_when_scan_lock_held(self, client: AsyncClient):
+        from app.core.dependencies import get_redis
+        token, diary = await _setup(client)
+        auth = {"Authorization": f"Bearer {token}"}
+
+        r_redis = get_redis()
+        lock_key = f"scan_lock:{diary['id']}"
+        await r_redis.set(lock_key, "1", ex=300)
+        try:
+            r = await client.post(
+                f"/v1/diaries/{diary['id']}/scan/backfill",
+                json={"from_date": "2026-05-01", "to_date": "2026-05-15"},
+                headers=auth,
+            )
+        finally:
+            await r_redis.delete(lock_key)
+
+        assert r.status_code == 409
+        assert r.headers["Retry-After"] == "60"
+
     async def test_backfill_non_owner_rejected(self, client: AsyncClient):
         token, diary = await _setup(client)
         r2 = await client.post(
