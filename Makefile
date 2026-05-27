@@ -114,8 +114,12 @@ web-e2e-install:
 	cd $(WEB_DIR) && npx playwright install chromium
 
 test-live:
-	@echo "Runs live LLM golden tests — never in CI. Requires ANTHROPIC_API_KEY."
-	cd $(API_DIR) && ANTHROPIC_API_KEY=$$(grep '^ANTHROPIC_API_KEY=' .env | cut -d= -f2-) ANTHROPIC_BASE_URL=https://api.anthropic.com $(CURDIR)/$(PYTEST) tests/integration/test_llm_live.py -q -m live
+	@echo "Runs live LLM golden tests — never in CI. Requires ANTHROPIC_API_KEY (and optionally GEMINI_API_KEY)."
+	cd $(API_DIR) && \
+	  ANTHROPIC_API_KEY=$$(grep '^ANTHROPIC_API_KEY=' .env | cut -d= -f2-) \
+	  GEMINI_API_KEY=$$(grep '^GEMINI_API_KEY=' .env | cut -d= -f2-) \
+	  ANTHROPIC_BASE_URL=https://api.anthropic.com \
+	  $(CURDIR)/$(PYTEST) tests/integration/test_llm_live.py -q -m live
 
 # Curl-based API smoke test against a running stack (default: http://localhost:8000).
 # Override with: make test-smoke BASE=http://example.com

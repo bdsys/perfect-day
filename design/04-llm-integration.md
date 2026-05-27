@@ -103,7 +103,7 @@ Residual risk is documented in [`design/THREATMODEL.md`](THREATMODEL.md) § Prom
 | Failure | Behavior |
 |---|---|
 | Anthropic 429 / 5xx | Exponential backoff: 1s, 4s, 16s. Max 3 retries. |
-| All Anthropic retries fail | Fall back to Gemini if configured. |
+| All Anthropic retries fail | Fall back to Gemini if configured. Gemini-generated entries still use `body_source='llm'`; the actual model id (e.g. `gemini-2.5-pro`) is recorded in `llm_generations.model`. |
 | Both providers fail | `llm_generations.status='failed'`. Entry stays draft, empty body. Notification: "Draft generation failed — tap to retry." |
 | Invalid JSON | One regenerate with stricter instruction. Then mark failed. |
 | Citation validator rejects | One regenerate with feedback. Then accept with warning in UI. |

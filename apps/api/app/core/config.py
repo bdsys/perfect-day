@@ -46,6 +46,10 @@ class Settings(BaseSettings):
     # Anthropic
     anthropic_api_key: str = ""
 
+    # Gemini (optional — used as LLM fallback when Anthropic fails)
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-2.5-flash"
+
     # CORS
     cors_origins: list[str] = ["http://localhost:3000"]
 

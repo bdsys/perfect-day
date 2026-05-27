@@ -96,6 +96,5 @@ Defer:
 
 ## Development Notes
 
-- This repo is in early planning phase — no code exists yet as of May 2026
-- See `OPUS_INITIAL_PLAN.md` for the full product brief and open architectural questions
+- Original product brief and open architectural questions archived at `docs/archive/OPUS_INITIAL_PLAN.md`
 - When the stack is scaffolded, update this file with actual build/run/test commands

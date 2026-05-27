@@ -34,28 +34,48 @@ Build in order. Nothing else works until this loop is proven.
 
 ## Phase 2 — Completeness
 
-After Phase 1 works end-to-end. In rough dependency order:
+The "make the diary actually useful" phase. Photos, multi-day entries, weather, backfill, tier enforcement, LLM redundancy. Build in rough dependency order.
+
+| # | Feature | Notes |
+|---|---|---|
+| 13 | **MinIO + photo upload** | `upload-url`, `finalize`, AES-GCM encryption, decrypt-and-stream download. |
+| 14 | **Google Photos grant + scan** | Requires MinIO. Metadata-first filter, `ingest_photo`, `entry_photos` attachment. As part of this, extend backfill (item 17) to cover the `google_photos` source with the spec'd 90-day default cap. |
+| 15 | **Multi-day entry support** | `entry_end_date`, multi-day grouping in worker, timeline display. |
+| 16 | **Weather enrichment (Open-Meteo)** | No API key. Unlimited calls. Historical data going back decades — critical for backfill. Writes to `enrichments` table. As part of this, extend backfill (item 17) to enrich each chunk with weather. |
+| 17 | **Backfill — slice 1 (Calendar-only, spec-compliant)** | Endpoint, `BackfillRun` table, and basic worker already exist. This slice fixes three gaps from the current implementation (see `design/06-scan-worker.md`): switch request body to `{from_date, to_date, sources}`, add weekly chunking with 2s sleep between chunks, acquire `scan_lock:{diary_id}` so backfill and regular scans serialize, and add `DELETE /v1/diaries/{id}/scan/backfill/{runId}` with chunk-boundary cancellation. Photos and weather sources are added with items 14 and 16, not here. |
+| 18 | **Tier enforcement** | Entitlement checks on entry + diary creation. HTTP 403 with structured error. Upgrade prompt in UI. |
+| 22 | **Gemini fallback for LLM** | Add after Anthropic integration is stable and tested. |
+
+---
+
+## Phase 3 — Auth, sharing, notifications, admin
+
+Phase 2 leftovers grouped by theme. Build after Phase 2 is stable.
 
 | # | Feature | Notes |
 |---|---|---|
 | 11 | **Apple Sign In + magic link** | Required before iOS App Store submission. |
 | 12 | **Facebook OAuth login** | Low priority; after Apple. |
-| 13 | **MinIO + photo upload** | `upload-url`, `finalize`, AES-GCM encryption, decrypt-and-stream download. |
-| 14 | **Google Photos grant + scan** | Requires MinIO. Metadata-first filter, `ingest_photo`, `entry_photos` attachment. |
-| 15 | **Multi-day entry support** | `entry_end_date`, multi-day grouping in worker, timeline display. |
-| 16 | **Weather enrichment (Open-Meteo)** | No API key. Unlimited calls. Historical data going back decades — critical for backfill. Writes to `enrichments` table. |
-| 17 | **Backfill** | `POST /scan/backfill`, `backfill_runs`, chunked weekly scan, cancellation. |
-| 18 | **Tier enforcement** | Entitlement checks on entry + diary creation. HTTP 403 with structured error. Upgrade prompt in UI. |
 | 19 | **Diary sharing + invitations** | `diary_permissions`, `invitations`, accept flow, role-based visibility. |
 | 20 | **Notifications** | Expo push + SendGrid, `notifications` table, dispatcher, quiet hours (20:00–07:00), coalescing, per-diary mute. |
 | 21 | **Admin panel** | Web UI for admin endpoints: user CRUD (create/delete/list, tier changes), diary CRUD, entry CRUD, impersonate, force delete, LLM usage stats, scan fleet view. CLI data tools (`scripts/admin.sh`) are available now for local dev use. |
-| 22 | **Gemini fallback for LLM** | Add after Anthropic integration is stable and tested. |
 
 ---
 
-## Phase 3 — Deferred
+## Backlog
 
-Not in PoC. Leave breadcrumbs (schema columns, commented router stubs) as noted.
+Not in PoC. Two groups: **deployment/infrastructure** that the PoC can ship without, and **product features** that need explicit user/business signal before being built. Leave breadcrumbs (schema columns, commented router stubs) where noted.
+
+### Deployment / infrastructure
+
+| Item | Notes |
+|---|---|
+| NUC deployment (bootstrap → secrets → first deploy → DDNS → FortiGate TLS → Google prod redirect URI → backups → smoke test) | Step-by-step in [`deploy/nuc-ops.md`](../deploy/nuc-ops.md). |
+| Cloudflare DNS hand-off | Required before NUC deploy. |
+| Third-party prod accounts: Google Cloud OAuth project, SendGrid relay, Anthropic prod key | Required before NUC deploy. |
+| CD wiring (`DEPLOY_ENABLED`, `GHCR_TOKEN`, deploy SSH key) | Push-to-deploy automation; see `.github/workflows/deploy.yml` and `deploy/nuc-ops.md` § "CD wiring". |
+
+### Product features (gated on user signal or later phase)
 
 | Feature | Schema/code hook | How to add later |
 |---|---|---|
@@ -69,6 +89,7 @@ Not in PoC. Leave breadcrumbs (schema columns, commented router stubs) as noted.
 | Entry search (full-text) | Breadcrumb API route | `pg_trgm` or `pgvector` index on `entries.body_markdown` |
 | Comments / reactions | Breadcrumb API routes | Explicit non-goals; add if user research warrants |
 | Photo-only auto entries | Worker logic only | Minor change once Photos integration is stable |
+| Auto-backfill on first OAuth connect | Worker logic | Not in `design/06-scan-worker.md`. Today the first scan only pulls 90 days back; for the "diary of a child's life" use case we may want to offer (or auto-run) a longer initial backfill. Needs a design decision before building. |
 
 ---
 
