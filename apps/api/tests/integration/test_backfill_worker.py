@@ -165,3 +165,31 @@ async def test_run_backfill_breaks_on_cancellation(client, db_session):
     # Cancellation check fires at chunk boundary, so worker processed 1 chunk
     # and the cancellation is detected before the 2nd chunk starts
     assert call_count["n"] == 1
+
+
+async def test_post_then_delete_then_worker_exits_cleanly(client, db_session):
+    """If run is already cancelled when worker starts, no chunks are fetched."""
+    from tests.fixtures.factories import make_diary, make_user
+
+    user = await make_user(db_session)
+    diary = await make_diary(db_session, owner=user)
+    run = await _make_run(db_session, diary.id, date(2026, 5, 1), date(2026, 5, 22))
+
+    # Simulate: DELETE endpoint fired before worker even polled first chunk
+    run.status = "cancelled"
+    await db_session.commit()
+
+    fetch_mock = AsyncMock(return_value=[])
+    with patch("app.workers.backfill._fetch_events_range", fetch_mock), \
+         patch("app.workers.tasks.ingest_calendar_event"), \
+         patch("asyncio.sleep", new=AsyncMock()):
+        await run_backfill(
+            backfill_run_id=run.id,
+            diary_id=diary.id,
+            from_date=run.from_date,
+            to_date=run.to_date,
+            access_token="tok",
+            diary_timezone="UTC",
+        )
+
+    assert fetch_mock.await_count == 0
