@@ -122,3 +122,63 @@ class TestBackfillEndpoint:
             headers=other_auth,
         )
         assert r.status_code in (403, 404)
+
+
+class TestBackfillGet:
+    async def test_get_returns_run(self, client: AsyncClient):
+        token, diary = await _setup(client)
+        auth = {"Authorization": f"Bearer {token}"}
+        with patch("app.workers.tasks.backfill_diary.delay"):
+            r = await client.post(
+                f"/v1/diaries/{diary['id']}/scan/backfill",
+                json={"from_date": "2026-05-01", "to_date": "2026-05-15"},
+                headers=auth,
+            )
+        run_id = r.json()["id"]
+
+        r2 = await client.get(
+            f"/v1/diaries/{diary['id']}/scan/backfill/{run_id}",
+            headers=auth,
+        )
+        assert r2.status_code == 200
+        body = r2.json()
+        assert body["id"] == run_id
+        assert body["sources"] == ["google_calendar"]
+        assert body["status"] == "pending"
+
+    async def test_get_404_when_missing(self, client: AsyncClient):
+        token, diary = await _setup(client)
+        auth = {"Authorization": f"Bearer {token}"}
+        fake_id = "00000000-0000-0000-0000-000000000000"
+        r = await client.get(
+            f"/v1/diaries/{diary['id']}/scan/backfill/{fake_id}",
+            headers=auth,
+        )
+        assert r.status_code == 404
+
+    async def test_get_404_when_run_belongs_to_other_diary(self, client: AsyncClient):
+        token, diary = await _setup(client)
+        auth = {"Authorization": f"Bearer {token}"}
+        # Use a second user to avoid free-tier single-diary limit
+        r_b = await client.post(
+            "/v1/auth/register",
+            json={"email": "backfill-diaryb@example.com", "password": "Password1!"},
+        )
+        token_b = r_b.json()["access_token"]
+        auth_b = {"Authorization": f"Bearer {token_b}"}
+        diary_b = (await client.post(
+            "/v1/diaries", json={"name": "B", "timezone": "UTC"}, headers=auth_b
+        )).json()
+        with patch("app.workers.tasks.backfill_diary.delay"):
+            r = await client.post(
+                f"/v1/diaries/{diary_b['id']}/scan/backfill",
+                json={"from_date": "2026-05-01", "to_date": "2026-05-15"},
+                headers=auth_b,
+            )
+        run_id = r.json()["id"]
+
+        r2 = await client.get(
+            f"/v1/diaries/{diary['id']}/scan/backfill/{run_id}",
+            headers=auth,
+        )
+        assert r2.status_code == 404

@@ -180,3 +180,26 @@ async def trigger_backfill(
 
     backfill_diary.delay(str(backfill_run.id))
     return backfill_run
+
+
+@router.get(
+    "/diaries/{diary_id}/scan/backfill/{run_id}",
+    response_model=BackfillRunOut,
+)
+async def get_backfill_run(
+    diary_id: uuid.UUID,
+    run_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> BackfillRun:
+    await _get_diary_or_404(diary_id, user, db)
+    result = await db.execute(
+        select(BackfillRun).where(
+            BackfillRun.id == run_id,
+            BackfillRun.diary_id == diary_id,
+        )
+    )
+    run = result.scalar_one_or_none()
+    if run is None:
+        raise HTTPException(status_code=404, detail="backfill_run_not_found")
+    return run
