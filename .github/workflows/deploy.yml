@@ -15,7 +15,7 @@ jobs:
   # Gate: disabled by default until DEPLOY_ENABLED repo variable is set to 'true'
   # To enable: gh variable set DEPLOY_ENABLED --body true
   # Then provision secrets: GHCR_TOKEN, NUC_SSH_PRIVATE_KEY, NUC_HOST, NUC_USER
-  # See POC_PHASE1_DEPLOYMENT.md § "Activating CD" for full instructions.
+  # See deploy/nuc-ops.md § "CD wiring" for full instructions.
   # ---------------------------------------------------------------------------
   gate:
     name: Deployment gate
@@ -32,7 +32,7 @@ jobs:
           else
             echo "enabled=false" >> "$GITHUB_OUTPUT"
             echo "ℹ deploy disabled — DEPLOY_ENABLED is not set to 'true'"
-            echo "  See POC_PHASE1_DEPLOYMENT.md § Activating CD to enable"
+            echo "  See deploy/nuc-ops.md to enable"
           fi
 
   # ---------------------------------------------------------------------------
