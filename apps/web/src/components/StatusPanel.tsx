@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import { Spinner } from './Spinner'
 
 type StatusPanelProps = {
-  state: 'running' | 'success' | 'partial' | 'failed'
+  state: 'running' | 'success' | 'partial' | 'failed' | 'cancelled'
   headline: string
   detail?: string
   errors?: string[]
@@ -38,6 +38,7 @@ export function StatusPanel({ state, headline, detail, errors, startedAt, onDism
     state === 'running' ? <Spinner size={16} /> :
     state === 'success' ? '✓' :
     state === 'partial' ? '⚠' :
+    state === 'cancelled' ? '⊘' :
     '✕'
 
   return (

@@ -66,6 +66,7 @@ export default function DiaryDetailPage() {
   const [pollingBackfill, setPollingBackfill] = useState(false)
   const [latestBackfillRun, setLatestBackfillRun] = useState<BackfillRun | null>(null)
   const [backfillError, setBackfillError] = useState('')
+  const [cancelling, setCancelling] = useState(false)
 
   useEffect(() => {
     if (!authLoading && !user) router.replace('/login')
@@ -148,12 +149,15 @@ export default function DiaryDetailPage() {
 
   async function handleCancelBackfill() {
     if (!latestBackfillRun) return
+    setCancelling(true)
     try {
       const run = await api.diaries.cancelBackfillRun(diaryId, latestBackfillRun.id)
       setLatestBackfillRun(run)
       setPollingBackfill(false)
     } catch (e: unknown) {
       setBackfillError(e instanceof Error ? e.message : 'Cancel failed')
+    } finally {
+      setCancelling(false)
     }
   }
 
@@ -208,10 +212,10 @@ export default function DiaryDetailPage() {
       setPollingBackfill(false)
       setLatestBackfillRun(prev =>
         prev?.status === 'running' || prev?.status === 'pending'
-          ? { ...prev, status: 'failed', error: 'Timed out' }
+          ? { ...prev, status: 'failed', error: 'Polling timed out — refresh the page to check status' }
           : prev,
       )
-    }, 5 * 60 * 1000)
+    }, 60 * 60 * 1000)
     return () => clearTimeout(timer)
   }, [pollingBackfill])
 
@@ -330,7 +334,6 @@ export default function DiaryDetailPage() {
                       type="date"
                       value={backfillFrom}
                       onChange={(e) => setBackfillFrom(e.target.value)}
-                      style={{ width: '100%', padding: '0.3rem', marginBottom: '0.75rem' }}
                     />
                   </label>
                   <label>
@@ -339,7 +342,6 @@ export default function DiaryDetailPage() {
                       type="date"
                       value={backfillTo}
                       onChange={(e) => setBackfillTo(e.target.value)}
-                      style={{ width: '100%', padding: '0.3rem', marginBottom: '0.75rem' }}
                     />
                   </label>
                   {backfillError && (
@@ -407,7 +409,7 @@ export default function DiaryDetailPage() {
             state={
               latestBackfillRun.status === 'completed' ? 'success' :
               latestBackfillRun.status === 'failed' ? 'failed' :
-              latestBackfillRun.status === 'cancelled' ? 'failed' :
+              latestBackfillRun.status === 'cancelled' ? 'cancelled' :
               'running'
             }
             headline={
@@ -432,8 +434,9 @@ export default function DiaryDetailPage() {
             className="btn btn-secondary"
             style={{ marginBottom: '0.75rem' }}
             onClick={handleCancelBackfill}
+            disabled={cancelling}
           >
-            Cancel backfill
+            {cancelling ? 'Cancelling…' : 'Cancel backfill'}
           </button>
         )}
 
