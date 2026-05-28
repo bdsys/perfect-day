@@ -124,3 +124,34 @@ def parse_exif(image_bytes: bytes) -> dict:
     except Exception:
         return {"taken_at": None, "lat": None, "lon": None}
     return out
+
+
+# Register HEIF opener at module load.
+try:
+    import pillow_heif  # type: ignore[import-untyped]
+    pillow_heif.register_heif_opener()
+except ImportError:
+    pass
+
+
+def generate_thumbnail(image_bytes: bytes, mime: str) -> bytes:
+    """Decode → EXIF-rotate → resize ≤512 px longest edge → JPEG q=80.
+
+    Raises ValueError on undecodable input.
+    """
+    from PIL import Image, ImageOps, UnidentifiedImageError
+
+    try:
+        img = Image.open(BytesIO(image_bytes))
+        img = ImageOps.exif_transpose(img)
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+        img.thumbnail(
+            (THUMBNAIL_LONGEST_EDGE, THUMBNAIL_LONGEST_EDGE),
+            Image.Resampling.LANCZOS,
+        )
+        out = BytesIO()
+        img.save(out, format="JPEG", quality=THUMBNAIL_QUALITY, optimize=True)
+        return out.getvalue()
+    except (UnidentifiedImageError, OSError) as e:
+        raise ValueError(f"undecodable image: {e}") from e

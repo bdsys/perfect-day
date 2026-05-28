@@ -125,3 +125,37 @@ def test_parse_exif_clamps_invalid_gps():
     img = b"\xff\xd8\xff\xe0" + b"\x00" * 100
     result = parse_exif(img)
     assert result["lat"] is None and result["lon"] is None
+
+
+def test_generate_thumbnail_jpeg_round_trip():
+    from io import BytesIO
+    from PIL import Image
+    from app.services.photos import generate_thumbnail
+
+    src = Image.new("RGB", (1024, 768), (10, 200, 50))
+    buf = BytesIO()
+    src.save(buf, format="JPEG", quality=90)
+    out = generate_thumbnail(buf.getvalue(), "image/jpeg")
+    assert out[:3] == b"\xff\xd8\xff"  # JPEG magic
+    img = Image.open(BytesIO(out))
+    assert max(img.size) <= 512
+
+
+def test_generate_thumbnail_preserves_orientation():
+    from io import BytesIO
+    from PIL import Image
+    from app.services.photos import generate_thumbnail
+
+    src = Image.new("RGB", (200, 100), (255, 0, 0))
+    buf = BytesIO()
+    src.save(buf, format="PNG")
+    out = generate_thumbnail(buf.getvalue(), "image/png")
+    img = Image.open(BytesIO(out))
+    assert img.format == "JPEG"
+
+
+def test_generate_thumbnail_raises_on_garbage():
+    import pytest
+    from app.services.photos import generate_thumbnail
+    with pytest.raises(ValueError):
+        generate_thumbnail(b"not an image", "image/jpeg")
