@@ -322,7 +322,7 @@ async def patch_entry(
 ) -> EntryOut:
     entry, _, _ = await _get_entry_or_404(entry_id, user, db, require_editor=True)
 
-    for field, value in body.model_dump(exclude_none=True).items():
+    for field, value in body.model_dump(exclude_unset=True).items():
         setattr(entry, field, value)
     return _entry_out_from_orm(entry)
 
