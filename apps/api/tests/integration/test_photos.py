@@ -91,3 +91,54 @@ async def test_photos_router_registered(client):
     """The photos router should be mounted; /v1/photos/upload-url returns 401 without auth."""
     resp = await client.post("/v1/photos/upload-url", json={"declared_mime": "image/jpeg", "declared_size": 100})
     assert resp.status_code in (401, 403)
+
+
+# ---------------------------------------------------------------------------
+# Task 10: POST /v1/photos/upload-url
+# ---------------------------------------------------------------------------
+
+
+async def _login(client, email="user@example.com"):
+    """Helper: register and return Authorization header."""
+    await client.post("/v1/auth/register", json={"email": email, "password": "Password1!"})
+    r = await client.post("/v1/auth/login", json={"email": email, "password": "Password1!"})
+    return {"Authorization": f"Bearer {r.json()['access_token']}"}
+
+
+@pytest.mark.asyncio
+async def test_upload_url_happy_path(client):
+    headers = await _login(client)
+    r = await client.post(
+        "/v1/photos/upload-url",
+        json={"declared_mime": "image/jpeg", "declared_size": 12345},
+        headers=headers,
+    )
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert "upload_url" in body
+    assert body["upload_key"].startswith("tmp/")
+    assert body["expires_in"] == 900
+    assert body["required_headers"]["Content-Type"] == "image/jpeg"
+    assert body["required_headers"]["Content-Length"] == "12345"
+
+
+@pytest.mark.asyncio
+async def test_upload_url_rejects_non_whitelisted_mime(client):
+    headers = await _login(client, "u2@example.com")
+    r = await client.post(
+        "/v1/photos/upload-url",
+        json={"declared_mime": "application/pdf", "declared_size": 100},
+        headers=headers,
+    )
+    assert r.status_code == 415
+
+
+@pytest.mark.asyncio
+async def test_upload_url_rejects_oversize(client):
+    headers = await _login(client, "u3@example.com")
+    r = await client.post(
+        "/v1/photos/upload-url",
+        json={"declared_mime": "image/jpeg", "declared_size": 60 * 1024 * 1024},
+        headers=headers,
+    )
+    assert r.status_code == 413
