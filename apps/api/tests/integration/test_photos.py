@@ -541,3 +541,33 @@ async def test_attach_entry_photo_viewer_returns_403(client):
         headers=headers_viewer,
     )
     assert r2.status_code in (403, 404)
+
+
+# ---------------------------------------------------------------------------
+# Task 16: GET /v1/photos/{id}/metadata
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_photo_metadata(client):
+    import httpx
+    headers = await _login(client, "meta1@example.com")
+    body = _read_fixture("sample.jpg")
+
+    r1 = await client.post(
+        "/v1/photos/upload-url",
+        json={"declared_mime": "image/jpeg", "declared_size": len(body)},
+        headers=headers,
+    )
+    pid = r1.json()["photo_id"]
+    httpx.put(r1.json()["upload_url"], content=body,
+              headers={"Content-Type": "image/jpeg", "Content-Length": str(len(body))}).raise_for_status()
+    await client.post(f"/v1/photos/{pid}/finalize", headers=headers)
+
+    r2 = await client.get(f"/v1/photos/{pid}/metadata", headers=headers)
+    assert r2.status_code == 200
+    out = r2.json()
+    assert out["id"] == pid
+    assert out["mime_type"] == "image/jpeg"
+    assert out["bytes"] == len(body)
+    assert out["has_thumbnail"] is True
