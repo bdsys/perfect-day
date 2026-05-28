@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
 import { api, type Diary, type Entry, type Integration, type ScanRun, type BackfillRun } from '@/lib/api'
@@ -67,6 +67,8 @@ export default function DiaryDetailPage() {
   const [latestBackfillRun, setLatestBackfillRun] = useState<BackfillRun | null>(null)
   const [backfillError, setBackfillError] = useState('')
   const [cancelling, setCancelling] = useState(false)
+  const pollFailuresRef = useRef(0)
+  const MAX_POLL_FAILURES = 5
 
   useEffect(() => {
     if (!authLoading && !user) router.replace('/login')
@@ -141,6 +143,7 @@ export default function DiaryDetailPage() {
       }
       setShowBackfillOptions(false)
       setLatestBackfillRun(result)
+      pollFailuresRef.current = 0
       setPollingBackfill(true)
     } catch (e: unknown) {
       setBackfillError(e instanceof Error ? e.message : 'Backfill failed')
@@ -191,6 +194,7 @@ export default function DiaryDetailPage() {
     if (!latestBackfillRun) return
     try {
       const run = await api.diaries.getBackfillRun(diaryId, latestBackfillRun.id)
+      pollFailuresRef.current = 0
       setLatestBackfillRun(run)
       if (run.status === 'completed' || run.status === 'failed' || run.status === 'cancelled') {
         setPollingBackfill(false)
@@ -200,7 +204,15 @@ export default function DiaryDetailPage() {
         }
       }
     } catch {
-      // ignore transient poll errors
+      pollFailuresRef.current += 1
+      if (pollFailuresRef.current >= MAX_POLL_FAILURES) {
+        setPollingBackfill(false)
+        setLatestBackfillRun(prev =>
+          prev && (prev.status === 'running' || prev.status === 'pending')
+            ? { ...prev, status: 'failed', error: 'Connection lost — refresh the page to check status' }
+            : prev,
+        )
+      }
     }
   }, [diaryId, latestBackfillRun, statusFilter])
 
