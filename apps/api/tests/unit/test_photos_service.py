@@ -58,3 +58,70 @@ def test_constants():
     assert THUMBNAIL_LONGEST_EDGE == 512
     assert THUMBNAIL_QUALITY == 80
     assert PRESIGN_TTL_SECONDS == 900
+
+
+def _build_jpeg_with_exif(taken="2025:08:14 13:45:00", lat=37.7749, lon=-122.4194):
+    """Build a tiny in-memory JPEG with EXIF DateTimeOriginal + GPS."""
+    from io import BytesIO
+    import piexif
+    from PIL import Image
+
+    img = Image.new("RGB", (4, 4), (255, 0, 0))
+    def deg_to_dms(d):
+        d = abs(d)
+        deg = int(d)
+        m = int((d - deg) * 60)
+        s = round(((d - deg) * 60 - m) * 60 * 100)
+        return ((deg, 1), (m, 1), (s, 100))
+
+    exif = {
+        "0th": {},
+        "Exif": {piexif.ExifIFD.DateTimeOriginal: taken.encode("ascii")},
+        "GPS": {
+            piexif.GPSIFD.GPSLatitudeRef: b"N" if lat >= 0 else b"S",
+            piexif.GPSIFD.GPSLatitude: deg_to_dms(lat),
+            piexif.GPSIFD.GPSLongitudeRef: b"E" if lon >= 0 else b"W",
+            piexif.GPSIFD.GPSLongitude: deg_to_dms(lon),
+        },
+        "1st": {},
+        "thumbnail": None,
+    }
+    buf = BytesIO()
+    img.save(buf, format="JPEG", exif=piexif.dump(exif))
+    return buf.getvalue()
+
+
+def test_parse_exif_extracts_date_and_gps():
+    from app.services.photos import parse_exif
+    img = _build_jpeg_with_exif()
+    result = parse_exif(img)
+    assert result["taken_at"] is not None
+    assert result["taken_at"].year == 2025
+    assert result["taken_at"].month == 8
+    assert result["lat"] is not None and abs(result["lat"] - 37.7749) < 0.001
+    assert result["lon"] is not None and abs(result["lon"] - -122.4194) < 0.001
+
+
+def test_parse_exif_returns_none_on_no_exif():
+    from io import BytesIO
+    from PIL import Image
+    from app.services.photos import parse_exif
+
+    img = Image.new("RGB", (4, 4))
+    buf = BytesIO()
+    img.save(buf, format="JPEG")
+    result = parse_exif(buf.getvalue())
+    assert result == {"taken_at": None, "lat": None, "lon": None}
+
+
+def test_parse_exif_returns_none_on_garbage():
+    from app.services.photos import parse_exif
+    assert parse_exif(b"not an image") == {"taken_at": None, "lat": None, "lon": None}
+
+
+def test_parse_exif_clamps_invalid_gps():
+    """GPS that decodes to NaN or out-of-range should yield None lat/lon."""
+    from app.services.photos import parse_exif
+    img = b"\xff\xd8\xff\xe0" + b"\x00" * 100
+    result = parse_exif(img)
+    assert result["lat"] is None and result["lon"] is None

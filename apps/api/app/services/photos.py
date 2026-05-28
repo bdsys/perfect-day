@@ -42,3 +42,85 @@ def detect_mime(head: bytes) -> str | None:
         if brand in (b"avif", b"avis"):
             return "image/avif"
     return None
+
+
+import datetime
+import math
+from io import BytesIO
+
+
+def _exif_dms_to_decimal(dms, ref: str) -> float | None:
+    """Convert EXIF DMS to decimal degrees.
+
+    Handles both Pillow's flat float tuple (deg, min, sec) returned by
+    get_ifd(), and raw rational tuples ((num, denom), ...) from other sources.
+    """
+    try:
+        def _to_float(v) -> float:
+            if isinstance(v, tuple):
+                return v[0] / v[1]
+            return float(v)
+
+        deg = _to_float(dms[0])
+        minutes = _to_float(dms[1])
+        seconds = _to_float(dms[2])
+        val = deg + minutes / 60 + seconds / 3600
+        if ref in ("S", "W"):
+            val = -val
+        if math.isnan(val) or math.isinf(val):
+            return None
+        if ref in ("N", "S") and not (-90 <= val <= 90):
+            return None
+        if ref in ("E", "W") and not (-180 <= val <= 180):
+            return None
+        return val
+    except (ZeroDivisionError, IndexError, TypeError, ValueError):
+        return None
+
+
+def parse_exif(image_bytes: bytes) -> dict:
+    """Extract DateTimeOriginal + GPS from EXIF. Any error → all None."""
+    out: dict = {"taken_at": None, "lat": None, "lon": None}
+    try:
+        from PIL import ExifTags, Image
+
+        img = Image.open(BytesIO(image_bytes))
+        exif = img.getexif()
+        if not exif:
+            return out
+
+        # DateTimeOriginal (36867); fall back to DateTime (306)
+        ifd = exif.get_ifd(ExifTags.IFD.Exif) if hasattr(ExifTags, "IFD") else exif
+        dt_str = ifd.get(36867) or exif.get(306)
+        offset = ifd.get(36881)  # OffsetTimeOriginal, e.g. "+02:00"
+        if dt_str:
+            try:
+                dt = datetime.datetime.strptime(dt_str, "%Y:%m:%d %H:%M:%S")
+                if offset and len(offset) >= 6:
+                    sign = 1 if offset[0] == "+" else -1
+                    hh = int(offset[1:3])
+                    mm = int(offset[4:6])
+                    tz = datetime.timezone(sign * datetime.timedelta(hours=hh, minutes=mm))
+                else:
+                    tz = datetime.UTC
+                out["taken_at"] = dt.replace(tzinfo=tz)
+            except (ValueError, TypeError):
+                pass
+
+        # GPS via GPSInfo IFD (34853)
+        gps_ifd = None
+        if hasattr(ExifTags, "IFD"):
+            try:
+                gps_ifd = exif.get_ifd(ExifTags.IFD.GPSInfo)
+            except (KeyError, AttributeError):
+                gps_ifd = None
+        if gps_ifd:
+            lat_dms, lat_ref = gps_ifd.get(2), gps_ifd.get(1)
+            lon_dms, lon_ref = gps_ifd.get(4), gps_ifd.get(3)
+            if lat_dms and lat_ref:
+                out["lat"] = _exif_dms_to_decimal(lat_dms, lat_ref)
+            if lon_dms and lon_ref:
+                out["lon"] = _exif_dms_to_decimal(lon_dms, lon_ref)
+    except Exception:
+        return {"taken_at": None, "lat": None, "lon": None}
+    return out
