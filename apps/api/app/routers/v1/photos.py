@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import get_current_user
 from app.core.database import get_db
 from app.core.photo_crypto import encrypt_stream, generate_dek, iter_decrypt_stream, unwrap_dek, wrap_dek
-from app.models import DiaryPhoto, Photo, User
+from app.models import DiaryPhoto, EntryPhoto, Photo, User
 from app.routers.v1.diaries import _get_diary_or_404
 from app.services.photos import (
     ALLOWED_MIME,
@@ -346,3 +346,100 @@ async def detach_photo_from_diary(
     dp = result.scalar_one_or_none()
     if dp is not None:
         await db.delete(dp)
+
+
+# ---------------------------------------------------------------------------
+# Task 15: Entry photo attach/detach
+# ---------------------------------------------------------------------------
+
+
+@router.post("/entries/{entry_id}/photos", status_code=http_status.HTTP_201_CREATED)
+async def attach_photo_to_entry(
+    entry_id: uuid.UUID,
+    body: PhotoAttachRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> PhotoOut:
+    from app.routers.v1.entries import _get_entry_or_404
+
+    # require_editor=True rejects viewers with 403
+    entry, diary, role = await _get_entry_or_404(entry_id, user, db, require_editor=True)
+
+    # Verify photo ownership and finalized
+    result = await db.execute(
+        select(Photo).where(
+            Photo.id == body.photo_id,
+            Photo.user_id == user.id,
+            Photo.deleted_at.is_(None),
+            Photo.finalized_at.is_not(None),
+        )
+    )
+    photo = result.scalar_one_or_none()
+    if photo is None:
+        raise HTTPException(status_code=404, detail="photo_not_found")
+
+    # Idempotent attach — if already linked, optionally update position; else insert
+    existing_result = await db.execute(
+        select(EntryPhoto).where(
+            EntryPhoto.entry_id == entry_id,
+            EntryPhoto.photo_id == body.photo_id,
+        )
+    )
+    existing = existing_result.scalar_one_or_none()
+    if existing is None:
+        ep = EntryPhoto(entry_id=entry_id, photo_id=body.photo_id, position=body.position)
+        db.add(ep)
+        await db.flush()
+    elif body.position is not None:
+        existing.position = body.position
+
+    return _photo_out(photo)
+
+
+@router.delete(
+    "/entries/{entry_id}/photos/{photo_id}",
+    status_code=http_status.HTTP_204_NO_CONTENT,
+)
+async def detach_photo_from_entry(
+    entry_id: uuid.UUID,
+    photo_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    from app.routers.v1.entries import _get_entry_or_404
+
+    entry, diary, role = await _get_entry_or_404(entry_id, user, db, require_editor=True)
+
+    result = await db.execute(
+        select(EntryPhoto).where(
+            EntryPhoto.entry_id == entry_id,
+            EntryPhoto.photo_id == photo_id,
+        )
+    )
+    ep = result.scalar_one_or_none()
+    if ep is not None:
+        await db.delete(ep)
+
+
+# ---------------------------------------------------------------------------
+# Task 16: GET /v1/photos/{id}/metadata
+# ---------------------------------------------------------------------------
+
+
+@router.get("/photos/{photo_id}/metadata", response_model=PhotoOut)
+async def get_photo_metadata(
+    photo_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> PhotoOut:
+    result = await db.execute(
+        select(Photo).where(
+            Photo.id == photo_id,
+            Photo.user_id == user.id,
+            Photo.deleted_at.is_(None),
+        )
+    )
+    photo = result.scalar_one_or_none()
+    if photo is None:
+        raise HTTPException(status_code=404, detail="not_found")
+    return _photo_out(photo)

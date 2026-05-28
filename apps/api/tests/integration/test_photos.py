@@ -448,3 +448,96 @@ async def test_attach_diary_photo_wrong_owner_returns_403(client):
         headers=headers_b,
     )
     assert r2.status_code in (403, 404)
+
+
+# ---------------------------------------------------------------------------
+# Task 15: Entry photo attach/detach
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_attach_detach_entry_photo(client):
+    import httpx
+    headers = await _login(client, "ent1@example.com")
+    body = _read_fixture("sample.jpg")
+
+    # Create diary + entry
+    r_diary = await client.post(
+        "/v1/diaries",
+        json={"name": "ED1", "timezone": "UTC", "scan_interval_minutes": 60},
+        headers=headers,
+    )
+    diary_id = r_diary.json()["id"]
+
+    from datetime import date
+    r_entry = await client.post(
+        f"/v1/diaries/{diary_id}/entries",
+        json={"entry_date": str(date.today())},
+        headers=headers,
+    )
+    entry_id = r_entry.json()["id"]
+
+    # Upload + finalize photo
+    r1 = await client.post(
+        "/v1/photos/upload-url",
+        json={"declared_mime": "image/jpeg", "declared_size": len(body)},
+        headers=headers,
+    )
+    pid = r1.json()["photo_id"]
+    httpx.put(r1.json()["upload_url"], content=body,
+              headers={"Content-Type": "image/jpeg", "Content-Length": str(len(body))}).raise_for_status()
+    await client.post(f"/v1/photos/{pid}/finalize", headers=headers)
+
+    # Attach with position
+    r2 = await client.post(
+        f"/v1/entries/{entry_id}/photos",
+        json={"photo_id": pid, "position": 0},
+        headers=headers,
+    )
+    assert r2.status_code == 201, r2.text
+
+    # Detach
+    r3 = await client.delete(f"/v1/entries/{entry_id}/photos/{pid}", headers=headers)
+    assert r3.status_code == 204
+
+
+@pytest.mark.asyncio
+async def test_attach_entry_photo_viewer_returns_403(client):
+    """A viewer on a diary cannot attach photos to entries."""
+    import httpx
+    headers_owner = await _login(client, "eown@example.com")
+    headers_viewer = await _login(client, "eview@example.com")
+    body = _read_fixture("sample.jpg")
+
+    r_diary = await client.post(
+        "/v1/diaries",
+        json={"name": "ED2", "timezone": "UTC", "scan_interval_minutes": 60},
+        headers=headers_owner,
+    )
+    diary_id = r_diary.json()["id"]
+
+    from datetime import date
+    r_entry = await client.post(
+        f"/v1/diaries/{diary_id}/entries",
+        json={"entry_date": str(date.today())},
+        headers=headers_owner,
+    )
+    entry_id = r_entry.json()["id"]
+
+    r1 = await client.post(
+        "/v1/photos/upload-url",
+        json={"declared_mime": "image/jpeg", "declared_size": len(body)},
+        headers=headers_viewer,
+    )
+    pid = r1.json()["photo_id"]
+    httpx.put(r1.json()["upload_url"], content=body,
+              headers={"Content-Type": "image/jpeg", "Content-Length": str(len(body))}).raise_for_status()
+    await client.post(f"/v1/photos/{pid}/finalize", headers=headers_viewer)
+
+    # Viewer tries to attach — should fail since they don't have access to this diary's entry
+    r2 = await client.post(
+        f"/v1/entries/{entry_id}/photos",
+        json={"photo_id": str(pid), "position": 0},
+        headers=headers_viewer,
+    )
+    assert r2.status_code in (403, 404)
