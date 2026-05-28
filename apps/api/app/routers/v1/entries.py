@@ -11,7 +11,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.auth import get_current_user
 from app.core.database import get_db
-from app.models import Diary, Entry, EntryRuleMatch, Event, LLMGeneration, User
+from app.models import Diary, Entry, EntryPhoto, EntryRuleMatch, Event, LLMGeneration, User
 from app.routers.v1.diaries import _get_diary_or_404
 from app.services.tier import enforce_entry_tier_limit
 
@@ -90,6 +90,7 @@ class EntryOut(BaseModel):
     events: list[EventOut] = []
     rule_matches: list[RuleMatchOut] = []
     last_generation: LLMGenerationSummaryOut | None = None
+    photos: list = []
 
     model_config = {"from_attributes": True}
 
@@ -116,6 +117,8 @@ def _event_out_from_orm(event: Event) -> EventOut:
 
 
 def _entry_out_from_orm(entry: Entry) -> EntryOut:
+    from app.routers.v1.photos import _photo_out
+
     events_out = sorted(
         [_event_out_from_orm(e) for e in entry.events],
         key=lambda e: e.occurred_at or datetime.min.replace(tzinfo=UTC),
@@ -140,6 +143,14 @@ def _entry_out_from_orm(entry: Entry) -> EntryOut:
             mode=latest.mode,
             model=latest.model,
         )
+    photos_out = [
+        _photo_out(ep.photo)
+        for ep in sorted(
+            entry.entry_photos,
+            key=lambda ep: (ep.position is None, ep.position or 0),
+        )
+        if ep.photo is not None and ep.photo.deleted_at is None
+    ]
     return EntryOut(
         id=entry.id,
         diary_id=entry.diary_id,
@@ -159,6 +170,7 @@ def _entry_out_from_orm(entry: Entry) -> EntryOut:
         events=events_out,
         rule_matches=rule_matches_out,
         last_generation=last_gen,
+        photos=photos_out,
     )
 
 
@@ -179,6 +191,7 @@ async def _get_entry_or_404(
             selectinload(Entry.events),
             selectinload(Entry.rule_matches).selectinload(EntryRuleMatch.rule),
             selectinload(Entry.llm_generations),
+            selectinload(Entry.entry_photos).selectinload(EntryPhoto.photo),
         )
         .where(Entry.id == entry_id, Entry.deleted_at.is_(None))
     )
@@ -221,6 +234,7 @@ async def list_deleted_entries(
             selectinload(Entry.events),
             selectinload(Entry.rule_matches).selectinload(EntryRuleMatch.rule),
             selectinload(Entry.llm_generations),
+            selectinload(Entry.entry_photos).selectinload(EntryPhoto.photo),
         )
         .where(Entry.diary_id == diary_id, Entry.deleted_at.is_not(None))
         .order_by(Entry.deleted_at.desc())
@@ -247,6 +261,7 @@ async def list_entries(
             selectinload(Entry.events),
             selectinload(Entry.rule_matches).selectinload(EntryRuleMatch.rule),
             selectinload(Entry.llm_generations),
+            selectinload(Entry.entry_photos).selectinload(EntryPhoto.photo),
         )
         .where(Entry.diary_id == diary_id, Entry.deleted_at.is_(None))
     )
@@ -299,7 +314,7 @@ async def create_entry(
     )
     db.add(entry)
     await db.flush()
-    await db.refresh(entry, ["events", "rule_matches", "llm_generations"])
+    await db.refresh(entry, ["events", "rule_matches", "llm_generations", "entry_photos"])
     return _entry_out_from_orm(entry)
 
 
@@ -389,6 +404,7 @@ async def restore_entry(
             selectinload(Entry.events),
             selectinload(Entry.rule_matches).selectinload(EntryRuleMatch.rule),
             selectinload(Entry.llm_generations),
+            selectinload(Entry.entry_photos).selectinload(EntryPhoto.photo),
         )
         .where(Entry.id == entry_id)
     )

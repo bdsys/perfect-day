@@ -579,6 +579,45 @@ async def test_get_photo_metadata(client):
 
 
 @pytest.mark.asyncio
+async def test_entry_out_includes_attached_photos(client):
+    import httpx
+    from datetime import date
+    headers = await _login(client, "eout1@example.com")
+    body = _read_fixture("sample.jpg")
+
+    r_diary = await client.post(
+        "/v1/diaries",
+        json={"name": "EPTest", "scan_interval_minutes": 60, "timezone": "UTC"},
+        headers=headers,
+    )
+    diary_id = r_diary.json()["id"]
+
+    r_entry = await client.post(
+        f"/v1/diaries/{diary_id}/entries",
+        json={"entry_date": str(date.today())},
+        headers=headers,
+    )
+    entry_id = r_entry.json()["id"]
+
+    r1 = await client.post(
+        "/v1/photos/upload-url",
+        json={"declared_mime": "image/jpeg", "declared_size": len(body)},
+        headers=headers,
+    )
+    pid = r1.json()["photo_id"]
+    httpx.put(r1.json()["upload_url"], content=body,
+              headers={"Content-Type": "image/jpeg", "Content-Length": str(len(body))}).raise_for_status()
+    await client.post(f"/v1/photos/{pid}/finalize", headers=headers)
+    await client.post(f"/v1/entries/{entry_id}/photos", json={"photo_id": pid, "position": 0}, headers=headers)
+
+    r2 = await client.get(f"/v1/entries/{entry_id}", headers=headers)
+    assert r2.status_code == 200
+    photos = r2.json()["photos"]
+    assert len(photos) == 1
+    assert photos[0]["id"] == pid
+
+
+@pytest.mark.asyncio
 async def test_list_diary_photos(client):
     import httpx
     headers = await _login(client, "lib1@example.com")
