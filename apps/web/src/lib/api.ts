@@ -351,7 +351,15 @@ export const api = {
       const q = new URLSearchParams(params).toString()
       return apiFetch(`/v1/diaries/${diaryId}/entries${q ? '?' + q : ''}`)
     },
-    async create(diaryId: string, data: { entry_date: string; title?: string | null; body_markdown?: string | null }): Promise<Entry> {
+    async create(
+      diaryId: string,
+      data: {
+        entry_date: string
+        entry_end_date?: string | null
+        title?: string | null
+        body_markdown?: string | null
+      },
+    ): Promise<Entry> {
       return apiFetch(`/v1/diaries/${diaryId}/entries`, { method: 'POST', body: JSON.stringify(data) })
     },
     async get(id: string): Promise<Entry> {
