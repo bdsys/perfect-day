@@ -155,3 +155,67 @@ def generate_thumbnail(image_bytes: bytes, mime: str) -> bytes:
         return out.getvalue()
     except (UnidentifiedImageError, OSError) as e:
         raise ValueError(f"undecodable image: {e}") from e
+
+
+# ---------------------------------------------------------------------------
+# S3 wrappers
+# ---------------------------------------------------------------------------
+
+
+def _bucket() -> str:
+    from app.core.config import get_settings
+    return get_settings().s3_bucket_photos
+
+
+def put_object_bytes(key: str, body: bytes, content_type: str = "application/octet-stream") -> None:
+    from app.core.dependencies import get_s3
+    get_s3().put_object(Bucket=_bucket(), Key=key, Body=body, ContentType=content_type)
+
+
+def get_object_bytes(key: str) -> bytes:
+    from app.core.dependencies import get_s3
+    return get_s3().get_object(Bucket=_bucket(), Key=key)["Body"].read()
+
+
+def head_object_size(key: str) -> int | None:
+    from botocore.exceptions import ClientError
+    from app.core.dependencies import get_s3
+    try:
+        resp = get_s3().head_object(Bucket=_bucket(), Key=key)
+        return int(resp["ContentLength"])
+    except ClientError as e:
+        if e.response.get("Error", {}).get("Code") in ("404", "NoSuchKey", "NotFound"):
+            return None
+        raise
+
+
+def delete_object(key: str) -> None:
+    from botocore.exceptions import ClientError
+    from app.core.dependencies import get_s3
+    try:
+        get_s3().delete_object(Bucket=_bucket(), Key=key)
+    except ClientError as e:
+        if e.response.get("Error", {}).get("Code") in ("NoSuchKey", "404"):
+            return
+        raise
+
+
+def stream_object(key: str):
+    """Return botocore StreamingBody for *key*. Caller is responsible for closing."""
+    from app.core.dependencies import get_s3
+    return get_s3().get_object(Bucket=_bucket(), Key=key)["Body"]
+
+
+def presign_put_url(key: str, content_type: str, content_length: int) -> str:
+    """Presigned PUT URL valid for PRESIGN_TTL_SECONDS, bound to exact size + type."""
+    from app.core.dependencies import get_s3
+    return get_s3().generate_presigned_url(
+        "put_object",
+        Params={
+            "Bucket": _bucket(),
+            "Key": key,
+            "ContentType": content_type,
+            "ContentLength": content_length,
+        },
+        ExpiresIn=PRESIGN_TTL_SECONDS,
+    )
