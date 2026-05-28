@@ -142,3 +142,108 @@ async def test_upload_url_rejects_oversize(client):
         headers=headers,
     )
     assert r.status_code == 413
+
+
+# ---------------------------------------------------------------------------
+# Task 11: POST /v1/photos/{id}/finalize
+# ---------------------------------------------------------------------------
+
+
+def _read_fixture(name: str) -> bytes:
+    import pathlib
+    return (pathlib.Path(__file__).parent.parent / "fixtures" / "photos" / name).read_bytes()
+
+
+@pytest.mark.asyncio
+async def test_finalize_happy_path(client, s3_client, photos_bucket):
+    import httpx
+    headers = await _login(client, "fin@example.com")
+    body = _read_fixture("sample.jpg")
+
+    r1 = await client.post(
+        "/v1/photos/upload-url",
+        json={"declared_mime": "image/jpeg", "declared_size": len(body)},
+        headers=headers,
+    )
+    assert r1.status_code == 201
+    payload = r1.json()
+    photo_id = payload["photo_id"]
+
+    httpx.put(
+        payload["upload_url"],
+        content=body,
+        headers={"Content-Type": "image/jpeg", "Content-Length": str(len(body))},
+    ).raise_for_status()
+
+    r2 = await client.post(f"/v1/photos/{photo_id}/finalize", headers=headers)
+    assert r2.status_code == 200, r2.text
+    out = r2.json()
+    assert out["mime_type"] == "image/jpeg"
+    assert out["bytes"] == len(body)
+    assert out["finalized_at"] is not None
+    assert out["has_thumbnail"] is True
+
+    # tmp object gone, .enc and _thumb.enc present
+    objs = s3_client.list_objects_v2(Bucket=photos_bucket).get("Contents", [])
+    keys = {o["Key"] for o in objs}
+    assert any(k.endswith(f"{photo_id}.enc") for k in keys)
+    assert any(k.endswith(f"{photo_id}_thumb.enc") for k in keys)
+    assert not any(k.startswith("tmp/") and photo_id in k for k in keys)
+
+
+@pytest.mark.asyncio
+async def test_finalize_idempotent_returns_200(client):
+    import httpx
+    headers = await _login(client, "fin2@example.com")
+    body = _read_fixture("sample.jpg")
+    r1 = await client.post(
+        "/v1/photos/upload-url",
+        json={"declared_mime": "image/jpeg", "declared_size": len(body)},
+        headers=headers,
+    )
+    pid = r1.json()["photo_id"]
+    httpx.put(
+        r1.json()["upload_url"],
+        content=body,
+        headers={"Content-Type": "image/jpeg", "Content-Length": str(len(body))},
+    ).raise_for_status()
+    assert (await client.post(f"/v1/photos/{pid}/finalize", headers=headers)).status_code == 200
+    r3 = await client.post(f"/v1/photos/{pid}/finalize", headers=headers)
+    assert r3.status_code == 200  # idempotent — already finalized is OK
+
+
+@pytest.mark.asyncio
+async def test_finalize_rejects_wrong_user(client):
+    import httpx
+    headers_a = await _login(client, "fina@example.com")
+    headers_b = await _login(client, "finb@example.com")
+    body = _read_fixture("sample.jpg")
+    r1 = await client.post(
+        "/v1/photos/upload-url",
+        json={"declared_mime": "image/jpeg", "declared_size": len(body)},
+        headers=headers_a,
+    )
+    pid = r1.json()["photo_id"]
+    httpx.put(
+        r1.json()["upload_url"],
+        content=body,
+        headers={"Content-Type": "image/jpeg", "Content-Length": str(len(body))},
+    ).raise_for_status()
+    r2 = await client.post(f"/v1/photos/{pid}/finalize", headers=headers_b)
+    assert r2.status_code == 404  # not visible to other user
+
+
+@pytest.mark.asyncio
+async def test_finalize_rejects_missing_tmp(client):
+    import httpx  # noqa: F401
+    headers = await _login(client, "fin3@example.com")
+    body = _read_fixture("sample.jpg")
+    r1 = await client.post(
+        "/v1/photos/upload-url",
+        json={"declared_mime": "image/jpeg", "declared_size": len(body)},
+        headers=headers,
+    )
+    pid = r1.json()["photo_id"]
+    # Do NOT upload the file — just call finalize
+    r2 = await client.post(f"/v1/photos/{pid}/finalize", headers=headers)
+    assert r2.status_code == 422  # tmp object not found
