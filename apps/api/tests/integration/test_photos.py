@@ -60,3 +60,27 @@ async def test_stream_object_yields_streaming_body(s3_client, photos_bucket, mon
     put_object_bytes("stream", b"abcdef", content_type="application/octet-stream")
     body = stream_object("stream")
     assert body.read() == b"abcdef"
+
+
+@pytest.mark.asyncio
+async def test_presign_put_url_round_trip(s3_client, photos_bucket, monkeypatch):
+    import httpx
+    from app.core.config import get_settings
+    monkeypatch.setenv("S3_BUCKET_PHOTOS", photos_bucket)
+    get_settings.cache_clear()
+    import app.core.dependencies as deps
+    deps._s3_client = s3_client
+
+    from app.services.photos import presign_put_url
+
+    body = b"hello-presigned-world"
+    url = presign_put_url("tmp/test/abc", "image/jpeg", len(body))
+    assert "Signature=" in url or "X-Amz-Signature" in url
+    resp = httpx.put(
+        url,
+        content=body,
+        headers={"Content-Type": "image/jpeg", "Content-Length": str(len(body))},
+    )
+    assert resp.status_code == 200
+    obj = s3_client.get_object(Bucket=photos_bucket, Key="tmp/test/abc")
+    assert obj["Body"].read() == body
