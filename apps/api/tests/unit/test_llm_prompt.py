@@ -300,3 +300,84 @@ class TestFormatEventLine:
         desc_idx = line.index("description")
         assert loc_idx < att_idx < desc_idx
 
+
+# ---------------------------------------------------------------------------
+# Regeneration-mode prompt tests (tests 1-5 from spec)
+# ---------------------------------------------------------------------------
+
+
+def _entry_with_title(title: str | None = None) -> MagicMock:
+    e = MagicMock()
+    e.entry_date = "2026-05-10"
+    e.entry_end_date = None
+    e.title = title
+    return e
+
+
+class TestBuildPromptModes:
+    def test_polish_mode_includes_draft_body_and_no_events_section(self):
+        """Mode 'polish': per-entry message contains <draft_body> + body_seed, no EVENTS."""
+        diary = _diary()
+        entry = _entry_with_title(title=None)
+        body_seed = "We went to the park today."
+
+        _, per_entry = build_prompt(diary, entry, [], [], mode="polish", body_seed=body_seed)
+
+        assert "<draft_body>" in per_entry
+        assert body_seed in per_entry
+        assert "EVENTS:" not in per_entry
+
+    def test_hybrid_mode_includes_both_draft_body_and_events(self):
+        """Mode 'hybrid': per-entry message contains <draft_body> AND <event index="1">."""
+        diary = _diary()
+        entry = _entry_with_title(title=None)
+        body_seed = "Alice had soccer."
+        events = [_event("Soccer practice")]
+
+        _, per_entry = build_prompt(diary, entry, events, [], mode="hybrid", body_seed=body_seed)
+
+        assert "<draft_body>" in per_entry
+        assert body_seed in per_entry
+        assert '<event index="1">' in per_entry
+
+    def test_polish_mode_diary_context_byte_identical_to_events_mode(self):
+        """Diary context (first return value) is byte-for-byte identical across modes
+        to allow Anthropic prompt cache reuse."""
+        diary = _diary()
+        entry_events = _entry()
+        entry_polish = _entry_with_title(title=None)
+
+        ctx_events, _ = build_prompt(diary, entry_events, [_event("Soccer")], [], mode="events")
+        ctx_polish, _ = build_prompt(diary, entry_polish, [], [], mode="polish", body_seed="X")
+
+        assert ctx_events == ctx_polish
+
+    def test_polish_includes_current_title_when_non_empty(self):
+        """Mode 'polish' with non-empty entry title: CURRENT_TITLE appears in per-entry message."""
+        diary = _diary()
+        entry = _entry_with_title(title="Summer Fun")
+
+        _, per_entry = build_prompt(
+            diary, entry, [], [], mode="polish", body_seed="Some body text."
+        )
+
+        assert "CURRENT_TITLE:" in per_entry
+        assert "Summer Fun" in per_entry
+
+    def test_polish_omits_current_title_when_empty(self):
+        """Mode 'polish' with empty/None title: CURRENT_TITLE does NOT appear
+        in per-entry message."""
+        diary = _diary()
+        entry_none = _entry_with_title(title=None)
+
+        _, per_entry_none = build_prompt(
+            diary, entry_none, [], [], mode="polish", body_seed="Some body text."
+        )
+        assert "CURRENT_TITLE:" not in per_entry_none
+
+        entry_empty = _entry_with_title(title="")
+        _, per_entry_empty = build_prompt(
+            diary, entry_empty, [], [], mode="polish", body_seed="Some body text."
+        )
+        assert "CURRENT_TITLE:" not in per_entry_empty
+

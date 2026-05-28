@@ -8,6 +8,29 @@ BASE="${1:-http://localhost:8000}"
 PASS=0
 FAIL=0
 
+# ---- Migration check (local dev only) ----
+# When targeting localhost, verify the DB is at alembic head before running.
+# Skipped for remote BASE values (staging, prod) since we don't have local DB access.
+if [[ "${BASE}" == *"localhost"* || "${BASE}" == *"127.0.0.1"* ]]; then
+  if command -v docker &>/dev/null && docker compose ps postgres --quiet 2>/dev/null | grep -q .; then
+    DB_VERSION=$(docker compose exec -T postgres \
+      psql -U perfectday -d perfectday -tAq \
+      -c "SELECT version_num FROM alembic_version LIMIT 1;" 2>/dev/null || echo "unknown")
+    ALEMBIC_HEAD=$(cd apps/api 2>/dev/null && \
+      ../../apps/api/.venv/bin/alembic heads --resolve-dependencies 2>/dev/null | \
+      grep -oE '^[0-9a-f]+' | head -1 || echo "unknown")
+    if [ "${DB_VERSION}" = "unknown" ] || [ "${ALEMBIC_HEAD}" = "unknown" ]; then
+      echo "⚠ Could not determine migration status — skipping check"
+    elif [ "${DB_VERSION}" != "${ALEMBIC_HEAD}" ]; then
+      echo "✗ Migration mismatch: DB is on ${DB_VERSION}, head is ${ALEMBIC_HEAD}" >&2
+      echo "  Run: make migrate" >&2
+      exit 1
+    else
+      echo "✓ DB migrations current (${DB_VERSION})"
+    fi
+  fi
+fi
+
 _check() {
   local desc="$1" expected="$2" actual="$3"
   if [ "$actual" = "$expected" ]; then

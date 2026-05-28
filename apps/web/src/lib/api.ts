@@ -151,6 +151,15 @@ export interface CalendarEventSummary {
   status: string
 }
 
+export interface LLMGenerationSummary {
+  id: string
+  status: 'success' | 'failed'
+  error: string | null
+  created_at: string
+  mode: 'events' | 'polish' | 'hybrid' | 'none'
+  model: string | null
+}
+
 export interface Entry {
   id: string
   diary_id: string
@@ -158,7 +167,7 @@ export interface Entry {
   entry_end_date: string | null
   title: string | null
   body_markdown: string | null
-  body_source: 'llm' | 'fallback'
+  body_source: 'llm' | 'fallback' | 'llm_polished' | 'llm_hybrid'
   flagged_tokens: string[] | null
   status: 'draft' | 'published'
   created_by: 'auto' | 'manual'
@@ -169,6 +178,7 @@ export interface Entry {
   updated_at: string
   events: EventItem[]
   rule_matches: RuleMatchSummary[]
+  last_generation: LLMGenerationSummary | null
 }
 
 export interface ScanRun {

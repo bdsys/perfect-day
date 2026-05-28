@@ -56,9 +56,11 @@ function EntryDetailPageInner() {
   const [publishing, setPublishing] = useState(false)
   const [pollingRegen, setPollingRegen] = useState(false)
   const [regenStartedAt, setRegenStartedAt] = useState<string | null>(null)
+  const [regenStartedGenAt, setRegenStartedGenAt] = useState<string | null>(null)
   const [regenStartTime, setRegenStartTime] = useState<string | null>(null)
   const [regenResult, setRegenResult] = useState<'success' | 'failed' | null>(null)
   const [regenSlow, setRegenSlow] = useState(false)
+  const [regenErrorMessage, setRegenErrorMessage] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
 
   useEffect(() => {
@@ -136,10 +138,13 @@ function EntryDetailPageInner() {
   async function handleRegenerate() {
     if (!entry) return
     try {
+      const regenStartedGenAt = entry.last_generation?.created_at ?? null
       setRegenStartedAt(entry.updated_at)
+      setRegenStartedGenAt(regenStartedGenAt)
       setRegenStartTime(new Date().toISOString())
       setRegenResult(null)
       setRegenSlow(false)
+      setRegenErrorMessage(null)
       await api.entries.regenerate(entry.id)
       setPollingRegen(true)
       setError('')
@@ -152,15 +157,32 @@ function EntryDetailPageInner() {
     if (!entry) return
     try {
       const updated = await api.entries.get(entry.id)
-      if (updated.updated_at !== regenStartedAt) {
+      // Prefer terminating on last_generation.created_at change; fall back to updated_at
+      const genChanged = updated.last_generation != null
+        ? updated.last_generation.created_at !== regenStartedGenAt
+        : updated.updated_at !== regenStartedAt
+
+      if (genChanged) {
         setEntry(updated)
         setPollingRegen(false)
         setRegenSlow(false)
-        setRegenResult('success')
+
+        if (updated.last_generation != null) {
+          if (updated.last_generation.status === 'success') {
+            setRegenResult('success')
+            setRegenErrorMessage(null)
+          } else {
+            setRegenResult(null)
+            setRegenErrorMessage(updated.last_generation.error ?? 'Generation failed')
+          }
+        } else {
+          // No last_generation: fall back to old success behavior
+          setRegenResult('success')
+        }
       }
     } catch {
     }
-  }, [entry, regenStartedAt])
+  }, [entry, regenStartedAt, regenStartedGenAt])
 
   usePolling(pollRegen, 2000, pollingRegen)
 
@@ -171,7 +193,7 @@ function EntryDetailPageInner() {
       setPollingRegen(false)
       setRegenSlow(false)
       setRegenResult('failed')
-    }, 30 * 1000)
+    }, 60 * 1000)
     return () => {
       clearTimeout(slowTimer)
       clearTimeout(failTimer)
@@ -296,6 +318,24 @@ function EntryDetailPageInner() {
               </div>
             )}
 
+            {regenErrorMessage && (
+              <div
+                className="bg-red-50 border border-red-200 text-red-800 rounded p-3 text-sm flex items-start gap-2"
+                style={{ marginBottom: '1rem' }}
+              >
+                <span style={{ flex: 1 }}>
+                  AI generation failed: {regenErrorMessage}. Your text was not changed.
+                </span>
+                <button
+                  onClick={() => setRegenErrorMessage(null)}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', padding: 0, lineHeight: 1, flexShrink: 0 }}
+                  aria-label="Dismiss"
+                >
+                  ×
+                </button>
+              </div>
+            )}
+
             {entry.body_markdown ? (
               <div
                 className="card"
@@ -363,10 +403,21 @@ function EntryDetailPageInner() {
                   {publishing ? 'Unpublishing…' : 'Unpublish'}
                 </button>
               )}
-              <button className="btn btn-secondary" onClick={handleRegenerate} disabled={pollingRegen}>
+              <button
+                className="btn btn-secondary"
+                onClick={handleRegenerate}
+                disabled={pollingRegen || (!entry.events.length && !entry.body_markdown)}
+                title={(!entry.events.length && !entry.body_markdown) ? 'Add events or write something first' : undefined}
+              >
                 {pollingRegen
                   ? (entry.body_markdown ? 'Regenerating…' : 'Generating…')
-                  : (entry.body_markdown ? 'Regenerate with AI' : 'Generate with AI')}
+                  : (entry.events.length > 0 && entry.body_markdown)
+                    ? 'Regenerate with AI'
+                    : (entry.events.length > 0 && !entry.body_markdown)
+                      ? 'Generate with AI'
+                      : (!entry.events.length && entry.body_markdown)
+                        ? 'Polish with AI'
+                        : 'Generate with AI'}
               </button>
               <button className="btn btn-danger" onClick={handleDelete} disabled={deleting}>
                 {deleting ? 'Deleting…' : 'Delete'}

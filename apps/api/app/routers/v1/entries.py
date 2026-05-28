@@ -4,7 +4,7 @@ import uuid
 from datetime import UTC, date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -60,6 +60,17 @@ class RuleMatchOut(BaseModel):
     model_config = {"from_attributes": False}
 
 
+class LLMGenerationSummaryOut(BaseModel):
+    id: uuid.UUID
+    status: str  # "success" | "failed"
+    error: str | None
+    created_at: datetime
+    mode: str   # "events" | "polish" | "hybrid" | "none"
+    model: str | None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class EntryOut(BaseModel):
     id: uuid.UUID
     diary_id: uuid.UUID
@@ -78,6 +89,7 @@ class EntryOut(BaseModel):
     creation_source: str = "manual"
     events: list[EventOut] = []
     rule_matches: list[RuleMatchOut] = []
+    last_generation: LLMGenerationSummaryOut | None = None
 
     model_config = {"from_attributes": True}
 
@@ -116,6 +128,18 @@ def _entry_out_from_orm(entry: Entry) -> EntryOut:
         )
         for match in entry.rule_matches
     ]
+    gens = entry.llm_generations
+    last_gen: LLMGenerationSummaryOut | None = None
+    if gens:
+        latest = sorted(gens, key=lambda g: g.created_at, reverse=True)[0]
+        last_gen = LLMGenerationSummaryOut(
+            id=latest.id,
+            status=latest.status,
+            error=latest.error,
+            created_at=latest.created_at,
+            mode=latest.mode,
+            model=latest.model,
+        )
     return EntryOut(
         id=entry.id,
         diary_id=entry.diary_id,
@@ -134,6 +158,7 @@ def _entry_out_from_orm(entry: Entry) -> EntryOut:
         creation_source=entry.creation_source,
         events=events_out,
         rule_matches=rule_matches_out,
+        last_generation=last_gen,
     )
 
 
@@ -153,6 +178,7 @@ async def _get_entry_or_404(
         .options(
             selectinload(Entry.events),
             selectinload(Entry.rule_matches).selectinload(EntryRuleMatch.rule),
+            selectinload(Entry.llm_generations),
         )
         .where(Entry.id == entry_id, Entry.deleted_at.is_(None))
     )
@@ -194,6 +220,7 @@ async def list_deleted_entries(
         .options(
             selectinload(Entry.events),
             selectinload(Entry.rule_matches).selectinload(EntryRuleMatch.rule),
+            selectinload(Entry.llm_generations),
         )
         .where(Entry.diary_id == diary_id, Entry.deleted_at.is_not(None))
         .order_by(Entry.deleted_at.desc())
@@ -219,6 +246,7 @@ async def list_entries(
         .options(
             selectinload(Entry.events),
             selectinload(Entry.rule_matches).selectinload(EntryRuleMatch.rule),
+            selectinload(Entry.llm_generations),
         )
         .where(Entry.diary_id == diary_id, Entry.deleted_at.is_(None))
     )
@@ -271,7 +299,7 @@ async def create_entry(
     )
     db.add(entry)
     await db.flush()
-    await db.refresh(entry, ["events", "rule_matches"])
+    await db.refresh(entry, ["events", "rule_matches", "llm_generations"])
     return _entry_out_from_orm(entry)
 
 
@@ -360,6 +388,7 @@ async def restore_entry(
         .options(
             selectinload(Entry.events),
             selectinload(Entry.rule_matches).selectinload(EntryRuleMatch.rule),
+            selectinload(Entry.llm_generations),
         )
         .where(Entry.id == entry_id)
     )

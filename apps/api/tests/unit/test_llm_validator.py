@@ -107,3 +107,77 @@ class TestValidateCitation:
         assert ok is True
         assert "Sarah" not in flagged
 
+
+# ---------------------------------------------------------------------------
+# Regeneration-mode validator tests (tests 6-9 from spec)
+# ---------------------------------------------------------------------------
+
+
+class TestValidateCitationModes:
+    def test_polish_mode_skips_validator_returns_true(self):
+        """Mode 'polish': validate_citation returns (True, '', []) regardless of parsed content."""
+        parsed = {
+            "title": "Invented Title With FakeToken",
+            "body_markdown": "Made up FakeName went somewhere.",
+            # deliberately no facts_used key
+        }
+
+        ok, err, flagged = validate_citation(parsed, events=[], mode="polish")
+
+        assert ok is True
+        assert err == ""
+        assert flagged == []
+
+    def test_polish_mode_skips_validator_even_with_events(self):
+        """Mode 'polish' always short-circuits — even if events are passed in."""
+        events = [_event({"summary": "Soccer"})]
+        parsed = {"title": "T", "body_markdown": "B", "facts_used": [99]}
+
+        ok, err, flagged = validate_citation(parsed, events=events, mode="polish")
+
+        assert ok is True
+
+    def test_hybrid_empty_facts_used_accepted(self):
+        """Mode 'hybrid': empty facts_used + empty title_facts_used is valid."""
+        events = [_event({"summary": "Soccer"})]
+        parsed = {
+            "title": "A day",
+            "title_facts_used": [],
+            "body_markdown": "We played soccer.",
+            "facts_used": [],
+        }
+
+        ok, err, flagged = validate_citation(parsed, events=events, mode="hybrid")
+
+        assert ok is True
+
+    def test_hybrid_out_of_range_facts_used_rejected(self):
+        """Mode 'hybrid': index 5 when only 1 event → invalid."""
+        events = [_event({"summary": "Soccer"})]
+        parsed = {
+            "title": "A day",
+            "title_facts_used": [],
+            "body_markdown": "We played.",
+            "facts_used": [5],
+        }
+
+        ok, err, flagged = validate_citation(parsed, events=events, mode="hybrid")
+
+        assert ok is False
+        assert "invalid event index" in err
+
+    def test_hybrid_token_in_seed_not_flagged(self):
+        """Mode 'hybrid': token scan is skipped — flagged_tokens is always []."""
+        events = [_event({"summary": "park visit"})]
+        parsed = {
+            "title": "Day Out",
+            "title_facts_used": [],
+            "body_markdown": "FakeInventedName went to the park.",
+            "facts_used": [1],
+        }
+
+        ok, _, flagged = validate_citation(parsed, events=events, mode="hybrid")
+
+        # Hybrid skips the token-flag scan; flagged must be empty even for invented tokens
+        assert flagged == []
+

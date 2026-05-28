@@ -317,7 +317,7 @@ class Entry(TimestampMixin, SoftDeleteMixin, Base):
         Index("ix_entries_diary_entry_date", "diary_id", "entry_date"),
         CheckConstraint("status IN ('draft','published')", name="ck_entries_status"),
         CheckConstraint("created_by IN ('auto','manual')", name="ck_entries_created_by"),
-        CheckConstraint("body_source IN ('llm','fallback')", name="ck_entries_body_source"),
+        CheckConstraint("body_source IN ('llm','fallback','llm_polished','llm_hybrid')", name="ck_entries_body_source"),
         CheckConstraint(
             "creation_source IN ('manual','calendar_pick','rule')",
             name="ck_entries_creation_source",
@@ -467,12 +467,14 @@ class LLMGeneration(TimestampMixin, Base):
     cost_usd: Mapped[float | None] = mapped_column(Numeric(10, 6))
     latency_ms: Mapped[int | None] = mapped_column(Integer)
     status: Mapped[str] = mapped_column(String(10), nullable=False)
+    mode: Mapped[str] = mapped_column(String(10), nullable=False)
     error: Mapped[str | None] = mapped_column(Text)
 
     entry: Mapped[Entry] = relationship(back_populates="llm_generations")
 
     __table_args__ = (
         CheckConstraint("status IN ('success','failed')", name="ck_llm_generations_status"),
+        CheckConstraint("mode IN ('events','polish','hybrid','none')", name="ck_llm_generations_mode"),
     )
 
 
