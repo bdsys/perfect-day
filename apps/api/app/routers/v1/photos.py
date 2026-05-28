@@ -4,16 +4,20 @@ from __future__ import annotations
 import asyncio
 import uuid
 from datetime import UTC, datetime
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi import status as http_status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user
 from app.core.database import get_db
-from app.core.photo_crypto import encrypt_stream, generate_dek, wrap_dek
-from app.models import Photo, User
+from app.core.photo_crypto import encrypt_stream, generate_dek, iter_decrypt_stream, unwrap_dek, wrap_dek
+from app.models import DiaryPhoto, Photo, User
+from app.routers.v1.diaries import _get_diary_or_404
 from app.services.photos import (
     ALLOWED_MIME,
     MAX_BYTES,
@@ -25,6 +29,7 @@ from app.services.photos import (
     parse_exif,
     presign_put_url,
     put_object_bytes,
+    stream_object,
 )
 
 router = APIRouter(tags=["photos"])
@@ -198,3 +203,146 @@ async def finalize_photo(
     photo.finalized_at = datetime.now(tz=UTC)
 
     return _photo_out(photo)
+
+
+# ---------------------------------------------------------------------------
+# Task 12: GET /v1/photos/{id}?kind=full|thumb
+# ---------------------------------------------------------------------------
+
+
+@router.get("/photos/{photo_id}")
+async def get_photo(
+    photo_id: uuid.UUID,
+    kind: Literal["full", "thumb"] = "full",
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Photo).where(
+            Photo.id == photo_id,
+            Photo.user_id == user.id,
+            Photo.deleted_at.is_(None),
+            Photo.finalized_at.is_not(None),
+        )
+    )
+    photo = result.scalar_one_or_none()
+    if photo is None:
+        raise HTTPException(status_code=404, detail="not_found")
+
+    # Determine which S3 key to use; fall back to full when thumb is absent
+    if kind == "thumb" and photo.thumbnail_s3_key is not None:
+        key = photo.thumbnail_s3_key
+        media_type = "image/jpeg"
+    else:
+        key = photo.s3_key
+        media_type = photo.mime_type or "application/octet-stream"
+
+    dek = unwrap_dek(photo.dek_ciphertext, user.id)
+
+    def _stream():
+        s3_body = stream_object(key)
+
+        def exact_read(n: int) -> bytes:
+            buf = b""
+            while len(buf) < n:
+                chunk = s3_body.read(n - len(buf))
+                if not chunk:
+                    break
+                buf += chunk
+            return buf
+
+        yield from iter_decrypt_stream(exact_read, dek)
+
+    return StreamingResponse(_stream(), media_type=media_type)
+
+
+# ---------------------------------------------------------------------------
+# Task 13: DELETE /v1/photos/{id}
+# ---------------------------------------------------------------------------
+
+
+@router.delete("/photos/{photo_id}", status_code=http_status.HTTP_204_NO_CONTENT)
+async def delete_photo(
+    photo_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    result = await db.execute(
+        select(Photo).where(
+            Photo.id == photo_id,
+            Photo.user_id == user.id,
+            Photo.deleted_at.is_(None),
+        )
+    )
+    photo = result.scalar_one_or_none()
+    if photo is None:
+        raise HTTPException(status_code=404, detail="not_found")
+    photo.deleted_at = datetime.now(tz=UTC)
+
+
+# ---------------------------------------------------------------------------
+# Task 14: Diary photo attach/detach
+# ---------------------------------------------------------------------------
+
+
+@router.post("/diaries/{diary_id}/photos", status_code=http_status.HTTP_201_CREATED)
+async def attach_photo_to_diary(
+    diary_id: uuid.UUID,
+    body: PhotoAttachRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> PhotoOut:
+    diary, role = await _get_diary_or_404(diary_id, user, db)
+    if role == "viewer":
+        raise HTTPException(status_code=403, detail="forbidden")
+
+    # Verify photo ownership
+    result = await db.execute(
+        select(Photo).where(
+            Photo.id == body.photo_id,
+            Photo.user_id == user.id,
+            Photo.deleted_at.is_(None),
+            Photo.finalized_at.is_not(None),
+        )
+    )
+    photo = result.scalar_one_or_none()
+    if photo is None:
+        raise HTTPException(status_code=404, detail="photo_not_found")
+
+    # Idempotent attach
+    existing = await db.execute(
+        select(DiaryPhoto).where(
+            DiaryPhoto.diary_id == diary_id,
+            DiaryPhoto.photo_id == body.photo_id,
+        )
+    )
+    if existing.scalar_one_or_none() is None:
+        db.add(DiaryPhoto(diary_id=diary_id, photo_id=body.photo_id))
+        await db.flush()
+
+    return _photo_out(photo)
+
+
+@router.delete(
+    "/diaries/{diary_id}/photos/{photo_id}",
+    status_code=http_status.HTTP_204_NO_CONTENT,
+)
+async def detach_photo_from_diary(
+    diary_id: uuid.UUID,
+    photo_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    diary, role = await _get_diary_or_404(diary_id, user, db)
+    if role == "viewer":
+        raise HTTPException(status_code=403, detail="forbidden")
+
+    result = await db.execute(
+        select(DiaryPhoto).where(
+            DiaryPhoto.diary_id == diary_id,
+            DiaryPhoto.photo_id == photo_id,
+        )
+    )
+    dp = result.scalar_one_or_none()
+    if dp is not None:
+        await db.delete(dp)
