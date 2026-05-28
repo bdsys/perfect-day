@@ -32,18 +32,22 @@ def error_response(
 
 async def http_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     http_exc = exc if isinstance(exc, HTTPException) else HTTPException(500)
+    extra_headers = http_exc.headers or {}
     # Pass structured dict details through as-is (e.g. tier_limit, diary-create pattern).
     # Only wrap plain string details in the error envelope.
     if isinstance(http_exc.detail, dict):
         return JSONResponse(
             status_code=http_exc.status_code,
             content={"detail": http_exc.detail},
+            headers=extra_headers,
         )
-    return error_response(
+    resp = error_response(
         code="http_error",
         message=http_exc.detail if isinstance(http_exc.detail, str) else str(http_exc.detail),
         status_code=http_exc.status_code,
     )
+    resp.headers.update(extra_headers)
+    return resp
 
 
 async def request_validation_handler(request: Request, exc: Exception) -> JSONResponse:

@@ -7,15 +7,7 @@ import { api, type Entry, type EventItem } from '@/lib/api'
 import { useAuth } from '@/lib/auth-context'
 import { StatusPanel } from '@/components/StatusPanel'
 import { usePolling } from '@/lib/usePolling'
-
-function formatDate(d: string) {
-  return new Date(d + 'T00:00:00').toLocaleDateString(undefined, {
-    weekday: 'long',
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-  })
-}
+import { formatDateRange } from '@/lib/date'
 
 function formatEventTime(event: EventItem): string {
   const start = event.start?.dateTime ?? event.start?.date ?? ''
@@ -227,7 +219,7 @@ function EntryDetailPageInner() {
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.25rem' }}>
           <span className={`status-badge status-${entry.status}`}>{entry.status}</span>
-          <span style={{ fontSize: '0.875rem', color: 'var(--text-muted)' }}>{formatDate(entry.entry_date)}</span>
+          <span style={{ fontSize: '0.875rem', color: 'var(--text-muted)' }}>{formatDateRange(entry.entry_date, entry.entry_end_date)}</span>
         </div>
 
         {editing ? (

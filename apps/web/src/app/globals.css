@@ -271,10 +271,11 @@ input:focus {
   background: var(--surface);
   font-size: 0.875rem;
 }
-.status-panel.running  { background: #f0f7ff; border-color: #93c5fd; }
-.status-panel.success  { background: var(--published-bg); border-color: var(--published-border); }
-.status-panel.failed   { background: #fef2f2; border-color: #fca5a5; color: #991b1b; }
-.status-panel.partial  { background: var(--draft-bg); border-color: var(--draft-border); color: #92400e; }
+.status-panel.running    { background: #f0f7ff; border-color: #93c5fd; }
+.status-panel.success    { background: var(--published-bg); border-color: var(--published-border); }
+.status-panel.failed     { background: #fef2f2; border-color: #fca5a5; color: #991b1b; }
+.status-panel.partial    { background: var(--draft-bg); border-color: var(--draft-border); color: #92400e; }
+.status-panel.cancelled  { background: var(--bg); border-color: var(--border); color: var(--text-muted); }
 .status-panel-body     { flex: 1; min-width: 0; }
 .status-panel-headline { font-weight: 600; }
 .status-panel-detail   { color: var(--text-muted); margin-top: 0.15rem; font-size: 0.8rem; }
@@ -345,6 +346,7 @@ input:focus {
 }
 .popover label { display: block; font-size: 0.85rem; margin-bottom: 0.4rem; color: var(--text-muted); }
 .popover input[type="number"] { width: 100%; padding: 0.3rem; margin-bottom: 0.75rem; }
+.popover input[type="date"] { width: 100%; padding: 0.3rem; margin-bottom: 0.75rem; }
 
 /* Calendar month grid */
 .cal-toolbar { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem; }
