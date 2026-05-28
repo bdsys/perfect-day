@@ -59,6 +59,11 @@ export default function DiaryDetailPage() {
   const [latestBackfillRun, setLatestBackfillRun] = useState<BackfillRun | null>(null)
   const [backfillError, setBackfillError] = useState('')
   const [cancelling, setCancelling] = useState(false)
+  const [showNewEntryOptions, setShowNewEntryOptions] = useState(false)
+  const [newEntryDate, setNewEntryDate] = useState(() => new Date().toISOString().slice(0, 10))
+  const [newEntryEndDate, setNewEntryEndDate] = useState('')
+  const [newEntryTitle, setNewEntryTitle] = useState('')
+  const [newEntryError, setNewEntryError] = useState('')
   const pollFailuresRef = useRef(0)
   const MAX_POLL_FAILURES = 5
 
@@ -233,13 +238,29 @@ export default function DiaryDetailPage() {
   }
 
   async function handleNewEntry() {
+    setNewEntryError('')
+
+    if (!newEntryDate) {
+      setNewEntryError('Start date is required')
+      return
+    }
+    if (newEntryEndDate && newEntryEndDate < newEntryDate) {
+      setNewEntryError('End date must be on or after start date')
+      return
+    }
+
+    const trimmedTitle = newEntryTitle.trim()
+
     setCreating(true)
     try {
-      const today = new Date().toISOString().slice(0, 10)
-      const entry = await api.entries.create(diaryId, { entry_date: today })
+      const entry = await api.entries.create(diaryId, {
+        entry_date: newEntryDate,
+        entry_end_date: newEntryEndDate || null,
+        title: trimmedTitle || null,
+      })
       router.push(`/entries/${entry.id}`)
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to create entry')
+      setNewEntryError(e instanceof Error ? e.message : 'Failed to create entry')
       setCreating(false)
     }
   }
@@ -362,9 +383,57 @@ export default function DiaryDetailPage() {
                 </div>
               )}
             </div>
-            <button className="btn btn-primary" onClick={handleNewEntry} disabled={creating}>
-              {creating ? 'Creating…' : 'New entry'}
-            </button>
+            <div style={{ position: 'relative', display: 'inline-block' }}>
+              <button
+                className="btn btn-primary"
+                onClick={() => {
+                  setNewEntryError('')
+                  setShowNewEntryOptions((v) => !v)
+                }}
+                disabled={creating}
+              >
+                {creating ? 'Creating…' : 'New entry'}
+              </button>
+              {showNewEntryOptions && (
+                <div className="popover" style={{ top: '100%', right: 0, marginTop: '0.4rem' }}>
+                  <label>
+                    Start date
+                    <input
+                      type="date"
+                      value={newEntryDate}
+                      onChange={(e) => setNewEntryDate(e.target.value)}
+                    />
+                  </label>
+                  <label>
+                    End date (optional)
+                    <input
+                      type="date"
+                      value={newEntryEndDate}
+                      onChange={(e) => setNewEntryEndDate(e.target.value)}
+                    />
+                  </label>
+                  <label>
+                    Title (optional)
+                    <input
+                      type="text"
+                      value={newEntryTitle}
+                      onChange={(e) => setNewEntryTitle(e.target.value)}
+                    />
+                  </label>
+                  {newEntryError && (
+                    <p className="error-message" style={{ marginBottom: '0.5rem' }}>{newEntryError}</p>
+                  )}
+                  <button
+                    className="btn btn-primary"
+                    style={{ width: '100%' }}
+                    onClick={handleNewEntry}
+                    disabled={creating || !newEntryDate}
+                  >
+                    {creating ? 'Creating…' : 'Create entry'}
+                  </button>
+                </div>
+              )}
+            </div>
             <button
               className="btn btn-secondary"
               onClick={() => router.push(`/diaries/${diaryId}/calendar-pick`)}
