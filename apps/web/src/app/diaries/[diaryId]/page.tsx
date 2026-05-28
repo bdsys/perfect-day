@@ -7,15 +7,7 @@ import { api, type Diary, type Entry, type Integration, type ScanRun, type Backf
 import { useAuth } from '@/lib/auth-context'
 import { StatusPanel } from '@/components/StatusPanel'
 import { usePolling } from '@/lib/usePolling'
-
-function formatDate(d: string) {
-  return new Date(d + 'T00:00:00').toLocaleDateString(undefined, {
-    weekday: 'long',
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-  })
-}
+import { formatDateRange } from '@/lib/date'
 
 function EntryCard({ entry }: { entry: Entry }) {
   const preview = entry.body_markdown?.slice(0, 120) ?? ''
@@ -23,7 +15,7 @@ function EntryCard({ entry }: { entry: Entry }) {
   return (
     <Link href={`/entries/${entry.id}`} style={{ display: 'block', textDecoration: 'none', color: 'inherit' }}>
       <div className={`entry-card ${entry.status}`}>
-        <div className="entry-date">{formatDate(entry.entry_date)}</div>
+        <div className="entry-date">{formatDateRange(entry.entry_date, entry.entry_end_date)}</div>
         <div className="entry-title">{entry.title ?? '(no title yet)'}</div>
         {firstEventSummary ? (
           <div style={{ fontStyle: 'italic', color: '#888', fontSize: '0.85rem', marginTop: '0.25rem' }}>
