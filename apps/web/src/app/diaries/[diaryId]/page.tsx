@@ -419,6 +419,7 @@ export default function DiaryDetailPage() {
         {latestBackfillRun && (
           <StatusPanel
             state={
+              // 'pending' and 'running' both show the spinner — no separate pending state in StatusPanel.
               latestBackfillRun.status === 'completed' ? 'success' :
               latestBackfillRun.status === 'failed' ? 'failed' :
               latestBackfillRun.status === 'cancelled' ? 'cancelled' :
