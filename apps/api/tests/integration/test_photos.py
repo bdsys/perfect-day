@@ -84,3 +84,10 @@ async def test_presign_put_url_round_trip(s3_client, photos_bucket, monkeypatch)
     assert resp.status_code == 200
     obj = s3_client.get_object(Bucket=photos_bucket, Key="tmp/test/abc")
     assert obj["Body"].read() == body
+
+
+@pytest.mark.asyncio
+async def test_photos_router_registered(client):
+    """The photos router should be mounted; /v1/photos/upload-url returns 401 without auth."""
+    resp = await client.post("/v1/photos/upload-url", json={"declared_mime": "image/jpeg", "declared_size": 100})
+    assert resp.status_code in (401, 403)
