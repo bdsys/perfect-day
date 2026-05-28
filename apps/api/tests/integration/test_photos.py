@@ -571,3 +571,40 @@ async def test_get_photo_metadata(client):
     assert out["mime_type"] == "image/jpeg"
     assert out["bytes"] == len(body)
     assert out["has_thumbnail"] is True
+
+
+# ---------------------------------------------------------------------------
+# Task 17: GET /v1/diaries/{id}/photos library endpoint
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_list_diary_photos(client):
+    import httpx
+    headers = await _login(client, "lib1@example.com")
+    body = _read_fixture("sample.jpg")
+
+    r_diary = await client.post(
+        "/v1/diaries",
+        json={"name": "LibDiary", "timezone": "UTC", "scan_interval_minutes": 60},
+        headers=headers,
+    )
+    diary_id = r_diary.json()["id"]
+
+    # Upload + finalize + attach
+    r1 = await client.post(
+        "/v1/photos/upload-url",
+        json={"declared_mime": "image/jpeg", "declared_size": len(body)},
+        headers=headers,
+    )
+    pid = r1.json()["photo_id"]
+    httpx.put(r1.json()["upload_url"], content=body,
+              headers={"Content-Type": "image/jpeg", "Content-Length": str(len(body))}).raise_for_status()
+    await client.post(f"/v1/photos/{pid}/finalize", headers=headers)
+    await client.post(f"/v1/diaries/{diary_id}/photos", json={"photo_id": pid}, headers=headers)
+
+    r2 = await client.get(f"/v1/diaries/{diary_id}/photos", headers=headers)
+    assert r2.status_code == 200
+    photos = r2.json()
+    assert len(photos) >= 1
+    assert any(p["id"] == pid for p in photos)
