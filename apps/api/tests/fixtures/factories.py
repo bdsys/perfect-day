@@ -8,7 +8,7 @@ from datetime import UTC, date, datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import hash_password
-from app.models import Diary, Entry, Event, ScanJob, User
+from app.models import Diary, DiaryPhoto, Entry, EntryPhoto, Event, Photo, ScanJob, User
 
 
 async def make_user(
@@ -106,3 +106,57 @@ async def make_event(
     await db.commit()
     await db.refresh(ev)
     return ev
+
+
+async def make_photo(
+    db: AsyncSession,
+    *,
+    user: User,
+    finalized: bool = True,
+    source: str = "upload",
+    mime_type: str | None = "image/jpeg",
+    size_bytes: int | None = 1024,
+    s3_key: str | None = None,
+    thumbnail_s3_key: str | None = None,
+    dek_ciphertext: bytes | None = None,
+    taken_at: datetime | None = None,
+    lat: float | None = None,
+    lon: float | None = None,
+) -> Photo:
+    from app.core.photo_crypto import generate_dek, wrap_dek
+
+    pid = uuid.uuid4()
+    photo = Photo(
+        id=pid,
+        user_id=user.id,
+        s3_key=s3_key or f"{user.id}/{pid}.enc",
+        mime_type=mime_type if finalized else None,
+        bytes=size_bytes if finalized else None,
+        finalized_at=datetime.now(tz=UTC) if finalized else None,
+        dek_ciphertext=dek_ciphertext or (wrap_dek(generate_dek(), user.id) if finalized else None),
+        source=source,
+        taken_at=taken_at,
+        lat=lat,
+        lon=lon,
+    )
+    if finalized:
+        photo.thumbnail_s3_key = thumbnail_s3_key or f"{user.id}/{pid}_thumb.enc"
+    db.add(photo)
+    await db.flush()
+    return photo
+
+
+async def make_diary_photo(db: AsyncSession, *, diary: Diary, photo: Photo) -> DiaryPhoto:
+    dp = DiaryPhoto(diary_id=diary.id, photo_id=photo.id)
+    db.add(dp)
+    await db.flush()
+    return dp
+
+
+async def make_entry_photo(
+    db: AsyncSession, *, entry: Entry, photo: Photo, position: int | None = None
+) -> EntryPhoto:
+    ep = EntryPhoto(entry_id=entry.id, photo_id=photo.id, position=position)
+    db.add(ep)
+    await db.flush()
+    return ep
