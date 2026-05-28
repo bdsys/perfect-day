@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import UTC, date, datetime
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -130,8 +130,6 @@ def _db_context(entry: MagicMock, diary: MagicMock):
 
     saved_gens: list = []
 
-    original_add = db.add
-
     def capturing_add(obj):
         from app.models import LLMGeneration
         if isinstance(obj, LLMGeneration):
@@ -171,7 +169,10 @@ class TestModeDetection:
             patch("app.workers.llm.db_session", return_value=ctx),
             patch("app.workers.llm.AnthropicProvider", return_value=anthropic_p),
             patch("app.workers.llm.GeminiProvider", return_value=gemini_p),
-            patch("app.workers.llm.build_prompt", wraps=__import__("app.workers.llm", fromlist=["build_prompt"]).build_prompt) as mock_bp,
+            patch(
+                "app.workers.llm.build_prompt",
+                wraps=__import__("app.workers.llm", fromlist=["build_prompt"]).build_prompt,
+            ) as mock_bp,
         ):
             from app.workers.llm import generate_draft_for_entry
             await generate_draft_for_entry(entry_id)
@@ -196,7 +197,10 @@ class TestModeDetection:
             patch("app.workers.llm.db_session", return_value=ctx),
             patch("app.workers.llm.AnthropicProvider", return_value=anthropic_p),
             patch("app.workers.llm.GeminiProvider", return_value=gemini_p),
-            patch("app.workers.llm.build_prompt", wraps=__import__("app.workers.llm", fromlist=["build_prompt"]).build_prompt) as mock_bp,
+            patch(
+                "app.workers.llm.build_prompt",
+                wraps=__import__("app.workers.llm", fromlist=["build_prompt"]).build_prompt,
+            ) as mock_bp,
         ):
             from app.workers.llm import generate_draft_for_entry
             await generate_draft_for_entry(entry_id)
@@ -220,7 +224,10 @@ class TestModeDetection:
             patch("app.workers.llm.db_session", return_value=ctx),
             patch("app.workers.llm.AnthropicProvider", return_value=anthropic_p),
             patch("app.workers.llm.GeminiProvider", return_value=gemini_p),
-            patch("app.workers.llm.build_prompt", wraps=__import__("app.workers.llm", fromlist=["build_prompt"]).build_prompt) as mock_bp,
+            patch(
+                "app.workers.llm.build_prompt",
+                wraps=__import__("app.workers.llm", fromlist=["build_prompt"]).build_prompt,
+            ) as mock_bp,
         ):
             from app.workers.llm import generate_draft_for_entry
             await generate_draft_for_entry(entry_id)
@@ -245,14 +252,23 @@ class TestNoInputs:
 
         with (
             patch("app.workers.llm.db_session", return_value=ctx),
-            patch("app.workers.llm.AnthropicProvider", return_value=_make_provider(name="anthropic")),
-            patch("app.workers.llm.GeminiProvider", return_value=_make_provider(name="gemini", configured=False)),
+            patch(
+                "app.workers.llm.AnthropicProvider",
+                return_value=_make_provider(name="anthropic"),
+            ),
+            patch(
+                "app.workers.llm.GeminiProvider",
+                return_value=_make_provider(name="gemini", configured=False),
+            ),
         ):
             from app.workers.llm import generate_draft_for_entry
             await generate_draft_for_entry(entry_id)
 
         # Body must never be overwritten
-        assert entry_update.body_markdown is None or entry_update.body_markdown == entry.body_markdown
+        assert (
+            entry_update.body_markdown is None
+            or entry_update.body_markdown == entry.body_markdown
+        )
 
         # A failed LLMGeneration row must have been added
         assert len(saved_gens) == 1
@@ -277,7 +293,6 @@ class TestBodyPreservationOnFailure:
             events=[],
             body_source="llm_polished",
         )
-        entry_update_initial_body = original_body  # entry_update starts with the same value
 
         anthropic_p = _make_provider(
             name="anthropic",
@@ -384,7 +399,8 @@ class TestEventsFallback:
 class TestSuccessBodySource:
     @pytest.mark.asyncio
     async def test_polish_success_sets_body_source_llm_polished_and_mode(self):
-        """Polish success: entry.body_source == 'llm_polished'; LLMGeneration mode='polish', status='success'."""
+        """Polish success: entry.body_source == 'llm_polished';
+        LLMGeneration mode='polish', status='success'."""
         entry_id, entry, diary = _make_entry(
             body_markdown="Draft text.",
             events=[],
@@ -409,7 +425,8 @@ class TestSuccessBodySource:
 
     @pytest.mark.asyncio
     async def test_hybrid_success_sets_body_source_llm_hybrid_and_mode(self):
-        """Hybrid success: entry.body_source == 'llm_hybrid'; LLMGeneration mode='hybrid', status='success'."""
+        """Hybrid success: entry.body_source == 'llm_hybrid';
+        LLMGeneration mode='hybrid', status='success'."""
         entry_id, entry, diary = _make_entry(
             body_markdown="Alice went to soccer.",
             events=[_make_event("Soccer practice")],
@@ -441,7 +458,8 @@ class TestSuccessBodySource:
 class TestPolishTitlePreservation:
     @pytest.mark.asyncio
     async def test_polish_preserves_user_title_when_non_empty(self):
-        """Polish mode with non-empty title: prompt sent to provider contains 'CURRENT_TITLE: My Title'."""
+        """Polish mode with non-empty title: prompt sent to provider contains
+        'CURRENT_TITLE: My Title'."""
         entry_id, entry, diary = _make_entry(
             body_markdown="Alice had fun.",
             events=[],

@@ -116,7 +116,6 @@ class TestValidateCitation:
 class TestValidateCitationModes:
     def test_polish_mode_skips_validator_returns_true(self):
         """Mode 'polish': validate_citation returns (True, '', []) regardless of parsed content."""
-        events = [_event({"summary": "Soccer"})]
         parsed = {
             "title": "Invented Title With FakeToken",
             "body_markdown": "Made up FakeName went somewhere.",

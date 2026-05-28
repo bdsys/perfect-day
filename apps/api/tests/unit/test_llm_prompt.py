@@ -365,7 +365,8 @@ class TestBuildPromptModes:
         assert "Summer Fun" in per_entry
 
     def test_polish_omits_current_title_when_empty(self):
-        """Mode 'polish' with empty/None title: CURRENT_TITLE does NOT appear in per-entry message."""
+        """Mode 'polish' with empty/None title: CURRENT_TITLE does NOT appear
+        in per-entry message."""
         diary = _diary()
         entry_none = _entry_with_title(title=None)
 

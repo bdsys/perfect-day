@@ -11,16 +11,12 @@ from __future__ import annotations
 import json
 import uuid
 from contextlib import asynccontextmanager
-from datetime import UTC, date, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 from httpx import AsyncClient
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.workers.llm_providers import LLMPermanentError, LLMResult
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -33,7 +29,11 @@ async def _setup(client: AsyncClient, email: str) -> tuple[str, dict, dict]:
     token = r.json()["access_token"]
     auth = {"Authorization": f"Bearer {token}"}
     diary = (
-        await client.post("/v1/diaries", json={"name": "Test Diary", "timezone": "UTC"}, headers=auth)
+        await client.post(
+            "/v1/diaries",
+            json={"name": "Test Diary", "timezone": "UTC"},
+            headers=auth,
+        )
     ).json()
     return token, auth, diary
 
