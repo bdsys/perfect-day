@@ -797,4 +797,63 @@ test.describe('Backfill UI', () => {
       page.locator('.status-panel').filter({ hasText: /Backfill/ })
     ).toBeVisible({ timeout: 10_000 })
   })
+
+  test('T16: Persistent poll failures surface as failed state and stop polling', async ({ page }) => {
+    const { diaryId } = sharedState
+    const runId = '33333333-0000-0000-0000-000000000009'
+    let pollAttempts = 0
+
+    await page.route(`${API}/v1/diaries/${diaryId}/scan/backfill`, async (route) => {
+      if (route.request().method() === 'POST') {
+        await route.fulfill({
+          status: 202,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            id: runId,
+            diary_id: diaryId,
+            from_date: '2026-04-01',
+            to_date: '2026-04-30',
+            sources: ['google_calendar'],
+            status: 'running',
+            started_at: new Date().toISOString(),
+            completed_at: null,
+            events_ingested: 0,
+            entries_created: 0,
+            error: null,
+          }),
+        })
+      } else {
+        await route.continue()
+      }
+    })
+
+    // Every GET poll fails with 500
+    await page.route(`${API}/v1/diaries/${diaryId}/scan/backfill/${runId}`, async (route) => {
+      if (route.request().method() !== 'GET') { await route.continue(); return }
+      pollAttempts++
+      await route.fulfill({
+        status: 500,
+        contentType: 'application/json',
+        body: JSON.stringify({ detail: 'internal_server_error' }),
+      })
+    })
+
+    await loginAndNavigateToDiary(page)
+
+    await page.getByRole('button', { name: 'Backfill' }).click()
+    await page.getByLabel('From date').fill('2026-04-01')
+    await page.getByLabel('To date').fill('2026-04-30')
+    await page.getByRole('button', { name: 'Start backfill' }).click()
+
+    // After ~5 consecutive failures (~15s at 3s poll interval) the UI should
+    // surface "Connection lost" via the failed state.
+    await expect(
+      page.locator('.status-panel').filter({ hasText: 'Connection lost' })
+    ).toBeVisible({ timeout: 25_000 })
+
+    // Polling stopped — no more attempts after the threshold trip.
+    const stoppedAt = pollAttempts
+    await page.waitForTimeout(4_000)
+    expect(pollAttempts).toBeLessThanOrEqual(stoppedAt + 1)
+  })
 })
