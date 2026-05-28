@@ -436,3 +436,303 @@ class TestEvaluateEventAgainstRules:
 
         # LLM generation queued for both entries
         assert mock_task.delay.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# Multi-day entry grouping (item 15)
+# ---------------------------------------------------------------------------
+
+
+_TRIP_CONDITION = {
+    "op": "AND",
+    "children": [
+        {
+            "field": "title",
+            "op": "contains",
+            "value": "Trip",
+            "case_sensitive": False,
+        }
+    ],
+}
+
+
+def _spanning_payload(summary: str, start_date: str, end_date_exclusive: str) -> dict:
+    """Build an all-day spanning payload. Google's all-day end is exclusive."""
+    return {
+        "summary": summary,
+        "start": {"date": start_date},
+        "end": {"date": end_date_exclusive},
+        "attendees": [],
+        "description": "",
+        "location": "",
+        "status": "",
+    }
+
+
+class TestMultiDayGrouping:
+    async def test_same_range_spanning_events_group(self, db_session: AsyncSession):
+        """Two spanning events with the same (start, end) range share one entry."""
+        from datetime import date
+
+        user = await make_user(db_session)
+        diary = await make_diary(db_session, owner=user, timezone="UTC")
+        rule = await _make_rule(
+            db_session,
+            diary,
+            condition=_TRIP_CONDITION,
+            options={"recurring": "per_instance", "multi_day": "spanning"},
+        )
+
+        # Both span 2026-06-01 → 2026-06-03 (Google end is exclusive, so 06-04).
+        event1 = await make_event(
+            db_session,
+            diary_id=diary.id,
+            payload=_spanning_payload("Trip flight out", "2026-06-01", "2026-06-04"),
+        )
+        event2 = await make_event(
+            db_session,
+            diary_id=diary.id,
+            payload=_spanning_payload("Trip dinner", "2026-06-01", "2026-06-04"),
+        )
+
+        with patch("app.workers.tasks.generate_entry_draft") as mock_task:
+            mock_task.delay = MagicMock()
+            await evaluate_event_against_rules(str(event1.id), str(diary.id), db_session)
+            await evaluate_event_against_rules(str(event2.id), str(diary.id), db_session)
+
+        await db_session.refresh(event1)
+        await db_session.refresh(event2)
+
+        assert event1.entry_id is not None
+        assert event1.entry_id == event2.entry_id, "both events must share one entry"
+
+        entries_result = await db_session.execute(
+            select(Entry).where(Entry.diary_id == diary.id)
+        )
+        entries = entries_result.scalars().all()
+        assert len(entries) == 1, "exactly one Entry must exist"
+
+        entry = entries[0]
+        assert entry.entry_date == date(2026, 6, 1)
+        assert entry.entry_end_date == date(2026, 6, 3)
+        assert entry.creation_source == "rule"
+
+        # One EntryRuleMatch, not two.
+        matches_result = await db_session.execute(
+            select(EntryRuleMatch).where(EntryRuleMatch.rule_id == rule.id)
+        )
+        matches = matches_result.scalars().all()
+        assert len(matches) == 1
+
+        # Draft generation queued twice — once for the new entry, once for
+        # the regeneration when event2 was grouped in.
+        assert mock_task.delay.call_count == 2
+        called_with = {c.args[0] for c in mock_task.delay.call_args_list}
+        assert called_with == {str(entry.id)}
+
+    async def test_different_range_spanning_events_do_not_group(
+        self, db_session: AsyncSession
+    ):
+        """Spanning events with different ranges must create separate entries."""
+        user = await make_user(db_session)
+        diary = await make_diary(db_session, owner=user, timezone="UTC")
+        await _make_rule(
+            db_session,
+            diary,
+            condition=_TRIP_CONDITION,
+            options={"recurring": "per_instance", "multi_day": "spanning"},
+        )
+
+        event1 = await make_event(
+            db_session,
+            diary_id=diary.id,
+            payload=_spanning_payload("Trip A", "2026-06-01", "2026-06-04"),
+        )
+        event2 = await make_event(
+            db_session,
+            diary_id=diary.id,
+            payload=_spanning_payload("Trip B", "2026-06-01", "2026-06-05"),
+        )
+
+        with patch("app.workers.tasks.generate_entry_draft") as mock_task:
+            mock_task.delay = MagicMock()
+            await evaluate_event_against_rules(str(event1.id), str(diary.id), db_session)
+            await evaluate_event_against_rules(str(event2.id), str(diary.id), db_session)
+
+        await db_session.refresh(event1)
+        await db_session.refresh(event2)
+
+        assert event1.entry_id is not None
+        assert event2.entry_id is not None
+        assert event1.entry_id != event2.entry_id, "different ranges must not group"
+
+        entries_result = await db_session.execute(
+            select(Entry).where(Entry.diary_id == diary.id)
+        )
+        assert len(entries_result.scalars().all()) == 2
+        assert mock_task.delay.call_count == 2
+
+    async def test_null_end_date_groups(self, db_session: AsyncSession):
+        """
+        Two events from a multi_day=spanning rule that resolve to single-day
+        entries (entry_end_date IS NULL) must group. NULL == NULL is treated
+        as equal for grouping.
+        """
+        user = await make_user(db_session)
+        diary = await make_diary(db_session, owner=user, timezone="UTC")
+        await _make_rule(
+            db_session,
+            diary,
+            condition=_TRIP_CONDITION,
+            options={"recurring": "per_instance", "multi_day": "spanning"},
+        )
+
+        # Single-day all-day events (Google end-exclusive day after start).
+        event1 = await make_event(
+            db_session,
+            diary_id=diary.id,
+            payload=_spanning_payload("Trip lunch", "2026-06-01", "2026-06-02"),
+        )
+        event2 = await make_event(
+            db_session,
+            diary_id=diary.id,
+            payload=_spanning_payload("Trip dinner", "2026-06-01", "2026-06-02"),
+        )
+
+        with patch("app.workers.tasks.generate_entry_draft") as mock_task:
+            mock_task.delay = MagicMock()
+            await evaluate_event_against_rules(str(event1.id), str(diary.id), db_session)
+            await evaluate_event_against_rules(str(event2.id), str(diary.id), db_session)
+
+        await db_session.refresh(event1)
+        await db_session.refresh(event2)
+
+        assert event1.entry_id == event2.entry_id
+
+        entries_result = await db_session.execute(
+            select(Entry).where(Entry.diary_id == diary.id)
+        )
+        entries = entries_result.scalars().all()
+        assert len(entries) == 1
+        assert entries[0].entry_end_date is None
+        from datetime import date
+        assert entries[0].entry_date == date(2026, 6, 1)
+
+    async def test_manual_entry_is_not_grouped_into(self, db_session: AsyncSession):
+        """
+        A manual entry with the same date range is left alone — auto events
+        must never attach to user-owned manual entries.
+        """
+        from datetime import date
+
+        from tests.fixtures.factories import make_entry
+
+        user = await make_user(db_session)
+        diary = await make_diary(db_session, owner=user, timezone="UTC")
+        await _make_rule(
+            db_session,
+            diary,
+            condition=_TRIP_CONDITION,
+            options={"recurring": "per_instance", "multi_day": "spanning"},
+        )
+
+        manual_entry = await make_entry(
+            db_session,
+            diary=diary,
+            entry_date=date(2026, 6, 1),
+        )
+        manual_entry.entry_end_date = date(2026, 6, 3)
+        # make_entry defaults created_by="manual"; creation_source defaults to "manual".
+        assert manual_entry.created_by == "manual"
+        await db_session.commit()
+
+        event = await make_event(
+            db_session,
+            diary_id=diary.id,
+            payload=_spanning_payload("Trip flight", "2026-06-01", "2026-06-04"),
+        )
+
+        with patch("app.workers.tasks.generate_entry_draft") as mock_task:
+            mock_task.delay = MagicMock()
+            await evaluate_event_against_rules(str(event.id), str(diary.id), db_session)
+
+        await db_session.refresh(event)
+        await db_session.refresh(manual_entry)
+
+        assert event.entry_id is not None
+        assert event.entry_id != manual_entry.id, (
+            "auto event must never group into a manual entry"
+        )
+
+        entries_result = await db_session.execute(
+            select(Entry).where(Entry.diary_id == diary.id)
+        )
+        entries = entries_result.scalars().all()
+        assert len(entries) == 2
+        creation_sources = {e.creation_source for e in entries}
+        assert creation_sources == {"manual", "rule"}
+
+    async def test_per_series_path_unaffected(self, db_session: AsyncSession):
+        """
+        Two recurring instances of a per_series rule continue to share an
+        entry via RuleSeriesClaim, and grouping logic does not interfere.
+
+        Regression guard: spanning grouping path must not intercept per_series
+        claims. Near-duplicate of test_per_series_second_instance_reuses_entry
+        in TestEvaluateEventAgainstRules — that duplication is intentional.
+        """
+        user = await make_user(db_session)
+        diary = await make_diary(db_session, owner=user, timezone="UTC")
+        rule = await _make_rule(
+            db_session,
+            diary,
+            condition=_STANDUP_CONDITION,
+            options={"recurring": "per_series", "multi_day": "per_day"},
+        )
+
+        recurring_payload_base = {
+            "summary": "Weekly standup",
+            "recurringEventId": "recurring_xyz",
+            "start": {"dateTime": "2026-06-01T09:00:00Z"},
+            "end": {},
+            "attendees": [],
+            "description": "",
+            "location": "",
+            "status": "",
+        }
+
+        event1 = await make_event(
+            db_session, diary_id=diary.id, payload=recurring_payload_base
+        )
+        event2 = await make_event(
+            db_session,
+            diary_id=diary.id,
+            payload={
+                **recurring_payload_base,
+                "start": {"dateTime": "2026-06-08T09:00:00Z"},
+            },
+        )
+
+        with patch("app.workers.tasks.generate_entry_draft") as mock_task:
+            mock_task.delay = MagicMock()
+            await evaluate_event_against_rules(str(event1.id), str(diary.id), db_session)
+            await evaluate_event_against_rules(str(event2.id), str(diary.id), db_session)
+
+        await db_session.refresh(event1)
+        await db_session.refresh(event2)
+
+        assert event1.entry_id == event2.entry_id
+
+        entries_result = await db_session.execute(
+            select(Entry).where(Entry.diary_id == diary.id)
+        )
+        entries = entries_result.scalars().all()
+        assert len(entries) == 1, "per_series still produces exactly one entry"
+
+        claims_result = await db_session.execute(
+            select(RuleSeriesClaim).where(RuleSeriesClaim.rule_id == rule.id)
+        )
+        assert len(claims_result.scalars().all()) == 1
+
+        # LLM queued exactly once (per_series reuse path does not regenerate).
+        mock_task.delay.assert_called_once_with(str(entries[0].id))

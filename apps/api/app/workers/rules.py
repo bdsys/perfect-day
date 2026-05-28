@@ -6,7 +6,7 @@ import uuid
 from datetime import date as _date
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
@@ -218,36 +218,91 @@ async def evaluate_event_against_rules(
                 db.add(claim)
         else:
             # ----------------------------------------------------------------
-            # per_instance / multi_day path: each event → its own entry.
+            # per_instance / multi_day path. For multi_day == "spanning",
+            # group into an existing rule-created entry that has the EXACT
+            # same (entry_date, entry_end_date) range — including NULL == NULL.
+            # Manual entries are never grouped into.
             # ----------------------------------------------------------------
-            ok, reason = await try_enforce_entry_tier_limit(
-                owner_user_id=user.id,
-                source="auto",
-                db=db,
-                owner_subscription_tier=user.subscription_tier,
-            )
-            if not ok:
-                log.warning(
-                    "evaluate_rules_tier_limit",
-                    rule_id=str(rule.id),
-                    reason=reason,
-                )
-                continue
-
             use_end_date = (
                 entry_end_date if options.get("multi_day") == "spanning" else None
             )
-            new_entry = Entry(
-                diary_id=diary_uuid,
-                entry_date=entry_date,
-                entry_end_date=use_end_date,
-                status="draft",
-                created_by="auto",
-                creation_source="rule",
-            )
-            db.add(new_entry)
-            await db.flush()
-            entry_id_to_use = new_entry.id
+
+            existing_entry: Entry | None = None
+            if options.get("multi_day") == "spanning":
+                # NULL-safe equality on entry_end_date:
+                #   - if use_end_date is None: match rows where entry_end_date IS NULL
+                #   - else: match rows where entry_end_date == use_end_date
+                if use_end_date is None:
+                    end_predicate = Entry.entry_end_date.is_(None)
+                else:
+                    end_predicate = Entry.entry_end_date == use_end_date
+
+                existing_result = await db.execute(
+                    select(Entry)
+                    .where(
+                        and_(
+                            Entry.diary_id == diary_uuid,
+                            Entry.entry_date == entry_date,
+                            end_predicate,
+                            Entry.creation_source == "rule",
+                            Entry.deleted_at.is_(None),
+                        )
+                    )
+                    .order_by(Entry.created_at.asc())
+                    .limit(1)
+                    .with_for_update()
+                )
+                existing_entry = existing_result.scalar_one_or_none()
+
+            if existing_entry is not None:
+                # Reuse — skip tier check (no new entry being created).
+                entry_id_to_use = existing_entry.id
+                log.info(
+                    "rules_event_grouped",
+                    entry_id=str(entry_id_to_use),
+                    event_id=event_id,
+                    diary_id=diary_id,
+                    rule_id=str(rule.id),
+                    entry_date=str(entry_date),
+                    entry_end_date=str(use_end_date) if use_end_date else None,
+                )
+                # Re-queue draft regeneration so the LLM produces a coherent
+                # multi-event entry. Known follow-up: dedupe these calls at
+                # the LLM-task layer so a scan window with N grouped events
+                # does not produce N regenerations.
+                try:
+                    generate_entry_draft.delay(str(entry_id_to_use))
+                except Exception:
+                    log.exception(
+                        "evaluate_rules_llm_queue_failed",
+                        entry_id=str(entry_id_to_use),
+                    )
+            else:
+                ok, reason = await try_enforce_entry_tier_limit(
+                    owner_user_id=user.id,
+                    source="auto",
+                    db=db,
+                    owner_subscription_tier=user.subscription_tier,
+                )
+                if not ok:
+                    log.warning(
+                        "evaluate_rules_tier_limit",
+                        rule_id=str(rule.id),
+                        reason=reason,
+                    )
+                    continue
+
+                new_entry = Entry(
+                    diary_id=diary_uuid,
+                    entry_date=entry_date,
+                    entry_end_date=use_end_date,
+                    status="draft",
+                    created_by="auto",
+                    creation_source="rule",
+                )
+                db.add(new_entry)
+                await db.flush()
+                entry_id_to_use = new_entry.id
 
         # 4. Attach event to entry (only the first time across all rules).
         if entry_id_to_use is not None:
