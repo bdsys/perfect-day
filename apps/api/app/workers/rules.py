@@ -6,7 +6,7 @@ import uuid
 from datetime import date as _date
 
 import structlog
-from sqlalchemy import and_, select
+from sqlalchemy import ColumnElement, and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
@@ -233,7 +233,7 @@ async def evaluate_event_against_rules(
                 #   - if use_end_date is None: match rows where entry_end_date IS NULL
                 #   - else: match rows where entry_end_date == use_end_date
                 if use_end_date is None:
-                    end_predicate = Entry.entry_end_date.is_(None)
+                    end_predicate: ColumnElement[bool] = Entry.entry_end_date.is_(None)
                 else:
                     end_predicate = Entry.entry_end_date == use_end_date
 
