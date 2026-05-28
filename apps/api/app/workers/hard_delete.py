@@ -154,15 +154,16 @@ async def hard_delete_user(user_id: uuid.UUID) -> None:
         )
         await db.execute(delete(SocialIdentity).where(SocialIdentity.user_id == user_id))
 
-        # Scrub MinIO: delete everything under {user_id}/ prefix
+        # Scrub MinIO: delete everything under {user_id}/ prefix and tmp/{user_id}/ prefix
         try:
             settings = get_settings()
             s3 = get_s3()
             paginator = s3.get_paginator("list_objects_v2")
-            for page in paginator.paginate(Bucket=settings.s3_bucket_photos, Prefix=f"{user_id}/"):
-                objects = [{"Key": obj["Key"]} for obj in page.get("Contents", [])]
-                if objects:
-                    s3.delete_objects(Bucket=settings.s3_bucket_photos, Delete={"Objects": objects})
+            for prefix in (f"{user_id}/", f"tmp/{user_id}/"):
+                for page in paginator.paginate(Bucket=settings.s3_bucket_photos, Prefix=prefix):
+                    objects = [{"Key": obj["Key"]} for obj in page.get("Contents", [])]
+                    if objects:
+                        s3.delete_objects(Bucket=settings.s3_bucket_photos, Delete={"Objects": objects})
         except Exception as e:
             log.warning("hard_delete_user_s3_error", user_id=str(user_id), error=str(e))
 
