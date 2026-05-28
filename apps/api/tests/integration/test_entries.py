@@ -96,6 +96,67 @@ class TestPatchEntry:
         assert r.json()["title"] == "Updated"
         assert r.json()["body_markdown"] == "New body."
 
+    async def test_patch_entry_date_and_end_date(self, client):
+        token, diary = await _setup(client, "pdate@example.com")
+        auth = {"Authorization": f"Bearer {token}"}
+        entry = (
+            await client.post(
+                f"/v1/diaries/{diary['id']}/entries",
+                json={"entry_date": "2025-06-01"},
+                headers=auth,
+            )
+        ).json()
+        r = await client.patch(
+            f"/v1/entries/{entry['id']}",
+            json={"entry_date": "2025-06-10", "entry_end_date": "2025-06-12"},
+            headers=auth,
+        )
+        assert r.status_code == 200
+        assert r.json()["entry_date"] == "2025-06-10"
+        assert r.json()["entry_end_date"] == "2025-06-12"
+
+    async def test_patch_clear_end_date_with_null(self, client):
+        token, diary = await _setup(client, "pclear@example.com")
+        auth = {"Authorization": f"Bearer {token}"}
+        entry = (
+            await client.post(
+                f"/v1/diaries/{diary['id']}/entries",
+                json={"entry_date": "2025-06-01", "entry_end_date": "2025-06-03"},
+                headers=auth,
+            )
+        ).json()
+        assert entry["entry_end_date"] == "2025-06-03"
+
+        r = await client.patch(
+            f"/v1/entries/{entry['id']}",
+            json={"entry_end_date": None},
+            headers=auth,
+        )
+        assert r.status_code == 200
+        assert r.json()["entry_end_date"] is None
+        # Start date untouched.
+        assert r.json()["entry_date"] == "2025-06-01"
+
+    async def test_patch_omitting_field_leaves_it_unchanged(self, client):
+        token, diary = await _setup(client, "pomit@example.com")
+        auth = {"Authorization": f"Bearer {token}"}
+        entry = (
+            await client.post(
+                f"/v1/diaries/{diary['id']}/entries",
+                json={"entry_date": "2025-06-01", "entry_end_date": "2025-06-03"},
+                headers=auth,
+            )
+        ).json()
+        # Patch only the title — end date must NOT be cleared.
+        r = await client.patch(
+            f"/v1/entries/{entry['id']}",
+            json={"title": "Trip"},
+            headers=auth,
+        )
+        assert r.status_code == 200
+        assert r.json()["title"] == "Trip"
+        assert r.json()["entry_end_date"] == "2025-06-03"
+
 
 class TestPublishUnpublish:
     async def test_publish_sets_status_and_timestamp(self, client):
