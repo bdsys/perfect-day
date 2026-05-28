@@ -53,6 +53,10 @@ function EntryDetailPageInner() {
   const [editBody, setEditBody] = useState('')
   const [saving, setSaving] = useState(false)
 
+  const [editEntryDate, setEditEntryDate] = useState('')
+  const [editEntryEndDate, setEditEntryEndDate] = useState('')
+  const [editDateError, setEditDateError] = useState('')
+
   const [publishing, setPublishing] = useState(false)
   const [pollingRegen, setPollingRegen] = useState(false)
   const [regenStartedAt, setRegenStartedAt] = useState<string | null>(null)
@@ -74,6 +78,8 @@ function EntryDetailPageInner() {
         setEntry(e)
         setEditTitle(e.title ?? '')
         setEditBody(e.body_markdown ?? '')
+        setEditEntryDate(e.entry_date)
+        setEditEntryEndDate(e.entry_end_date ?? '')
         // If we arrived from the picker, auto-start polling for LLM body
         if (fromPick && !e.body_markdown) {
           setRegenStartedAt(e.updated_at)
@@ -89,16 +95,33 @@ function EntryDetailPageInner() {
     if (!entry) return
     setEditTitle(entry.title ?? '')
     setEditBody(entry.body_markdown ?? '')
+    setEditEntryDate(entry.entry_date)
+    setEditEntryEndDate(entry.entry_end_date ?? '')
+    setEditDateError('')
     setEditing(true)
   }
 
   async function handleSave() {
     if (!entry) return
+
+    setEditDateError('')
+
+    if (!editEntryDate) {
+      setEditDateError('Start date is required')
+      return
+    }
+    if (editEntryEndDate && editEntryEndDate < editEntryDate) {
+      setEditDateError('End date must be on or after start date')
+      return
+    }
+
     setSaving(true)
     try {
       const updated = await api.entries.patch(entry.id, {
         title: editTitle || null,
         body_markdown: editBody || null,
+        entry_date: editEntryDate,
+        entry_end_date: editEntryEndDate || null,
       })
       setEntry(updated)
       setEditing(false)
@@ -247,6 +270,24 @@ function EntryDetailPageInner() {
         {editing ? (
           <div className="card" style={{ marginTop: '1rem' }}>
             <div className="form-field">
+              <label className="form-label" htmlFor="entry-date">Start date</label>
+              <input
+                id="entry-date"
+                type="date"
+                value={editEntryDate}
+                onChange={(e) => setEditEntryDate(e.target.value)}
+              />
+            </div>
+            <div className="form-field">
+              <label className="form-label" htmlFor="entry-end-date">End date (optional)</label>
+              <input
+                id="entry-end-date"
+                type="date"
+                value={editEntryEndDate}
+                onChange={(e) => setEditEntryEndDate(e.target.value)}
+              />
+            </div>
+            <div className="form-field">
               <label className="form-label" htmlFor="entry-title">Title</label>
               <input
                 id="entry-title"
@@ -267,8 +308,11 @@ function EntryDetailPageInner() {
                 placeholder="Entry body (Markdown)"
               />
             </div>
+            {editDateError && (
+              <p className="error-message" style={{ marginBottom: '0.5rem' }}>{editDateError}</p>
+            )}
             <div style={{ display: 'flex', gap: '0.5rem' }}>
-              <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
+              <button className="btn btn-primary" onClick={handleSave} disabled={saving || !editEntryDate}>
                 {saving ? 'Saving…' : 'Save'}
               </button>
               <button className="btn btn-secondary" onClick={() => setEditing(false)} disabled={saving}>
