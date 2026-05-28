@@ -11,6 +11,7 @@ import pytest_asyncio
 import sqlalchemy as sa
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from testcontainers.minio import MinioContainer
 from testcontainers.postgres import PostgresContainer
 from testcontainers.redis import RedisContainer
 
@@ -29,6 +30,39 @@ def postgres_container():
 def redis_container():
     with RedisContainer("redis:7-alpine") as r:
         yield r
+
+
+@pytest.fixture(scope="session")
+def minio_container():
+    with MinioContainer(image="minio/minio:latest") as m:
+        yield m
+
+
+@pytest.fixture(scope="session")
+def s3_endpoint(minio_container):
+    cfg = minio_container.get_config()
+    return f"http://{cfg['endpoint']}"
+
+
+@pytest.fixture(scope="session")
+def s3_client(minio_container, s3_endpoint):
+    import boto3
+
+    cfg = minio_container.get_config()
+    return boto3.client(
+        "s3",
+        endpoint_url=s3_endpoint,
+        aws_access_key_id=cfg["access_key"],
+        aws_secret_access_key=cfg["secret_key"],
+        region_name="us-east-1",
+    )
+
+
+@pytest.fixture(scope="session")
+def photos_bucket(s3_client):
+    name = "photos-test"
+    s3_client.create_bucket(Bucket=name)
+    return name
 
 
 # ---------------------------------------------------------------------------
@@ -90,7 +124,8 @@ def truncate_tables(sync_engine, run_migrations):
                 "oauth_tokens, refresh_tokens, audit_log, llm_generations, "
                 "entry_edit_diffs, diary_permissions, invitations, scan_runs, "
                 "backfill_runs, diary_calendar_filters, notification_preferences, "
-                "notifications, auto_creation_rules, entry_rule_matches, rule_series_claims "
+                "notifications, auto_creation_rules, entry_rule_matches, rule_series_claims, "
+                "photos, diary_photos, entry_photos "
                 "RESTART IDENTITY CASCADE"
             )
         )
@@ -122,9 +157,10 @@ async def db_session(db_engine) -> AsyncGenerator[AsyncSession, None]:
 
 
 @pytest_asyncio.fixture
-async def client(db_url, redis_container) -> AsyncGenerator[AsyncClient, None]:
-    """AsyncClient wired to the FastAPI app with testcontainer DB + Redis."""
+async def client(db_url, redis_container, minio_container, s3_endpoint, photos_bucket) -> AsyncGenerator[AsyncClient, None]:
+    """AsyncClient wired to the FastAPI app with testcontainer DB + Redis + MinIO."""
     redis_url = f"redis://{redis_container.get_container_host_ip()}:{redis_container.get_exposed_port(6379)}/0"
+    cfg = minio_container.get_config()
 
     env_overrides = {
         "DATABASE_URL": db_url,
@@ -133,6 +169,12 @@ async def client(db_url, redis_container) -> AsyncGenerator[AsyncClient, None]:
         "CELERY_BROKER_URL": redis_url,
         "CELERY_RESULT_BACKEND": redis_url,
         "ENV": "test",
+        "S3_ENDPOINT_URL": s3_endpoint,
+        "S3_ACCESS_KEY": cfg["access_key"],
+        "S3_SECRET_KEY": cfg["secret_key"],
+        "S3_BUCKET_PHOTOS": "photos-test",
+        "S3_REGION": "us-east-1",
+        "MASTER_SECRET": "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
     }
 
     with patch.dict(os.environ, env_overrides):
@@ -147,6 +189,10 @@ async def client(db_url, redis_container) -> AsyncGenerator[AsyncClient, None]:
         from app.core.config import get_settings
 
         get_settings.cache_clear()
+
+        import app.core.dependencies as deps_module
+
+        deps_module._s3_client = None
 
         import app.middleware.rate_limit as _rl
 
