@@ -22,6 +22,7 @@ Build 22 first within Wave A — it introduces the LLM provider abstraction that
 |---|---|---|
 | 13 | MinIO + photo upload | pending |
 | 16 | Weather enrichment (Open-Meteo) | pending |
+| 19 | Diary create wizard + edit settings | pending |
 
 16's backfill extension requires 17 done first.
 
@@ -57,6 +58,7 @@ What's already in the codebase vs. what needs to be built. Verified by direct co
 | 16 | Weather enrichment | `Enrichment` model | Open-Meteo client (no API key needed), per-entry enrichment call at draft generation, backfill chunk extension |
 | 14 | Google Photos | OAuth scaffolding reusable from Calendar (same `oauth_tokens` table, encryption, partial-grant pattern) | Photos scope + grant flow, `ingest_photo` worker, metadata-first filter, `entry_photos` attachment, backfill extension |
 | 18 | Tier enforcement | `services/tier.py` with `enforce_entry_tier_limit`; wired into manual-entry router paths | Not called from worker auto-entry path (`workers/tasks.py`); not gating photo uploads; 403 + structured error in UI |
+| 19 | Diary create wizard + edit settings | `PATCH /v1/diaries/{id}` endpoint + `DiaryPatch` schema; `subject_name`/`subject_relation` already in `DiaryOut` | Commit bug in patch handler (line 231, no `db.commit`); `DiaryCreate` missing optional fields; `DiaryOut` missing `voice_override`/`tone_hint`; no frontend wizard or settings panel; no `api.diaries.patch()` client method. Plan: `.claude/plans/can-you-give-me-sorted-scroll.md` |
 
 ### File-level coordination
 
