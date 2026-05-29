@@ -3,7 +3,10 @@
 import { Suspense, useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
-import { api, type Entry, type EventItem } from '@/lib/api'
+import { api, type Entry, type EventItem, type Photo } from '@/lib/api'
+import { PhotoThumbnail } from '@/components/PhotoThumbnail'
+import { PhotoUploadButton } from '@/components/PhotoUploadButton'
+import { PhotoLightbox } from '@/components/PhotoLightbox'
 import { useAuth } from '@/lib/auth-context'
 import { StatusPanel } from '@/components/StatusPanel'
 import { usePolling } from '@/lib/usePolling'
@@ -66,6 +69,10 @@ function EntryDetailPageInner() {
   const [regenSlow, setRegenSlow] = useState(false)
   const [regenErrorMessage, setRegenErrorMessage] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
+
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null)
+  const [showAttachPicker, setShowAttachPicker] = useState(false)
+  const [libraryPhotos, setLibraryPhotos] = useState<Photo[]>([])
 
   useEffect(() => {
     if (!authLoading && !user) router.replace('/login')
@@ -391,6 +398,80 @@ function EntryDetailPageInner() {
               <div className="empty-state">
                 <p>No content yet. Trigger a scan or regenerate to generate a draft.</p>
               </div>
+            )}
+
+            {/* Photo strip */}
+            {entry.photos && entry.photos.length > 0 && (
+              <section>
+                <h3>Photos</h3>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                  {entry.photos.map((p, i) => (
+                    <div key={p.id} style={{ position: 'relative' }}>
+                      <PhotoThumbnail
+                        photoId={p.id}
+                        alt=""
+                        onClick={() => setLightboxIndex(i)}
+                        className="thumbnail"
+                      />
+                      <button
+                        onClick={async () => {
+                          await api.photos.detachFromEntry(entry.id, p.id)
+                          const refreshed = await api.entries.get(entry.id)
+                          setEntry(refreshed)
+                        }}
+                        aria-label="Remove photo"
+                        style={{ position: 'absolute', top: 2, right: 2 }}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {/* Attach from library */}
+            <div>
+              <button
+                onClick={async () => {
+                  if (!showAttachPicker) {
+                    const lib = await api.photos.listForDiary(entry.diary_id)
+                    const attachedIds = new Set(entry.photos?.map(p => p.id) ?? [])
+                    setLibraryPhotos(lib.filter(p => !attachedIds.has(p.id) && p.finalized_at != null))
+                  }
+                  setShowAttachPicker(s => !s)
+                }}
+              >
+                Attach photo
+              </button>
+              {showAttachPicker && (
+                <div>
+                  {libraryPhotos.length === 0 && <p>No photos in library yet.</p>}
+                  {libraryPhotos.map(p => (
+                    <PhotoThumbnail
+                      key={p.id}
+                      photoId={p.id}
+                      alt=""
+                      onClick={async () => {
+                        await api.photos.attachToEntry(entry.id, p.id)
+                        const refreshed = await api.entries.get(entry.id)
+                        setEntry(refreshed)
+                        setShowAttachPicker(false)
+                      }}
+                      className="thumbnail"
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {lightboxIndex !== null && entry.photos && (
+              <PhotoLightbox
+                photoIds={entry.photos.map(p => p.id)}
+                index={lightboxIndex}
+                onIndexChange={setLightboxIndex}
+                onClose={() => setLightboxIndex(null)}
+              />
             )}
 
             {entry.events && entry.events.length > 0 && (
