@@ -17,6 +17,9 @@ services:
   minio:
     volumes:
       - /tmp/pd-test-minio:/data
+    # Publish to host so Playwright browser can reach presigned PUT URLs at http://localhost:9000
+    ports:
+      - "127.0.0.1:9000:9000"
 
   api:
     ports:

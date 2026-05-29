@@ -27,6 +27,7 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 REFRESH_COOKIE = "refresh_token"
 GRACE_SECONDS = 30  # reuse grace window for rotation
+_AUTH_RATE_LIMIT = get_settings().rate_limit_auth
 
 
 # ---------------------------------------------------------------------------
@@ -109,7 +110,7 @@ def _set_refresh_cookie(response: Response, raw_token: str, expire_days: int) ->
 
 
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
-@auth_limiter.limit("10/minute")
+@auth_limiter.limit(_AUTH_RATE_LIMIT)
 async def register(
     request: Request,
     body: RegisterRequest,
@@ -142,7 +143,7 @@ async def register(
 
 
 @router.post("/login", response_model=TokenResponse)
-@auth_limiter.limit("10/minute")
+@auth_limiter.limit(_AUTH_RATE_LIMIT)
 async def login(
     request: Request,
     body: LoginRequest,
