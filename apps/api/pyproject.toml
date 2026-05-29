@@ -8,7 +8,7 @@ version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
     # Web
-    "fastapi>=0.115",
+    "fastapi>=0.136.1",
     "uvicorn[standard]>=0.30",
     "python-multipart>=0.0.9",
     # Database
