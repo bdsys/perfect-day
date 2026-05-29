@@ -10,6 +10,7 @@ export default function UserPhotosPage() {
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [openIndex, setOpenIndex] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -62,15 +63,22 @@ export default function UserPhotosPage() {
                 type="button"
                 className="thumbnail-action"
                 aria-label="Delete photo"
+                disabled={deleting}
                 onClick={async (e) => {
                   e.stopPropagation();
                   if (!window.confirm("Delete this photo? This cannot be undone.")) return;
+                  setError(null);
+                  setDeleting(true);
                   try {
                     await api.photos.delete(p.id);
+                    setPhotos(prev => prev.filter(x => x.id !== p.id));
                     const refreshed = await api.photos.listForUser();
                     setPhotos(refreshed);
+                    setOpenIndex(prev => prev !== null && prev >= refreshed.length ? null : prev);
                   } catch (err) {
                     setError(err instanceof Error ? err.message : "Failed to delete photo");
+                  } finally {
+                    setDeleting(false);
                   }
                 }}
               >
