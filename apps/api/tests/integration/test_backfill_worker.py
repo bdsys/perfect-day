@@ -194,9 +194,11 @@ async def test_post_then_delete_then_worker_exits_cleanly(client, db_session):
     assert fetch_mock.await_count == 0
 
 
-async def test_backfill_writes_weather_per_entry(client, db_session, make_user, make_diary_for_user):
-    """After each chunk, run_backfill should call enrich_entry_weather for each created entry,
-    resulting in Enrichment rows with kind='weather' and source='open_meteo' in the DB."""
+async def test_backfill_writes_weather_per_entry(
+    client, db_session, make_user, make_diary_for_user
+):
+    """After each chunk, run_backfill should call enrich_entry_weather for each
+    created entry, resulting in Enrichment rows with kind='weather'."""
     from tests.fixtures.factories import make_entry
 
     # 1. Create a user and a diary with known lat/lon (Pittsburgh, PA).

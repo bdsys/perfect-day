@@ -107,7 +107,11 @@ class TestDiaryLatLon:
         token = await _register_and_login(client, "latlon@example.com")
         auth = {"Authorization": f"Bearer {token}"}
         diary = (
-            await client.post("/v1/diaries", json={"name": "LatLon", "timezone": "UTC"}, headers=auth)
+            await client.post(
+                "/v1/diaries",
+                json={"name": "LatLon", "timezone": "UTC"},
+                headers=auth,
+            )
         ).json()
 
         r = await client.patch(
@@ -124,7 +128,11 @@ class TestDiaryLatLon:
         token = await _register_and_login(client, "latlonbad@example.com")
         auth = {"Authorization": f"Bearer {token}"}
         diary = (
-            await client.post("/v1/diaries", json={"name": "BadLat", "timezone": "UTC"}, headers=auth)
+            await client.post(
+                "/v1/diaries",
+                json={"name": "BadLat", "timezone": "UTC"},
+                headers=auth,
+            )
         ).json()
 
         r = await client.patch(
@@ -138,7 +146,11 @@ class TestDiaryLatLon:
         token = await _register_and_login(client, "latlonbad2@example.com")
         auth = {"Authorization": f"Bearer {token}"}
         diary = (
-            await client.post("/v1/diaries", json={"name": "BadLon", "timezone": "UTC"}, headers=auth)
+            await client.post(
+                "/v1/diaries",
+                json={"name": "BadLon", "timezone": "UTC"},
+                headers=auth,
+            )
         ).json()
 
         r = await client.patch(
@@ -153,7 +165,11 @@ class TestDiaryLatLon:
         token = await _register_and_login(client, "latlonout@example.com")
         auth = {"Authorization": f"Bearer {token}"}
         diary = (
-            await client.post("/v1/diaries", json={"name": "LatLonOut", "timezone": "UTC"}, headers=auth)
+            await client.post(
+                "/v1/diaries",
+                json={"name": "LatLonOut", "timezone": "UTC"},
+                headers=auth,
+            )
         ).json()
 
         assert "lat" in diary

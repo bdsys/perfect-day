@@ -236,9 +236,10 @@ async def make_user(db_session):
         display_name: str | None = None,
         subscription_tier: str = "free",
     ):
+        import uuid as _uuid
+
         from app.core.security import hash_password
         from app.models import User
-        import uuid as _uuid
 
         u = User(
             email=email or f"test-{_uuid.uuid4().hex[:8]}@example.com",
@@ -258,6 +259,7 @@ async def make_user(db_session):
 async def make_diary_for_user(db_session):
     async def _mk(user, lat=None, lon=None, timezone="America/Chicago"):
         import uuid as _uuid
+
         from app.models import Diary, ScanJob
 
         slug = f"test-diary-{_uuid.uuid4().hex[:6]}"
