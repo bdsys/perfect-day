@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, datetime, time
-from decimal import Decimal
 
 from sqlalchemy import (
     BigInteger,
@@ -180,8 +179,8 @@ class Diary(TimestampMixin, SoftDeleteMixin, Base):
         Integer, nullable=False, server_default="90"
     )
     hard_delete_after: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    lat: Mapped[Decimal | None] = mapped_column(Numeric(9, 6))
-    lon: Mapped[Decimal | None] = mapped_column(Numeric(9, 6))
+    lat: Mapped[float | None] = mapped_column(Numeric(9, 6))
+    lon: Mapped[float | None] = mapped_column(Numeric(9, 6))
 
     owner: Mapped[User] = relationship(back_populates="diaries", foreign_keys=[owner_user_id])
     entries: Mapped[list[Entry]] = relationship(
