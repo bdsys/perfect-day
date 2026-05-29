@@ -99,7 +99,7 @@ test-coverage:
 	  --cov=app --cov-report=term-missing --cov-report=html:htmlcov -q
 
 test-e2e:
-	docker compose -f docker-compose.yml -f docker-compose.test.yml build web
+	docker compose -f docker-compose.yml -f docker-compose.test.yml build api web
 	docker compose -f docker-compose.yml -f docker-compose.test.yml up -d
 	./scripts/wait-for-healthy.sh http://localhost:8000/readyz 60
 	./scripts/wait-for-healthy.sh http://localhost:3000 90
