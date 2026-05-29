@@ -50,7 +50,11 @@ def test_detect_mime_unknown_returns_none():
 
 def test_constants():
     from app.services.photos import (
-        ALLOWED_MIME, MAX_BYTES, THUMBNAIL_LONGEST_EDGE, THUMBNAIL_QUALITY, PRESIGN_TTL_SECONDS,
+        ALLOWED_MIME,
+        MAX_BYTES,
+        PRESIGN_TTL_SECONDS,
+        THUMBNAIL_LONGEST_EDGE,
+        THUMBNAIL_QUALITY,
     )
     assert "image/jpeg" in ALLOWED_MIME
     assert "image/heic" in ALLOWED_MIME
@@ -63,6 +67,7 @@ def test_constants():
 def _build_jpeg_with_exif(taken="2025:08:14 13:45:00", lat=37.7749, lon=-122.4194):
     """Build a tiny in-memory JPEG with EXIF DateTimeOriginal + GPS."""
     from io import BytesIO
+
     import piexif
     from PIL import Image
 
@@ -104,7 +109,9 @@ def test_parse_exif_extracts_date_and_gps():
 
 def test_parse_exif_returns_none_on_no_exif():
     from io import BytesIO
+
     from PIL import Image
+
     from app.services.photos import parse_exif
 
     img = Image.new("RGB", (4, 4))
@@ -129,7 +136,9 @@ def test_parse_exif_clamps_invalid_gps():
 
 def test_generate_thumbnail_jpeg_round_trip():
     from io import BytesIO
+
     from PIL import Image
+
     from app.services.photos import generate_thumbnail
 
     src = Image.new("RGB", (1024, 768), (10, 200, 50))
@@ -143,7 +152,9 @@ def test_generate_thumbnail_jpeg_round_trip():
 
 def test_generate_thumbnail_preserves_orientation():
     from io import BytesIO
+
     from PIL import Image
+
     from app.services.photos import generate_thumbnail
 
     src = Image.new("RGB", (200, 100), (255, 0, 0))
@@ -155,7 +166,6 @@ def test_generate_thumbnail_preserves_orientation():
 
 
 def test_generate_thumbnail_raises_on_garbage():
-    import pytest
     from app.services.photos import generate_thumbnail
     with pytest.raises(ValueError):
         generate_thumbnail(b"not an image", "image/jpeg")

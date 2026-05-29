@@ -5,10 +5,13 @@ import pytest
 
 
 @pytest.mark.asyncio
-async def test_hard_delete_user_removes_tmp_prefix(db_session, db_url, s3_client, photos_bucket, monkeypatch, s3_endpoint):
+async def test_hard_delete_user_removes_tmp_prefix(
+    db_session, db_url, s3_client, photos_bucket, monkeypatch, s3_endpoint
+):
     import uuid
-    from app.core.config import get_settings
+
     import app.core.dependencies as deps
+    from app.core.config import get_settings
 
     monkeypatch.setenv("DATABASE_URL", db_url)
     monkeypatch.setenv("DATABASE_URL_SYNC", db_url.replace("+asyncpg", ""))
@@ -28,5 +31,7 @@ async def test_hard_delete_user_removes_tmp_prefix(db_session, db_url, s3_client
     from app.workers.hard_delete import hard_delete_user
     await hard_delete_user(user_id)
 
-    listed = s3_client.list_objects_v2(Bucket=photos_bucket, Prefix=f"tmp/{user_id}/").get("Contents", [])
+    listed = s3_client.list_objects_v2(Bucket=photos_bucket, Prefix=f"tmp/{user_id}/").get(
+        "Contents", []
+    )
     assert listed == []

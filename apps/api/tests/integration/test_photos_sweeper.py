@@ -7,12 +7,15 @@ import pytest
 
 
 @pytest.mark.asyncio
-async def test_sweep_removes_old_unfinalized_row(db_session, db_url, s3_client, photos_bucket, monkeypatch, s3_endpoint):
+async def test_sweep_removes_old_unfinalized_row(
+    db_session, db_url, s3_client, photos_bucket, monkeypatch, s3_endpoint
+):
     """Sweeper deletes Photo rows that are unfinalized after 24h."""
     import uuid
-    from app.models import Photo, User
-    from app.core.config import get_settings
+
     import app.core.dependencies as deps
+    from app.core.config import get_settings
+    from app.models import Photo, User
 
     # Patch env so the sweeper's internal db_session and S3 hit the testcontainers
     monkeypatch.setenv("DATABASE_URL", db_url)
@@ -52,6 +55,7 @@ async def test_sweep_removes_old_unfinalized_row(db_session, db_url, s3_client, 
 
     # Manually back-date created_at
     from sqlalchemy import update
+
     from app.models import Photo as PhotoModel
     await db_session.execute(
         update(PhotoModel)
@@ -72,9 +76,16 @@ async def test_sweep_removes_old_unfinalized_row(db_session, db_url, s3_client, 
     # Row should be gone (expire + re-query to force fresh read)
     db_session.expire_all()
     from sqlalchemy import select
-    row = (await db_session.execute(select(PhotoModel).where(PhotoModel.id == photo_id))).scalar_one_or_none()
+
+    row = (
+        await db_session.execute(
+            select(PhotoModel).where(PhotoModel.id == photo_id)
+        )
+    ).scalar_one_or_none()
     assert row is None
 
     # tmp object should be gone (best-effort)
-    listed = s3_client.list_objects_v2(Bucket=photos_bucket, Prefix=f"tmp/{user_id}/").get("Contents", [])
+    listed = s3_client.list_objects_v2(
+        Bucket=photos_bucket, Prefix=f"tmp/{user_id}/"
+    ).get("Contents", [])
     assert not any(o["Key"] == tmp_key for o in listed)

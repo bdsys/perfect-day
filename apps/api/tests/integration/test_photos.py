@@ -36,7 +36,10 @@ async def test_put_get_head_delete_round_trip(s3_client, photos_bucket, monkeypa
     deps._s3_client = s3_client
 
     from app.services.photos import (
-        delete_object, get_object_bytes, head_object_size, put_object_bytes,
+        delete_object,
+        get_object_bytes,
+        head_object_size,
+        put_object_bytes,
     )
 
     put_object_bytes("k1", b"hello", content_type="text/plain")
@@ -65,6 +68,7 @@ async def test_stream_object_yields_streaming_body(s3_client, photos_bucket, mon
 @pytest.mark.asyncio
 async def test_presign_put_url_round_trip(s3_client, photos_bucket, monkeypatch):
     import httpx
+
     from app.core.config import get_settings
     monkeypatch.setenv("S3_BUCKET_PHOTOS", photos_bucket)
     get_settings.cache_clear()
@@ -89,7 +93,10 @@ async def test_presign_put_url_round_trip(s3_client, photos_bucket, monkeypatch)
 @pytest.mark.asyncio
 async def test_photos_router_registered(client):
     """The photos router should be mounted; /v1/photos/upload-url returns 401 without auth."""
-    resp = await client.post("/v1/photos/upload-url", json={"declared_mime": "image/jpeg", "declared_size": 100})
+    resp = await client.post(
+        "/v1/photos/upload-url",
+        json={"declared_mime": "image/jpeg", "declared_size": 100},
+    )
     assert resp.status_code in (401, 403)
 
 
@@ -343,8 +350,14 @@ async def test_delete_photo_soft_deletes(client):
         headers=headers,
     )
     pid = r1.json()["photo_id"]
-    httpx.put(r1.json()["upload_url"], content=body,
-              headers={"Content-Type": "image/jpeg", "Content-Length": str(len(body))}).raise_for_status()
+    httpx.put(
+        r1.json()["upload_url"],
+        content=body,
+        headers={
+            "Content-Type": "image/jpeg",
+            "Content-Length": str(len(body)),
+        },
+    ).raise_for_status()
     await client.post(f"/v1/photos/{pid}/finalize", headers=headers)
 
     r2 = await client.delete(f"/v1/photos/{pid}", headers=headers)
@@ -367,8 +380,14 @@ async def test_delete_photo_wrong_user_returns_404(client):
         headers=headers_a,
     )
     pid = r1.json()["photo_id"]
-    httpx.put(r1.json()["upload_url"], content=body,
-              headers={"Content-Type": "image/jpeg", "Content-Length": str(len(body))}).raise_for_status()
+    httpx.put(
+        r1.json()["upload_url"],
+        content=body,
+        headers={
+            "Content-Type": "image/jpeg",
+            "Content-Length": str(len(body)),
+        },
+    ).raise_for_status()
     await client.post(f"/v1/photos/{pid}/finalize", headers=headers_a)
 
     r2 = await client.delete(f"/v1/photos/{pid}", headers=headers_b)
@@ -401,8 +420,14 @@ async def test_attach_detach_diary_photo(client):
         headers=headers,
     )
     pid = r1.json()["photo_id"]
-    httpx.put(r1.json()["upload_url"], content=body,
-              headers={"Content-Type": "image/jpeg", "Content-Length": str(len(body))}).raise_for_status()
+    httpx.put(
+        r1.json()["upload_url"],
+        content=body,
+        headers={
+            "Content-Type": "image/jpeg",
+            "Content-Length": str(len(body)),
+        },
+    ).raise_for_status()
     await client.post(f"/v1/photos/{pid}/finalize", headers=headers)
 
     # Attach
@@ -438,8 +463,14 @@ async def test_attach_diary_photo_wrong_owner_returns_403(client):
         headers=headers_b,
     )
     pid = r1.json()["photo_id"]
-    httpx.put(r1.json()["upload_url"], content=body,
-              headers={"Content-Type": "image/jpeg", "Content-Length": str(len(body))}).raise_for_status()
+    httpx.put(
+        r1.json()["upload_url"],
+        content=body,
+        headers={
+            "Content-Type": "image/jpeg",
+            "Content-Length": str(len(body)),
+        },
+    ).raise_for_status()
     await client.post(f"/v1/photos/{pid}/finalize", headers=headers_b)
 
     r2 = await client.post(
@@ -484,8 +515,14 @@ async def test_attach_detach_entry_photo(client):
         headers=headers,
     )
     pid = r1.json()["photo_id"]
-    httpx.put(r1.json()["upload_url"], content=body,
-              headers={"Content-Type": "image/jpeg", "Content-Length": str(len(body))}).raise_for_status()
+    httpx.put(
+        r1.json()["upload_url"],
+        content=body,
+        headers={
+            "Content-Type": "image/jpeg",
+            "Content-Length": str(len(body)),
+        },
+    ).raise_for_status()
     await client.post(f"/v1/photos/{pid}/finalize", headers=headers)
 
     # Attach with position
@@ -530,8 +567,14 @@ async def test_attach_entry_photo_viewer_returns_403(client):
         headers=headers_viewer,
     )
     pid = r1.json()["photo_id"]
-    httpx.put(r1.json()["upload_url"], content=body,
-              headers={"Content-Type": "image/jpeg", "Content-Length": str(len(body))}).raise_for_status()
+    httpx.put(
+        r1.json()["upload_url"],
+        content=body,
+        headers={
+            "Content-Type": "image/jpeg",
+            "Content-Length": str(len(body)),
+        },
+    ).raise_for_status()
     await client.post(f"/v1/photos/{pid}/finalize", headers=headers_viewer)
 
     # Viewer tries to attach — should fail since they don't have access to this diary's entry
@@ -560,8 +603,14 @@ async def test_get_photo_metadata(client):
         headers=headers,
     )
     pid = r1.json()["photo_id"]
-    httpx.put(r1.json()["upload_url"], content=body,
-              headers={"Content-Type": "image/jpeg", "Content-Length": str(len(body))}).raise_for_status()
+    httpx.put(
+        r1.json()["upload_url"],
+        content=body,
+        headers={
+            "Content-Type": "image/jpeg",
+            "Content-Length": str(len(body)),
+        },
+    ).raise_for_status()
     await client.post(f"/v1/photos/{pid}/finalize", headers=headers)
 
     r2 = await client.get(f"/v1/photos/{pid}/metadata", headers=headers)
@@ -580,8 +629,9 @@ async def test_get_photo_metadata(client):
 
 @pytest.mark.asyncio
 async def test_entry_out_includes_attached_photos(client):
-    import httpx
     from datetime import date
+
+    import httpx
     headers = await _login(client, "eout1@example.com")
     body = _read_fixture("sample.jpg")
 
@@ -605,10 +655,20 @@ async def test_entry_out_includes_attached_photos(client):
         headers=headers,
     )
     pid = r1.json()["photo_id"]
-    httpx.put(r1.json()["upload_url"], content=body,
-              headers={"Content-Type": "image/jpeg", "Content-Length": str(len(body))}).raise_for_status()
+    httpx.put(
+        r1.json()["upload_url"],
+        content=body,
+        headers={
+            "Content-Type": "image/jpeg",
+            "Content-Length": str(len(body)),
+        },
+    ).raise_for_status()
     await client.post(f"/v1/photos/{pid}/finalize", headers=headers)
-    await client.post(f"/v1/entries/{entry_id}/photos", json={"photo_id": pid, "position": 0}, headers=headers)
+    await client.post(
+        f"/v1/entries/{entry_id}/photos",
+        json={"photo_id": pid, "position": 0},
+        headers=headers,
+    )
 
     r2 = await client.get(f"/v1/entries/{entry_id}", headers=headers)
     assert r2.status_code == 200
@@ -637,8 +697,14 @@ async def test_list_diary_photos(client):
         headers=headers,
     )
     pid = r1.json()["photo_id"]
-    httpx.put(r1.json()["upload_url"], content=body,
-              headers={"Content-Type": "image/jpeg", "Content-Length": str(len(body))}).raise_for_status()
+    httpx.put(
+        r1.json()["upload_url"],
+        content=body,
+        headers={
+            "Content-Type": "image/jpeg",
+            "Content-Length": str(len(body)),
+        },
+    ).raise_for_status()
     await client.post(f"/v1/photos/{pid}/finalize", headers=headers)
     await client.post(f"/v1/diaries/{diary_id}/photos", json={"photo_id": pid}, headers=headers)
 
