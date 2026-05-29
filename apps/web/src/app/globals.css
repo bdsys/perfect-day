@@ -425,3 +425,37 @@ input:focus {
   margin-bottom: 1rem;
 }
 .cal-panel-header h3 { margin: 0; font-size: 1rem; }
+
+/* Photo grid + hover-able thumbnails */
+.photo-grid {
+  list-style: none;
+  padding: 0;
+  margin: 1rem 0 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 8px;
+}
+
+.photo-grid li {
+  margin: 0;
+}
+
+.thumbnail {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  border: 2px solid transparent;
+  border-radius: 6px;
+  background: #f3f4f6;
+  cursor: pointer;
+  transition: border-color 120ms ease, transform 120ms ease, box-shadow 120ms ease;
+}
+
+.thumbnail:hover,
+.thumbnail:focus-visible {
+  border-color: var(--accent);
+  transform: scale(1.02);
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.2);
+  outline: none;
+}
