@@ -58,9 +58,30 @@ async function apiFetchBlob(path: string, retryOn401 = true): Promise<Blob> {
     } catch {}
     // Refresh failed — clear token
     _accessToken = null
-    throw new Error('unauthorized')
+    throw new ApiError(401, 'unauthorized')
   }
-  if (!res.ok) throw new Error(`API error ${res.status}`)
+  if (!res.ok) {
+    let code: string | undefined
+    let details: Record<string, unknown> | undefined
+    let message: string
+    try {
+      const json = await res.json() as { detail?: unknown }
+      const detail = json.detail
+      if (detail && typeof detail === 'object' && !Array.isArray(detail)) {
+        const d = detail as Record<string, unknown>
+        code = typeof d.code === 'string' ? d.code : undefined
+        details = typeof d.details === 'object' && d.details !== null
+          ? (d.details as Record<string, unknown>)
+          : undefined
+        message = code ?? JSON.stringify(detail)
+      } else {
+        message = typeof detail === 'string' ? detail : `API error ${res.status}`
+      }
+    } catch {
+      message = `API error ${res.status}`
+    }
+    throw new ApiError(res.status, message, code, details)
+  }
   return res.blob()
 }
 

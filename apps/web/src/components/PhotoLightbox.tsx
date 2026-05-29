@@ -11,16 +11,20 @@ interface PhotoLightboxProps {
 
 export function PhotoLightbox({ photoIds, index, onIndexChange, onClose }: PhotoLightboxProps) {
   const [src, setSrc] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let url: string | null = null;
     let cancelled = false;
     setSrc(null);
+    setError(null);
     api.photos.get(photoIds[index], "full").then((blob) => {
       if (cancelled) return;
       url = URL.createObjectURL(blob);
       setSrc(url);
-    }).catch(() => setSrc(null));
+    }).catch(() => {
+      if (!cancelled) setError("failed to load photo");
+    });
     return () => {
       cancelled = true;
       if (url) URL.revokeObjectURL(url);
@@ -52,6 +56,7 @@ export function PhotoLightbox({ photoIds, index, onIndexChange, onClose }: Photo
         zIndex: 9999,
       }}
     >
+      {error && <p role="alert" style={{ color: "white" }}>{error}</p>}
       {src && (
         <img
           src={src}
