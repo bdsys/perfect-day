@@ -11,7 +11,15 @@ from sqlalchemy.orm import selectinload
 
 from app.core.auth import get_current_user
 from app.core.database import get_db
-from app.models import Diary, Enrichment, Entry, EntryPhoto, EntryRuleMatch, Event, LLMGeneration, User
+from app.models import (
+    Diary,
+    Entry,
+    EntryPhoto,
+    EntryRuleMatch,
+    Event,
+    LLMGeneration,
+    User,
+)
 from app.routers.v1.diaries import _get_diary_or_404
 from app.services.tier import enforce_entry_tier_limit
 

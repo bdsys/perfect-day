@@ -237,6 +237,7 @@ async def test_get_entry_exposes_enrichments(client, db_session):
     """Entry detail GET returns weather enrichments list including nullable source."""
     import uuid as _uuid
     from datetime import UTC, datetime
+
     from app.models import Enrichment
 
     email = f"enrich-{_uuid.uuid4().hex[:8]}@example.com"
@@ -275,7 +276,12 @@ async def test_get_entry_exposes_enrichments(client, db_session):
         entry_id=_uuid.UUID(entry_id),
         kind="weather",
         source=None,  # test nullable source
-        payload={"date": "2026-05-06", "temperature_max_c": 18.0, "temperature_min_c": 12.0, "weathercode": 2},
+        payload={
+            "date": "2026-05-06",
+            "temperature_max_c": 18.0,
+            "temperature_min_c": 12.0,
+            "weathercode": 2,
+        },
         captured_for_at=datetime(2026, 5, 6, tzinfo=UTC),
         fetched_at=datetime.now(UTC),
     )
