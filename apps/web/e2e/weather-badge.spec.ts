@@ -127,7 +127,9 @@ test.describe('WeatherBadge on entry detail', () => {
       // 3. The WeatherBadge div should be present in the DOM with the expected
       //    aria-label.  It only renders when enrichments.filter(e =>
       //    e.kind === 'weather').length > 0.
-      await expect(page.getByRole('generic', { name: 'Weather' })).toBeVisible({ timeout: 5_000 })
+      const weatherBadge = page.getByLabel('Weather')
+      await expect(weatherBadge).toBeVisible({ timeout: 5_000 })
+      await expect(weatherBadge).toContainText('°')
     },
   )
 })
