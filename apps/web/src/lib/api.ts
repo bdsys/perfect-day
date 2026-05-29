@@ -577,11 +577,8 @@ export const api = {
     delete: (photoId: string) =>
       apiFetch<void>(`/v1/photos/${photoId}`, { method: 'DELETE' }),
 
-    attachToDiary: (diaryId: string, photoId: string) =>
-      apiFetch<Photo>(`/v1/diaries/${diaryId}/photos`, {
-        method: 'POST',
-        body: JSON.stringify({ photo_id: photoId }),
-      }),
+    listForUser: (): Promise<Photo[]> =>
+      apiFetch<Photo[]>('/v1/photos'),
 
     attachToEntry: (entryId: string, photoId: string, position?: number) =>
       apiFetch<Photo>(`/v1/entries/${entryId}/photos`, {
@@ -593,8 +590,5 @@ export const api = {
       apiFetch<void>(`/v1/entries/${entryId}/photos/${photoId}`, {
         method: 'DELETE',
       }),
-
-    listForDiary: (diaryId: string) =>
-      apiFetch<Photo[]>(`/v1/diaries/${diaryId}/photos`),
   },
 }
