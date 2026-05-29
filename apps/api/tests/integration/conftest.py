@@ -157,7 +157,9 @@ async def db_session(db_engine) -> AsyncGenerator[AsyncSession, None]:
 
 
 @pytest_asyncio.fixture
-async def client(db_url, redis_container, minio_container, s3_endpoint, photos_bucket) -> AsyncGenerator[AsyncClient, None]:
+async def client(
+    db_url, redis_container, minio_container, s3_endpoint, photos_bucket
+) -> AsyncGenerator[AsyncClient, None]:
     """AsyncClient wired to the FastAPI app with testcontainer DB + Redis + MinIO."""
     redis_url = f"redis://{redis_container.get_container_host_ip()}:{redis_container.get_exposed_port(6379)}/0"
     cfg = minio_container.get_config()

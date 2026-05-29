@@ -5,6 +5,10 @@ that callers may run via run_in_executor when needed.
 """
 from __future__ import annotations
 
+import datetime
+import math
+from io import BytesIO
+
 ALLOWED_MIME: frozenset[str] = frozenset({
     "image/jpeg",
     "image/png",
@@ -43,10 +47,6 @@ def detect_mime(head: bytes) -> str | None:
             return "image/avif"
     return None
 
-
-import datetime
-import math
-from io import BytesIO
 
 
 def _exif_dms_to_decimal(dms, ref: str) -> float | None:
@@ -179,6 +179,7 @@ def get_object_bytes(key: str) -> bytes:
 
 def head_object_size(key: str) -> int | None:
     from botocore.exceptions import ClientError
+
     from app.core.dependencies import get_s3
     try:
         resp = get_s3().head_object(Bucket=_bucket(), Key=key)
@@ -191,6 +192,7 @@ def head_object_size(key: str) -> int | None:
 
 def delete_object(key: str) -> None:
     from botocore.exceptions import ClientError
+
     from app.core.dependencies import get_s3
     try:
         get_s3().delete_object(Bucket=_bucket(), Key=key)

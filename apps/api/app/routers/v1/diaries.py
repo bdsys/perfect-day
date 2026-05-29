@@ -327,7 +327,7 @@ async def list_diary_photos(
     db: AsyncSession = Depends(get_db),
 ):
     from app.models import DiaryPhoto, Entry, EntryPhoto, Photo
-    from app.routers.v1.photos import PhotoOut, _photo_out
+    from app.routers.v1.photos import _photo_out
 
     diary, role = await _get_diary_or_404(diary_id, user, db)
 

@@ -15,7 +15,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user
 from app.core.database import get_db
-from app.core.photo_crypto import encrypt_stream, generate_dek, iter_decrypt_stream, unwrap_dek, wrap_dek
+from app.core.photo_crypto import (
+    encrypt_stream,
+    generate_dek,
+    iter_decrypt_stream,
+    unwrap_dek,
+    wrap_dek,
+)
 from app.models import DiaryPhoto, EntryPhoto, Photo, User
 from app.routers.v1.diaries import _get_diary_or_404
 from app.services.photos import (
