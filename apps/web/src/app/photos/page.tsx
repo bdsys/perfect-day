@@ -58,6 +58,24 @@ export default function UserPhotosPage() {
                 onClick={() => setOpenIndex(i)}
                 className="thumbnail"
               />
+              <button
+                type="button"
+                className="thumbnail-action"
+                aria-label="Delete photo"
+                onClick={async (e) => {
+                  e.stopPropagation();
+                  if (!window.confirm("Delete this photo? This cannot be undone.")) return;
+                  try {
+                    await api.photos.delete(p.id);
+                    const refreshed = await api.photos.listForUser();
+                    setPhotos(refreshed);
+                  } catch (err) {
+                    setError(err instanceof Error ? err.message : "Failed to delete photo");
+                  }
+                }}
+              >
+                ×
+              </button>
             </li>
           ))}
         </ul>
