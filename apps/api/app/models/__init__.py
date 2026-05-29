@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, datetime, time
+from decimal import Decimal
 
 from sqlalchemy import (
     BigInteger,
@@ -179,6 +180,8 @@ class Diary(TimestampMixin, SoftDeleteMixin, Base):
         Integer, nullable=False, server_default="90"
     )
     hard_delete_after: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    lat: Mapped[Decimal | None] = mapped_column(Numeric(9, 6))
+    lon: Mapped[Decimal | None] = mapped_column(Numeric(9, 6))
 
     owner: Mapped[User] = relationship(back_populates="diaries", foreign_keys=[owner_user_id])
     entries: Mapped[list[Entry]] = relationship(
@@ -451,7 +454,12 @@ class Enrichment(TimestampMixin, Base):
 
     entry: Mapped[Entry] = relationship(back_populates="enrichments")
 
-    __table_args__ = (UniqueConstraint("entry_id", "kind", name="uq_enrichments_entry_kind"),)
+    __table_args__ = (
+        UniqueConstraint(
+            "entry_id", "kind", "captured_for_at",
+            name="uq_enrichments_entry_kind_captured",
+        ),
+    )
 
 
 class LLMGeneration(TimestampMixin, Base):
