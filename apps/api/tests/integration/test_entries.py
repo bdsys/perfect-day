@@ -231,3 +231,62 @@ class TestViewerAccessControl:
             headers={"Authorization": f"Bearer {viewer_token}"},
         )
         assert r.status_code == 404
+
+
+async def test_get_entry_exposes_enrichments(client, db_session):
+    """Entry detail GET returns weather enrichment in enrichments list."""
+    from datetime import UTC, date, datetime
+    from app.models import Enrichment, Entry, Diary
+    import uuid as _uuid
+
+    # Register + login
+    email = f"enrich-{_uuid.uuid4().hex[:8]}@example.com"
+    r = await client.post("/v1/auth/register", json={"email": email, "password": "Password1!"})
+    token = r.json()["access_token"]
+    auth = {"Authorization": f"Bearer {token}"}
+
+    # Create diary
+    diary_r = await client.post("/v1/diaries", json={"name": "D", "timezone": "UTC"}, headers=auth)
+    diary_id = diary_r.json()["id"]
+
+    # Create entry directly in DB (no public "create entry" API without events)
+    entry = Entry(
+        diary_id=_uuid.UUID(diary_id),
+        entry_date=date(2026, 5, 5),
+        title="Test",
+        body_markdown="",
+        status="draft",
+        created_by="manual",
+    )
+    db_session.add(entry)
+    await db_session.commit()
+    await db_session.refresh(entry)
+
+    # Seed an enrichment
+    enrichment = Enrichment(
+        entry_id=entry.id,
+        kind="weather",
+        source="open_meteo",
+        payload={
+            "date": "2026-05-05",
+            "temperature_max_c": 22.0,
+            "temperature_min_c": 14.0,
+            "weathercode": 1,
+            "condition": "mainly clear",
+        },
+        captured_for_at=datetime(2026, 5, 5, tzinfo=UTC),
+        fetched_at=datetime.now(UTC),
+    )
+    db_session.add(enrichment)
+    await db_session.commit()
+
+    r = await client.get(f"/v1/entries/{entry.id}", headers=auth)
+    assert r.status_code == 200
+    body = r.json()
+    assert "enrichments" in body
+    assert len(body["enrichments"]) == 1
+    e = body["enrichments"][0]
+    assert e["kind"] == "weather"
+    assert e["payload"]["weathercode"] == 1
+    assert e["payload"]["temperature_max_c"] == 22.0
+    assert "captured_for_at" in e
