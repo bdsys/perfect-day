@@ -32,5 +32,6 @@ export function PhotoThumbnail({ photoId, alt, onClick, className }: PhotoThumbn
 
   if (error) return <div className={className} aria-label="failed to load" />;
   if (!src) return <div className={className} aria-busy="true" />;
+  // eslint-disable-next-line @next/next/no-img-element -- blob: URL from encrypted storage, next/image cannot optimize
   return <img src={src} alt={alt} onClick={onClick} className={className} />;
 }

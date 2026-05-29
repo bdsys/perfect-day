@@ -1,4 +1,4 @@
-import { render, screen, act } from "@testing-library/react";
+import { render, act } from "@testing-library/react";
 import { PhotoLightbox } from "../PhotoLightbox";
 import { api } from "../../lib/api";
 

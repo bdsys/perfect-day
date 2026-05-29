@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, fireEvent, waitFor } from "@testing-library/react";
 import { PhotoUploadButton } from "../PhotoUploadButton";
 import { api } from "../../lib/api";
 

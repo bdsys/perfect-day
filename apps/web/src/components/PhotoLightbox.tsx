@@ -12,13 +12,14 @@ interface PhotoLightboxProps {
 export function PhotoLightbox({ photoIds, index, onIndexChange, onClose }: PhotoLightboxProps) {
   const [src, setSrc] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const currentPhotoId = photoIds[index];
 
   useEffect(() => {
     let url: string | null = null;
     let cancelled = false;
     setSrc(null);
     setError(null);
-    api.photos.get(photoIds[index], "full").then((blob) => {
+    api.photos.get(currentPhotoId, "full").then((blob) => {
       if (cancelled) return;
       url = URL.createObjectURL(blob);
       setSrc(url);
@@ -29,7 +30,7 @@ export function PhotoLightbox({ photoIds, index, onIndexChange, onClose }: Photo
       cancelled = true;
       if (url) URL.revokeObjectURL(url);
     };
-  }, [photoIds[index]]);
+  }, [currentPhotoId]);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -58,6 +59,7 @@ export function PhotoLightbox({ photoIds, index, onIndexChange, onClose }: Photo
     >
       {error && <p role="alert" style={{ color: "white" }}>{error}</p>}
       {src && (
+        // eslint-disable-next-line @next/next/no-img-element -- blob: URL from encrypted storage
         <img
           src={src}
           alt=""
