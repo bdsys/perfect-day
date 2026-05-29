@@ -193,10 +193,10 @@ class TestValidateCitationEnrichments:
 
         events = [SimpleNamespace(payload={"summary": "Park visit"})]
         enrichments = [SimpleNamespace(payload={
-            "date": "2024-01-15", "condition": "clear sky", "sunrise": "07:32",
+            "date": "2024-01-15", "condition": "Sunny", "location": "Brooklyn",
         })]
         output = {
-            "body_markdown": "It was a clear sky morning at the park.",
+            "body_markdown": "It was Sunny in Brooklyn at the park.",
             "title": "Park morning",
             "facts_used": [1],
             "title_facts_used": [1],
