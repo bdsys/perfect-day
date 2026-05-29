@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from httpx import AsyncClient
 
 
@@ -116,8 +117,8 @@ class TestDiaryLatLon:
         )
         assert r.status_code == 200
         body = r.json()
-        assert abs(float(body["lat"]) - 40.4406) < 0.001
-        assert abs(float(body["lon"]) - (-79.9959)) < 0.001
+        assert float(body["lat"]) == pytest.approx(40.4406, abs=1e-4)
+        assert float(body["lon"]) == pytest.approx(-79.9959, abs=1e-4)
 
     async def test_patch_diary_rejects_out_of_range_lat(self, client):
         token = await _register_and_login(client, "latlonbad@example.com")
