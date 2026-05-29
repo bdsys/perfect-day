@@ -313,3 +313,4 @@ async def restore_diary(
     diary.hard_delete_after = None
     diary.scan_enabled = True
     return diary
+

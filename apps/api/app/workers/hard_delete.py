@@ -22,7 +22,6 @@ async def hard_delete_diary(diary_id: uuid.UUID) -> None:
         Diary,
         DiaryCalendarFilter,
         DiaryPermission,
-        DiaryPhoto,
         Enrichment,
         Entry,
         EntryEditDiff,
@@ -50,36 +49,25 @@ async def hard_delete_diary(diary_id: uuid.UUID) -> None:
             )
             photo_ids_in_diary = {r[0] for r in entry_photo_result.fetchall()}
 
-            # Check which photos exist in other diaries (via diary_photos)
             for photo_id in list(photo_ids_in_diary):
-                other_result = await db.execute(
-                    select(DiaryPhoto)
-                    .where(
-                        DiaryPhoto.photo_id == photo_id,
-                        DiaryPhoto.diary_id != diary_id,
+                try:
+                    settings = get_settings()
+                    photo_result = await db.execute(select(Photo).where(Photo.id == photo_id))
+                    photo = photo_result.scalar_one_or_none()
+                    if photo:
+                        s3 = get_s3()
+                        for key in [photo.s3_key, photo.thumbnail_s3_key]:
+                            if key:
+                                try:
+                                    s3.delete_object(Bucket=settings.s3_bucket_photos, Key=key)
+                                except Exception:
+                                    pass
+                except Exception as e:
+                    log.warning(
+                        "hard_delete_photo_s3_error", photo_id=str(photo_id), error=str(e)
                     )
-                    .limit(1)
-                )
-                if other_result.scalar_one_or_none() is None:
-                    # Safe to delete
-                    try:
-                        settings = get_settings()
-                        photo_result = await db.execute(select(Photo).where(Photo.id == photo_id))
-                        photo = photo_result.scalar_one_or_none()
-                        if photo:
-                            s3 = get_s3()
-                            for key in [photo.s3_key, photo.thumbnail_s3_key]:
-                                if key:
-                                    try:
-                                        s3.delete_object(Bucket=settings.s3_bucket_photos, Key=key)
-                                    except Exception:
-                                        pass
-                    except Exception as e:
-                        log.warning(
-                            "hard_delete_photo_s3_error", photo_id=str(photo_id), error=str(e)
-                        )
 
-                    await db.execute(delete(Photo).where(Photo.id == photo_id))
+                await db.execute(delete(Photo).where(Photo.id == photo_id))
 
         # Cascade delete in reverse FK order
         if entry_ids:
@@ -90,7 +78,6 @@ async def hard_delete_diary(diary_id: uuid.UUID) -> None:
             await db.execute(delete(Event).where(Event.entry_id.in_(entry_ids)))
             await db.execute(delete(Entry).where(Entry.diary_id == diary_id))
 
-        await db.execute(delete(DiaryPhoto).where(DiaryPhoto.diary_id == diary_id))
         await db.execute(delete(ScanRun).where(ScanRun.diary_id == diary_id))
         await db.execute(delete(BackfillRun).where(BackfillRun.diary_id == diary_id))
         await db.execute(
@@ -154,15 +141,16 @@ async def hard_delete_user(user_id: uuid.UUID) -> None:
         )
         await db.execute(delete(SocialIdentity).where(SocialIdentity.user_id == user_id))
 
-        # Scrub MinIO: delete everything under {user_id}/ prefix
+        # Scrub MinIO: delete everything under {user_id}/ prefix and tmp/{user_id}/ prefix
         try:
             settings = get_settings()
             s3 = get_s3()
             paginator = s3.get_paginator("list_objects_v2")
-            for page in paginator.paginate(Bucket=settings.s3_bucket_photos, Prefix=f"{user_id}/"):
-                objects = [{"Key": obj["Key"]} for obj in page.get("Contents", [])]
-                if objects:
-                    s3.delete_objects(Bucket=settings.s3_bucket_photos, Delete={"Objects": objects})
+            for prefix in (f"{user_id}/", f"tmp/{user_id}/"):
+                for page in paginator.paginate(Bucket=settings.s3_bucket_photos, Prefix=prefix):
+                    objects = [{"Key": obj["Key"]} for obj in page.get("Contents", [])]
+                    if objects:
+                        s3.delete_objects(Bucket=settings.s3_bucket_photos, Delete={"Objects": objects})
         except Exception as e:
             log.warning("hard_delete_user_s3_error", user_id=str(user_id), error=str(e))
 

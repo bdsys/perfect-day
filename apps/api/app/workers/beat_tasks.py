@@ -89,46 +89,53 @@ def sweep_orphaned_photos() -> None:
     run_sync(_sweep_orphaned_photos())
 
 
-async def _sweep_orphaned_photos() -> None:
+async def _sweep_orphaned_photos() -> int:
+    """Delete unfinalized Photo rows older than 24h and stray tmp/ objects."""
+    from datetime import UTC, datetime, timedelta
 
-    from sqlalchemy import func, select
+    from sqlalchemy import select
 
+    from app.core.config import get_settings
+    from app.core.dependencies import get_s3
     from app.models import Photo
     from app.workers.utils import db_session
 
+    settings = get_settings()
+    s3 = get_s3()
+    cutoff = datetime.now(tz=UTC) - timedelta(hours=24)
+    bucket = settings.s3_bucket_photos
+
+    deleted = 0
     async with db_session() as db:
-        cutoff = func.now() - func.cast(
-            "24 hours",  # type: ignore[arg-type]
-            __import__("sqlalchemy", fromlist=["text"]).text("interval"),
-        )
         result = await db.execute(
             select(Photo).where(
                 Photo.finalized_at.is_(None),
                 Photo.created_at < cutoff,
-                Photo.deleted_at.is_(None),
             )
         )
-        photos = result.scalars().all()
+        for photo in result.scalars().all():
+            # Best-effort delete of any tmp object for this photo
+            tmp_key = f"tmp/{photo.user_id}/{photo.id}"
+            try:
+                s3.delete_object(Bucket=bucket, Key=tmp_key)
+            except Exception:  # noqa: BLE001
+                pass
+            await db.delete(photo)
+            deleted += 1
 
-    log.info("sweep_orphaned_photos", count=len(photos))
-    for photo in photos:
-        try:
-            from app.core.config import get_settings
-            from app.core.dependencies import get_s3
+    # Reconcile tmp/ prefix: anything older than 24h with no row gets deleted
+    try:
+        paginator = s3.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=bucket, Prefix="tmp/"):
+            for obj in page.get("Contents", []):
+                if obj["LastModified"].replace(tzinfo=UTC) < cutoff:
+                    try:
+                        s3.delete_object(Bucket=bucket, Key=obj["Key"])
+                        deleted += 1
+                    except Exception:  # noqa: BLE001
+                        pass
+    except Exception:  # noqa: BLE001
+        pass
 
-            settings = get_settings()
-            get_s3().delete_object(Bucket=settings.s3_bucket_photos, Key=photo.s3_key)
-        except Exception as e:
-            log.warning("sweep_orphaned_photo_s3_error", photo_id=str(photo.id), error=str(e))
-
-        async with db_session() as db2:
-            import datetime
-
-            from sqlalchemy import select as sel
-
-            from app.models import Photo as P
-
-            r = await db2.execute(sel(P).where(P.id == photo.id))
-            p = r.scalar_one_or_none()
-            if p:
-                p.deleted_at = datetime.datetime.now(tz=datetime.UTC)
+    log.info("sweep_orphaned_photos", deleted=deleted)
+    return deleted

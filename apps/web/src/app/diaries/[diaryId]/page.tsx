@@ -446,6 +446,9 @@ export default function DiaryDetailPage() {
             >
               Auto-Creation Rules
             </button>
+            <Link href="/photos" className="btn btn-secondary">
+              Photos
+            </Link>
             <Link href={`/diaries/${diaryId}/restore`} className="btn btn-secondary">
               Deleted entries
             </Link>

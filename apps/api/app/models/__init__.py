@@ -404,6 +404,7 @@ class Photo(TimestampMixin, SoftDeleteMixin, Base):
     )
 
 
+# DEPRECATED: diary-photo attachments removed 2026-05-29. Drop table in follow-up migration.
 class DiaryPhoto(Base):
     __tablename__ = "diary_photos"
 

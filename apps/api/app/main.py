@@ -56,7 +56,16 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
 
     # v1 routers (imported lazily to keep startup order explicit)
-    from app.routers.v1 import auth, calendar_events, diaries, entries, integrations, rules, scan
+    from app.routers.v1 import (
+        auth,
+        calendar_events,
+        diaries,
+        entries,
+        integrations,
+        photos,
+        rules,
+        scan,
+    )
 
     app.include_router(auth.router, prefix="/v1")
     app.include_router(diaries.router, prefix="/v1")
@@ -65,6 +74,7 @@ def create_app() -> FastAPI:
     app.include_router(integrations.router, prefix="/v1")
     app.include_router(rules.router, prefix="/v1")
     app.include_router(scan.router, prefix="/v1")
+    app.include_router(photos.router, prefix="/v1")
 
     return app
 

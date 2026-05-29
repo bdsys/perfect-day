@@ -137,7 +137,7 @@ async def create_entry_from_event(
     await db.flush()
 
     event.entry_id = entry.id
-    await db.refresh(entry, ["events", "rule_matches", "llm_generations"])
+    await db.refresh(entry, ["events", "rule_matches", "llm_generations", "entry_photos"])
 
     try:
         generate_entry_draft.delay(str(entry.id))

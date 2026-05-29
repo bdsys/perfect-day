@@ -29,6 +29,8 @@ class Settings(BaseSettings):
 
     # MinIO / S3
     s3_endpoint_url: str = "http://localhost:9000"
+    # public-facing URL for presigned URLs; defaults to s3_endpoint_url behavior when empty
+    s3_public_endpoint_url: str = ""
     s3_access_key: str = "minioadmin"
     s3_secret_key: str = "minioadmin"  # noqa: S105
     s3_bucket_photos: str = "photos"
