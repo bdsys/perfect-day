@@ -45,9 +45,9 @@ test.beforeAll(async () => {
 
 test("upload → lightbox → escape", async ({ page }) => {
   await page.goto("/login");
-  await page.fill('input[name="email"]', email);
-  await page.fill('input[name="password"]', password);
-  await page.click('button[type="submit"]');
+  await page.fill('#email', email);
+  await page.fill('#password', password);
+  await page.click('button[type=submit]');
   await page.waitForURL(/\/diaries/, { timeout: 10_000 });
 
   await page.goto(`/diaries/${diaryId}/photos`);

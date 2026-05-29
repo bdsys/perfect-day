@@ -14,9 +14,11 @@ calendar data. This cleanup is safe because:
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import sqlalchemy as sa
+
 from alembic import op
-from datetime import datetime, timedelta, timezone
 
 revision = "0007"
 down_revision = "0006"
@@ -25,7 +27,7 @@ depends_on = None
 
 
 def upgrade() -> None:
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now(tz=UTC)
     lower = now - timedelta(days=90)
     upper = now + timedelta(days=90)
 
