@@ -20,12 +20,12 @@ export function PhotoLightbox({ photoIds, index, onIndexChange, onClose }: Photo
       if (cancelled) return;
       url = URL.createObjectURL(blob);
       setSrc(url);
-    });
+    }).catch(() => setSrc(null));
     return () => {
       cancelled = true;
       if (url) URL.revokeObjectURL(url);
     };
-  }, [photoIds, index]);
+  }, [photoIds[index]]);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {

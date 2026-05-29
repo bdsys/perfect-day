@@ -34,7 +34,7 @@ export class ApiError extends Error {
   }
 }
 
-async function apiFetchBlob(path: string): Promise<Blob> {
+async function apiFetchBlob(path: string, retryOn401 = true): Promise<Blob> {
   const headers: HeadersInit = {}
   if (_accessToken) {
     (headers as Record<string, string>)['Authorization'] = `Bearer ${_accessToken}`
@@ -43,6 +43,23 @@ async function apiFetchBlob(path: string): Promise<Blob> {
     headers,
     credentials: 'include',
   })
+  if (res.status === 401 && retryOn401) {
+    // Try to refresh
+    try {
+      const refreshRes = await fetch(`${API_BASE}/v1/auth/refresh`, {
+        method: 'POST',
+        credentials: 'include',
+      })
+      if (refreshRes.ok) {
+        const data = (await refreshRes.json()) as TokenPair
+        setAccessToken(data.access_token)
+        return apiFetchBlob(path, false)
+      }
+    } catch {}
+    // Refresh failed — clear token
+    _accessToken = null
+    throw new Error('unauthorized')
+  }
   if (!res.ok) throw new Error(`API error ${res.status}`)
   return res.blob()
 }

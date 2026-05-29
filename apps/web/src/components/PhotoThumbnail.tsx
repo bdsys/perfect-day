@@ -11,14 +11,18 @@ interface PhotoThumbnailProps {
 
 export function PhotoThumbnail({ photoId, alt, onClick, className }: PhotoThumbnailProps) {
   const [src, setSrc] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let url: string | null = null;
     let cancelled = false;
+    setError(null);
     api.photos.get(photoId, "thumb").then((blob) => {
       if (cancelled) return;
       url = URL.createObjectURL(blob);
       setSrc(url);
+    }).catch(() => {
+      if (!cancelled) setError("failed");
     });
     return () => {
       cancelled = true;
@@ -26,6 +30,7 @@ export function PhotoThumbnail({ photoId, alt, onClick, className }: PhotoThumbn
     };
   }, [photoId]);
 
+  if (error) return <div className={className} aria-label="failed to load" />;
   if (!src) return <div className={className} aria-busy="true" />;
   return <img src={src} alt={alt} onClick={onClick} className={className} />;
 }

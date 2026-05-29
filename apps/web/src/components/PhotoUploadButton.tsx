@@ -27,6 +27,7 @@ export function PhotoUploadButton({ onUploaded, className }: PhotoUploadButtonPr
     } catch (err) {
       setError(err instanceof Error ? err.message : "upload failed");
     } finally {
+      e.target.value = "";
       setProgress(null);
     }
   }
