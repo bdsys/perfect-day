@@ -438,6 +438,7 @@ input:focus {
 
 .photo-grid li {
   margin: 0;
+  position: relative;
 }
 
 .thumbnail {
@@ -458,4 +459,35 @@ input:focus {
   transform: scale(1.02);
   box-shadow: 0 2px 8px rgba(37, 99, 235, 0.2);
   outline: none;
+}
+
+.thumbnail-action {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0, 0, 0, 0.6);
+  color: white;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 120ms ease, background-color 120ms ease;
+}
+.photo-grid li:hover .thumbnail-action,
+.photo-grid li:focus-within .thumbnail-action {
+  opacity: 1;
+}
+.thumbnail-action:hover {
+  background: var(--danger);
+}
+.thumbnail-action:focus-visible {
+  opacity: 1;
+  outline: 2px solid var(--accent);
 }
