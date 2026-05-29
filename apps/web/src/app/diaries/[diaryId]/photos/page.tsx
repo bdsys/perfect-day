@@ -10,20 +10,30 @@ export default function DiaryPhotosPage() {
   const { diaryId } = useParams<{ diaryId: string }>();
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [openIndex, setOpenIndex] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    api.photos.listForDiary(diaryId).then(setPhotos);
+    let cancelled = false;
+    api.photos.listForDiary(diaryId)
+      .then(p => { if (!cancelled) setPhotos(p); })
+      .catch(e => { if (!cancelled) setError(e instanceof Error ? e.message : 'Failed to load photos'); });
+    return () => { cancelled = true; };
   }, [diaryId]);
 
   async function handleUploaded(p: Photo) {
-    await api.photos.attachToDiary(diaryId, p.id);
-    const refreshed = await api.photos.listForDiary(diaryId);
-    setPhotos(refreshed);
+    try {
+      await api.photos.attachToDiary(diaryId, p.id);
+      const refreshed = await api.photos.listForDiary(diaryId);
+      setPhotos(refreshed);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to attach photo');
+    }
   }
 
   return (
     <main>
       <h1>Photo library</h1>
+      {error && <p role="alert">{error}</p>}
       <PhotoUploadButton onUploaded={handleUploaded} />
       <ul className="grid" style={{ listStyle: "none", padding: 0, display: "flex", flexWrap: "wrap", gap: "8px" }}>
         {photos.map((p, i) => (

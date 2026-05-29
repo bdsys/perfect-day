@@ -415,9 +415,13 @@ function EntryDetailPageInner() {
                       />
                       <button
                         onClick={async () => {
-                          await api.photos.detachFromEntry(entry.id, p.id)
-                          const refreshed = await api.entries.get(entry.id)
-                          setEntry(refreshed)
+                          try {
+                            await api.photos.detachFromEntry(entry.id, p.id)
+                            const refreshed = await api.entries.get(entry.id)
+                            setEntry(refreshed)
+                          } catch (e: unknown) {
+                            setError(e instanceof Error ? e.message : 'Failed to remove photo')
+                          }
                         }}
                         aria-label="Remove photo"
                         style={{ position: 'absolute', top: 2, right: 2 }}
@@ -434,12 +438,16 @@ function EntryDetailPageInner() {
             <div>
               <button
                 onClick={async () => {
-                  if (!showAttachPicker) {
-                    const lib = await api.photos.listForDiary(entry.diary_id)
-                    const attachedIds = new Set(entry.photos?.map(p => p.id) ?? [])
-                    setLibraryPhotos(lib.filter(p => !attachedIds.has(p.id) && p.finalized_at != null))
+                  try {
+                    if (!showAttachPicker) {
+                      const lib = await api.photos.listForDiary(entry.diary_id)
+                      const attachedIds = new Set(entry.photos?.map(p => p.id) ?? [])
+                      setLibraryPhotos(lib.filter(p => !attachedIds.has(p.id) && p.finalized_at != null))
+                    }
+                    setShowAttachPicker(s => !s)
+                  } catch (e: unknown) {
+                    setError(e instanceof Error ? e.message : 'Failed to load photo library')
                   }
-                  setShowAttachPicker(s => !s)
                 }}
               >
                 Attach photo
@@ -453,10 +461,14 @@ function EntryDetailPageInner() {
                       photoId={p.id}
                       alt=""
                       onClick={async () => {
-                        await api.photos.attachToEntry(entry.id, p.id)
-                        const refreshed = await api.entries.get(entry.id)
-                        setEntry(refreshed)
-                        setShowAttachPicker(false)
+                        try {
+                          await api.photos.attachToEntry(entry.id, p.id)
+                          const refreshed = await api.entries.get(entry.id)
+                          setEntry(refreshed)
+                          setShowAttachPicker(false)
+                        } catch (e: unknown) {
+                          setError(e instanceof Error ? e.message : 'Failed to attach photo')
+                        }
                       }}
                       className="thumbnail"
                     />

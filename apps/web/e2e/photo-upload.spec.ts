@@ -29,7 +29,7 @@ test("upload → attach → lightbox → escape", async ({ page }) => {
   );
 
   // Wait for thumbnail to appear (finalize + fetch)
-  const thumb = page.getByRole("img").first();
+  const thumb = page.locator('img[class*="thumbnail"]').first();
   await expect(thumb).toBeVisible({ timeout: 15_000 });
 
   // Open lightbox by clicking thumbnail
