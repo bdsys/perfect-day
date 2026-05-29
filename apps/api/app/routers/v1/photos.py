@@ -22,8 +22,7 @@ from app.core.photo_crypto import (
     unwrap_dek,
     wrap_dek,
 )
-from app.models import DiaryPhoto, EntryPhoto, Photo, User
-from app.routers.v1.diaries import _get_diary_or_404
+from app.models import EntryPhoto, Photo, User
 from app.services.photos import (
     ALLOWED_MIME,
     MAX_BYTES,
@@ -309,74 +308,6 @@ async def delete_photo(
     if photo is None:
         raise HTTPException(status_code=404, detail="not_found")
     photo.deleted_at = datetime.now(tz=UTC)
-
-
-# ---------------------------------------------------------------------------
-# Task 14: Diary photo attach/detach
-# ---------------------------------------------------------------------------
-
-
-@router.post("/diaries/{diary_id}/photos", status_code=http_status.HTTP_201_CREATED)
-async def attach_photo_to_diary(
-    diary_id: uuid.UUID,
-    body: PhotoAttachRequest,
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-) -> PhotoOut:
-    diary, role = await _get_diary_or_404(diary_id, user, db)
-    if role == "viewer":
-        raise HTTPException(status_code=403, detail="forbidden")
-
-    # Verify photo ownership
-    result = await db.execute(
-        select(Photo).where(
-            Photo.id == body.photo_id,
-            Photo.user_id == user.id,
-            Photo.deleted_at.is_(None),
-            Photo.finalized_at.is_not(None),
-        )
-    )
-    photo = result.scalar_one_or_none()
-    if photo is None:
-        raise HTTPException(status_code=404, detail="photo_not_found")
-
-    # Idempotent attach
-    existing = await db.execute(
-        select(DiaryPhoto).where(
-            DiaryPhoto.diary_id == diary_id,
-            DiaryPhoto.photo_id == body.photo_id,
-        )
-    )
-    if existing.scalar_one_or_none() is None:
-        db.add(DiaryPhoto(diary_id=diary_id, photo_id=body.photo_id))
-        await db.flush()
-
-    return _photo_out(photo)
-
-
-@router.delete(
-    "/diaries/{diary_id}/photos/{photo_id}",
-    status_code=http_status.HTTP_204_NO_CONTENT,
-)
-async def detach_photo_from_diary(
-    diary_id: uuid.UUID,
-    photo_id: uuid.UUID,
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-) -> None:
-    diary, role = await _get_diary_or_404(diary_id, user, db)
-    if role == "viewer":
-        raise HTTPException(status_code=403, detail="forbidden")
-
-    result = await db.execute(
-        select(DiaryPhoto).where(
-            DiaryPhoto.diary_id == diary_id,
-            DiaryPhoto.photo_id == photo_id,
-        )
-    )
-    dp = result.scalar_one_or_none()
-    if dp is not None:
-        await db.delete(dp)
 
 
 # ---------------------------------------------------------------------------

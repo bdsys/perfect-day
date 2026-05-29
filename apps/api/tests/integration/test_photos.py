@@ -422,93 +422,6 @@ async def test_delete_photo_wrong_user_returns_404(client):
 
 
 # ---------------------------------------------------------------------------
-# Task 14: Diary photo attach/detach
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_attach_detach_diary_photo(client):
-    import httpx
-    headers = await _login(client, "diary1@example.com")
-    body = _read_fixture("sample.jpg")
-
-    # Create diary
-    r_diary = await client.post(
-        "/v1/diaries",
-        json={"name": "Test Diary", "timezone": "America/New_York", "scan_interval_minutes": 60},
-        headers=headers,
-    )
-    diary_id = r_diary.json()["id"]
-
-    # Upload + finalize photo
-    r1 = await client.post(
-        "/v1/photos/upload-url",
-        json={"declared_mime": "image/jpeg", "declared_size": len(body)},
-        headers=headers,
-    )
-    pid = r1.json()["photo_id"]
-    httpx.put(
-        r1.json()["upload_url"],
-        content=body,
-        headers={
-            "Content-Type": "image/jpeg",
-            "Content-Length": str(len(body)),
-        },
-    ).raise_for_status()
-    await client.post(f"/v1/photos/{pid}/finalize", headers=headers)
-
-    # Attach
-    r2 = await client.post(
-        f"/v1/diaries/{diary_id}/photos",
-        json={"photo_id": pid},
-        headers=headers,
-    )
-    assert r2.status_code == 201, r2.text
-
-    # Detach
-    r3 = await client.delete(f"/v1/diaries/{diary_id}/photos/{pid}", headers=headers)
-    assert r3.status_code == 204
-
-
-@pytest.mark.asyncio
-async def test_attach_diary_photo_wrong_owner_returns_403(client):
-    import httpx
-    headers_a = await _login(client, "doa@example.com")
-    headers_b = await _login(client, "dob@example.com")
-    body = _read_fixture("sample.jpg")
-
-    r_diary = await client.post(
-        "/v1/diaries",
-        json={"name": "TD2", "timezone": "America/New_York", "scan_interval_minutes": 60},
-        headers=headers_a,
-    )
-    diary_id = r_diary.json()["id"]
-
-    r1 = await client.post(
-        "/v1/photos/upload-url",
-        json={"declared_mime": "image/jpeg", "declared_size": len(body)},
-        headers=headers_b,
-    )
-    pid = r1.json()["photo_id"]
-    httpx.put(
-        r1.json()["upload_url"],
-        content=body,
-        headers={
-            "Content-Type": "image/jpeg",
-            "Content-Length": str(len(body)),
-        },
-    ).raise_for_status()
-    await client.post(f"/v1/photos/{pid}/finalize", headers=headers_b)
-
-    r2 = await client.post(
-        f"/v1/diaries/{diary_id}/photos",
-        json={"photo_id": str(pid)},
-        headers=headers_b,
-    )
-    assert r2.status_code in (403, 404)
-
-
-# ---------------------------------------------------------------------------
 # Task 15: Entry photo attach/detach
 # ---------------------------------------------------------------------------
 
@@ -650,7 +563,7 @@ async def test_get_photo_metadata(client):
 
 
 # ---------------------------------------------------------------------------
-# Task 17: GET /v1/diaries/{id}/photos library endpoint
+# Entry photos in entry response
 # ---------------------------------------------------------------------------
 
 
@@ -703,43 +616,6 @@ async def test_entry_out_includes_attached_photos(client):
     assert len(photos) == 1
     assert photos[0]["id"] == pid
 
-
-@pytest.mark.asyncio
-async def test_list_diary_photos(client):
-    import httpx
-    headers = await _login(client, "lib1@example.com")
-    body = _read_fixture("sample.jpg")
-
-    r_diary = await client.post(
-        "/v1/diaries",
-        json={"name": "LibDiary", "timezone": "UTC", "scan_interval_minutes": 60},
-        headers=headers,
-    )
-    diary_id = r_diary.json()["id"]
-
-    # Upload + finalize + attach
-    r1 = await client.post(
-        "/v1/photos/upload-url",
-        json={"declared_mime": "image/jpeg", "declared_size": len(body)},
-        headers=headers,
-    )
-    pid = r1.json()["photo_id"]
-    httpx.put(
-        r1.json()["upload_url"],
-        content=body,
-        headers={
-            "Content-Type": "image/jpeg",
-            "Content-Length": str(len(body)),
-        },
-    ).raise_for_status()
-    await client.post(f"/v1/photos/{pid}/finalize", headers=headers)
-    await client.post(f"/v1/diaries/{diary_id}/photos", json={"photo_id": pid}, headers=headers)
-
-    r2 = await client.get(f"/v1/diaries/{diary_id}/photos", headers=headers)
-    assert r2.status_code == 200
-    photos = r2.json()
-    assert len(photos) >= 1
-    assert any(p["id"] == pid for p in photos)
 
 
 # ---------------------------------------------------------------------------
