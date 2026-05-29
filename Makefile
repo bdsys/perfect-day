@@ -104,6 +104,9 @@ test-e2e:
 	./scripts/wait-for-healthy.sh http://localhost:8000/readyz 60
 	./scripts/wait-for-healthy.sh http://localhost:3000 90
 	./scripts/wait-for-healthy.sh http://localhost:3000/login 90
+	docker run --rm --network perfect-day_default \
+	  --entrypoint sh minio/mc:latest -c \
+	  'mc alias set local http://minio:9000 minioadmin minioadmin && mc mb --ignore-existing local/photos'
 	cd $(API_DIR) && DATABASE_URL_SYNC=postgresql://perfectday:perfectday@localhost:5432/perfectday_test \
 	  $(CURDIR)/$(VENV_BIN)/alembic upgrade head
 	test -d "$$HOME/Library/Caches/ms-playwright" || $(MAKE) web-e2e-install

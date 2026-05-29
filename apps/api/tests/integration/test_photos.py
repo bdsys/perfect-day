@@ -91,6 +91,33 @@ async def test_presign_put_url_round_trip(s3_client, photos_bucket, monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_presign_put_url_rewrites_public_endpoint(s3_client, photos_bucket, monkeypatch):
+    """presign_put_url replaces scheme+netloc with S3_PUBLIC_ENDPOINT_URL when set."""
+    from urllib.parse import urlparse
+
+    from app.core.config import get_settings
+    monkeypatch.setenv("S3_BUCKET_PHOTOS", photos_bucket)
+    monkeypatch.setenv("S3_PUBLIC_ENDPOINT_URL", "https://photos.example.com")
+    get_settings.cache_clear()
+    import app.core.dependencies as deps
+    deps._s3_client = s3_client
+
+    from app.services.photos import presign_put_url
+
+    try:
+        url = presign_put_url("tmp/rewrite/test.jpg", "image/jpeg", 100)
+        parsed = urlparse(url)
+        assert parsed.scheme == "https"
+        assert parsed.netloc == "photos.example.com"
+        assert photos_bucket in parsed.path
+        assert "X-Amz-Signature" in parsed.query or "Signature=" in parsed.query
+    finally:
+        monkeypatch.delenv("S3_PUBLIC_ENDPOINT_URL", raising=False)
+        get_settings.cache_clear()
+        deps._s3_client = None
+
+
+@pytest.mark.asyncio
 async def test_photos_router_registered(client):
     """The photos router should be mounted; /v1/photos/upload-url returns 401 without auth."""
     resp = await client.post(

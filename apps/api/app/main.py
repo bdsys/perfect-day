@@ -76,21 +76,6 @@ def create_app() -> FastAPI:
     app.include_router(scan.router, prefix="/v1")
     app.include_router(photos.router, prefix="/v1")
 
-    @app.on_event("startup")
-    def _ensure_s3_bucket() -> None:
-        from botocore.exceptions import ClientError
-
-        from app.core.dependencies import get_s3
-
-        s3 = get_s3()
-        bucket = settings.s3_bucket_photos
-        try:
-            s3.head_bucket(Bucket=bucket)
-        except ClientError as e:
-            code = e.response.get("Error", {}).get("Code", "")
-            if code in ("404", "NoSuchBucket", "NotFound"):
-                s3.create_bucket(Bucket=bucket)
-
     return app
 
 
