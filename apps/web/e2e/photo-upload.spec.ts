@@ -1,42 +1,71 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, request as playwrightRequest } from "@playwright/test";
 import path from "node:path";
 
-test("upload → attach → lightbox → escape", async ({ page }) => {
-  // This test requires a running stack with valid credentials.
-  // Skip gracefully when env vars are not set (local dev without stack up).
-  const email = process.env.E2E_EMAIL;
-  const password = process.env.E2E_PASSWORD;
-  const diaryId = process.env.E2E_DIARY_ID;
+const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const email = "e2e-photos@example.com";
+const password = "Password1!";
+const diaryName = "E2E Photos Diary";
 
-  if (!email || !password || !diaryId) {
-    test.skip(true, "E2E_EMAIL, E2E_PASSWORD, E2E_DIARY_ID not set — skipping");
-    return;
+let diaryId: string;
+
+test.beforeAll(async () => {
+  const ctx = await playwrightRequest.newContext();
+
+  // Register — 201 first run, 409 on re-runs, both fine
+  await ctx.post(`${API}/v1/auth/register`, {
+    data: { email, password },
+  });
+
+  // Login to get token
+  const loginRes = await ctx.post(`${API}/v1/auth/login`, {
+    data: { email, password },
+  });
+  const { access_token } = await loginRes.json();
+
+  // List diaries — reuse existing one if present
+  const listRes = await ctx.get(`${API}/v1/diaries`, {
+    headers: { Authorization: `Bearer ${access_token}` },
+  });
+  const diaries: Array<{ id: string; name: string }> = await listRes.json();
+  const existing = diaries.find((d) => d.name === diaryName);
+
+  if (existing) {
+    diaryId = existing.id;
+  } else {
+    const createRes = await ctx.post(`${API}/v1/diaries`, {
+      headers: { Authorization: `Bearer ${access_token}` },
+      data: { name: diaryName, timezone: "UTC" },
+    });
+    const created = await createRes.json();
+    diaryId = created.id;
   }
 
+  await ctx.dispose();
+});
+
+test("upload → lightbox → escape", async ({ page }) => {
   await page.goto("/login");
   await page.fill('input[name="email"]', email);
   await page.fill('input[name="password"]', password);
   await page.click('button[type="submit"]');
   await page.waitForURL(/\/diaries/, { timeout: 10_000 });
 
-  // Navigate to diary photo library
   await page.goto(`/diaries/${diaryId}/photos`);
   await expect(page.getByRole("heading", { name: /photo library/i })).toBeVisible();
 
-  // Upload a photo
   await page.locator('input[type="file"]').setInputFiles(
     path.join(__dirname, "fixtures/sample.jpg")
   );
 
-  // Wait for thumbnail to appear (finalize + fetch)
+  // Wait for thumbnail — finalize + decrypt + render takes a moment
   const thumb = page.locator('img[class*="thumbnail"]').first();
   await expect(thumb).toBeVisible({ timeout: 15_000 });
 
-  // Open lightbox by clicking thumbnail
+  // Open lightbox
   await thumb.click();
   await expect(page.getByRole("dialog")).toBeVisible();
 
-  // Escape closes lightbox
+  // Escape closes it
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog")).not.toBeVisible();
 });
