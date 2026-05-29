@@ -34,6 +34,19 @@ export class ApiError extends Error {
   }
 }
 
+async function apiFetchBlob(path: string): Promise<Blob> {
+  const headers: HeadersInit = {}
+  if (_accessToken) {
+    (headers as Record<string, string>)['Authorization'] = `Bearer ${_accessToken}`
+  }
+  const res = await fetch(`${API_BASE}${path}`, {
+    headers,
+    credentials: 'include',
+  })
+  if (!res.ok) throw new Error(`API error ${res.status}`)
+  return res.blob()
+}
+
 async function apiFetch<T>(
   path: string,
   options: RequestInit = {},
@@ -102,6 +115,28 @@ async function apiFetch<T>(
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
+
+export type Photo = {
+  id: string
+  mime_type: string | null
+  bytes: number | null
+  taken_at: string | null
+  lat: number | null
+  lon: number | null
+  source: string
+  finalized_at: string | null
+  created_at: string
+  deleted_at: string | null
+  has_thumbnail: boolean
+}
+
+export type UploadUrl = {
+  photo_id: string
+  upload_url: string
+  upload_key: string
+  expires_in: number
+  required_headers: Record<string, string>
+}
 
 export interface Diary {
   id: string
@@ -179,6 +214,7 @@ export interface Entry {
   events: EventItem[]
   rule_matches: RuleMatchSummary[]
   last_generation: LLMGenerationSummary | null
+  photos: Photo[]
 }
 
 export interface ScanRun {
@@ -469,5 +505,58 @@ export const api = {
         body: JSON.stringify({ days }),
       })
     },
+  },
+
+  photos: {
+    requestUploadUrl: (body: { declared_mime: string; declared_size: number }) =>
+      apiFetch<UploadUrl>('/v1/photos/upload-url', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+
+    uploadFile: (uploadUrl: string, file: File, onProgress?: (p: number) => void): Promise<void> =>
+      new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest()
+        xhr.open('PUT', uploadUrl)
+        xhr.setRequestHeader('Content-Type', file.type)
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total)
+        }
+        xhr.onload = () =>
+          xhr.status >= 200 && xhr.status < 300
+            ? resolve()
+            : reject(new Error(`upload failed: ${xhr.status}`))
+        xhr.onerror = () => reject(new Error('upload network error'))
+        xhr.send(file)
+      }),
+
+    finalize: (photoId: string) =>
+      apiFetch<Photo>(`/v1/photos/${photoId}/finalize`, { method: 'POST' }),
+
+    get: (photoId: string, kind: 'full' | 'thumb' = 'full'): Promise<Blob> =>
+      apiFetchBlob(`/v1/photos/${photoId}?kind=${kind}`),
+
+    delete: (photoId: string) =>
+      apiFetch<void>(`/v1/photos/${photoId}`, { method: 'DELETE' }),
+
+    attachToDiary: (diaryId: string, photoId: string) =>
+      apiFetch<Photo>(`/v1/diaries/${diaryId}/photos`, {
+        method: 'POST',
+        body: JSON.stringify({ photo_id: photoId }),
+      }),
+
+    attachToEntry: (entryId: string, photoId: string, position?: number) =>
+      apiFetch<Photo>(`/v1/entries/${entryId}/photos`, {
+        method: 'POST',
+        body: JSON.stringify({ photo_id: photoId, position }),
+      }),
+
+    detachFromEntry: (entryId: string, photoId: string) =>
+      apiFetch<void>(`/v1/entries/${entryId}/photos/${photoId}`, {
+        method: 'DELETE',
+      }),
+
+    listForDiary: (diaryId: string) =>
+      apiFetch<Photo[]>(`/v1/diaries/${diaryId}/photos`),
   },
 }
