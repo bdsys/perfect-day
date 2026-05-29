@@ -234,37 +234,31 @@ class TestViewerAccessControl:
 
 
 async def test_get_entry_exposes_enrichments(client, db_session):
-    """Entry detail GET returns weather enrichment in enrichments list."""
-    from datetime import UTC, date, datetime
-    from app.models import Enrichment, Entry, Diary
+    """Entry detail GET returns weather enrichments list including nullable source."""
     import uuid as _uuid
+    from datetime import UTC, datetime
+    from app.models import Enrichment
 
-    # Register + login
     email = f"enrich-{_uuid.uuid4().hex[:8]}@example.com"
     r = await client.post("/v1/auth/register", json={"email": email, "password": "Password1!"})
     token = r.json()["access_token"]
     auth = {"Authorization": f"Bearer {token}"}
 
-    # Create diary
+    # Create diary + entry via HTTP API
     diary_r = await client.post("/v1/diaries", json={"name": "D", "timezone": "UTC"}, headers=auth)
     diary_id = diary_r.json()["id"]
 
-    # Create entry directly in DB (no public "create entry" API without events)
-    entry = Entry(
-        diary_id=_uuid.UUID(diary_id),
-        entry_date=date(2026, 5, 5),
-        title="Test",
-        body_markdown="",
-        status="draft",
-        created_by="manual",
+    entry_r = await client.post(
+        f"/v1/diaries/{diary_id}/entries",
+        json={"entry_date": "2026-05-05", "title": "Test", "body_markdown": ""},
+        headers=auth,
     )
-    db_session.add(entry)
-    await db_session.commit()
-    await db_session.refresh(entry)
+    assert entry_r.status_code == 201
+    entry_id = entry_r.json()["id"]
 
-    # Seed an enrichment
-    enrichment = Enrichment(
-        entry_id=entry.id,
+    # Seed two enrichments via db_session (worker-written; no public API)
+    enrich1 = Enrichment(
+        entry_id=_uuid.UUID(entry_id),
         kind="weather",
         source="open_meteo",
         payload={
@@ -277,16 +271,32 @@ async def test_get_entry_exposes_enrichments(client, db_session):
         captured_for_at=datetime(2026, 5, 5, tzinfo=UTC),
         fetched_at=datetime.now(UTC),
     )
-    db_session.add(enrichment)
+    enrich2 = Enrichment(
+        entry_id=_uuid.UUID(entry_id),
+        kind="weather",
+        source=None,  # test nullable source
+        payload={"date": "2026-05-06", "temperature_max_c": 18.0, "temperature_min_c": 12.0, "weathercode": 2},
+        captured_for_at=datetime(2026, 5, 6, tzinfo=UTC),
+        fetched_at=datetime.now(UTC),
+    )
+    db_session.add(enrich1)
+    db_session.add(enrich2)
     await db_session.commit()
 
-    r = await client.get(f"/v1/entries/{entry.id}", headers=auth)
+    r = await client.get(f"/v1/entries/{entry_id}", headers=auth)
     assert r.status_code == 200
     body = r.json()
     assert "enrichments" in body
-    assert len(body["enrichments"]) == 1
-    e = body["enrichments"][0]
+    assert len(body["enrichments"]) == 2
+
+    # Find the enrichment with source="open_meteo"
+    e = next(x for x in body["enrichments"] if x["source"] == "open_meteo")
     assert e["kind"] == "weather"
     assert e["payload"]["weathercode"] == 1
     assert e["payload"]["temperature_max_c"] == 22.0
     assert "captured_for_at" in e
+    assert e["source"] == "open_meteo"
+
+    # Verify nullable source serialises as null
+    e2 = next(x for x in body["enrichments"] if x["source"] is None)
+    assert e2["source"] is None
