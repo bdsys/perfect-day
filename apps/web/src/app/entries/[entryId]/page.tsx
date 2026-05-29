@@ -417,9 +417,9 @@ function EntryDetailPageInner() {
             {entry.photos && entry.photos.length > 0 && (
               <section>
                 <h3>Photos</h3>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                <ul className="photo-grid">
                   {entry.photos.map((p, i) => (
-                    <div key={p.id} style={{ position: 'relative' }}>
+                    <li key={p.id}>
                       <PhotoThumbnail
                         photoId={p.id}
                         alt=""
@@ -427,23 +427,25 @@ function EntryDetailPageInner() {
                         className="thumbnail"
                       />
                       <button
-                        onClick={async () => {
+                        type="button"
+                        className="thumbnail-action"
+                        aria-label="Remove photo from entry"
+                        onClick={async (e) => {
+                          e.stopPropagation();
                           try {
                             await api.photos.detachFromEntry(entry.id, p.id)
                             const refreshed = await api.entries.get(entry.id)
                             setEntry(refreshed)
-                          } catch (e: unknown) {
-                            setError(e instanceof Error ? e.message : 'Failed to remove photo')
+                          } catch (err: unknown) {
+                            setError(err instanceof Error ? err.message : 'Failed to remove photo')
                           }
                         }}
-                        aria-label="Remove photo"
-                        style={{ position: 'absolute', top: 2, right: 2 }}
                       >
-                        Remove
+                        ×
                       </button>
-                    </div>
+                    </li>
                   ))}
-                </div>
+                </ul>
               </section>
             )}
 
