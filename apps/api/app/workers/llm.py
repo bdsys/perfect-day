@@ -252,7 +252,8 @@ def build_prompt(
 
 
 def validate_citation(
-    output: dict, events: list, mode: str = "events", body_seed: str = ""
+    output: dict, events: list, mode: str = "events", body_seed: str = "",
+    enrichments: list | None = None,
 ) -> tuple[bool, str, list[str]]:
     # Mode B (polish): no events, no citation validation needed
     if mode == "polish":
@@ -278,6 +279,10 @@ def validate_citation(
     cited_event_texts = " ".join(
         json.dumps(events[i - 1].payload) for i in facts_used if 1 <= i <= max_idx
     )
+    enrichment_texts = " ".join(
+        json.dumps(e.payload) for e in (enrichments or [])
+    )
+    cited_text = cited_event_texts + " " + enrichment_texts
     tokens = re.findall(r"\b[A-Z][a-z]{2,}\b", body + " " + title)
     flagged = []
     _CALENDAR_WORDS = {
@@ -286,7 +291,7 @@ def validate_citation(
         "July", "August", "September", "October", "November", "December",
     }
     for token in tokens:
-        if token not in cited_event_texts and token not in _CALENDAR_WORDS:
+        if token not in cited_text and token not in _CALENDAR_WORDS:
             flagged.append(token)
 
     return True, "", flagged
@@ -506,7 +511,7 @@ async def generate_draft_for_entry(entry_id: uuid.UUID) -> None:
                         )
                         raise ValueError("no JSON in response")
 
-                valid, err, flagged_tokens = validate_citation(parsed, events, mode=mode, body_seed=body)
+                valid, err, flagged_tokens = validate_citation(parsed, events, mode=mode, body_seed=body, enrichments=enrichments)
                 if not valid:
                     log.warning(
                         "citation_validation_failed",
