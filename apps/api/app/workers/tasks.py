@@ -458,9 +458,21 @@ def generate_entry_draft(self, entry_id: str) -> None:
 
 
 async def _generate_entry_draft(entry_id_str: str) -> None:
+    from app.workers.enrichments import enrich_entry_weather
     from app.workers.llm import generate_draft_for_entry
+    from app.workers.utils import db_session
 
-    await generate_draft_for_entry(uuid.UUID(entry_id_str))
+    entry_uuid = uuid.UUID(entry_id_str)
+    try:
+        async with db_session() as db:
+            await enrich_entry_weather(entry_uuid, db)
+    except Exception as exc:  # never block draft on weather failure
+        log.warning(
+            "enrichment_weather_skipped_due_to_error",
+            entry_id=entry_id_str,
+            error=str(exc),
+        )
+    await generate_draft_for_entry(entry_uuid)
 
 
 # ---------------------------------------------------------------------------
