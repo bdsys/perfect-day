@@ -233,6 +233,15 @@ export interface LLMGenerationSummary {
   model: string | null
 }
 
+export interface Enrichment {
+  id: string
+  kind: string
+  source: string | null
+  payload: Record<string, unknown>
+  captured_for_at: string | null
+  fetched_at: string
+}
+
 export interface Entry {
   id: string
   diary_id: string
@@ -253,6 +262,7 @@ export interface Entry {
   rule_matches: RuleMatchSummary[]
   last_generation: LLMGenerationSummary | null
   photos: Photo[]
+  enrichments: Enrichment[]
 }
 
 export interface ScanRun {
