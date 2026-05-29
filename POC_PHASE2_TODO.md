@@ -13,14 +13,14 @@ Items must be built in wave order. Within a wave, items are independent and can 
 |---|---|---|
 | 22 | Gemini fallback for LLM | **done** |
 | 17 | Backfill — slice 1 (Calendar-only, spec-compliant) | **done** |
-| 15 | Multi-day entry support | pending |
+| 15 | Multi-day entry support | **done** |
 
 Build 22 first within Wave A — it introduces the LLM provider abstraction that 15 and 16 build on.
 
 ### Wave B — requires Wave A complete
 | # | Feature | Status |
 |---|---|---|
-| 13 | MinIO + photo upload | pending |
+| 13 | MinIO + photo upload | **done** |
 | 16 | Weather enrichment (Open-Meteo) | **done** |
 | 19 | Diary create wizard + edit settings | pending |
 | 23 | Manual entry creation form (popover) | **done** |
