@@ -470,25 +470,31 @@ function EntryDetailPageInner() {
                   <div style={{ marginBottom: "0.5rem" }}>
                     <PhotoUploadButton onUploaded={handlePickerUpload} label="Upload new" />
                   </div>
-                  {libraryPhotos.length === 0 && <p>No photos in library yet.</p>}
-                  {libraryPhotos.map(p => (
-                    <PhotoThumbnail
-                      key={p.id}
-                      photoId={p.id}
-                      alt=""
-                      onClick={async () => {
-                        try {
-                          await api.photos.attachToEntry(entry.id, p.id)
-                          const refreshed = await api.entries.get(entry.id)
-                          setEntry(refreshed)
-                          setShowAttachPicker(false)
-                        } catch (e: unknown) {
-                          setError(e instanceof Error ? e.message : 'Failed to attach photo')
-                        }
-                      }}
-                      className="thumbnail"
-                    />
-                  ))}
+                  {libraryPhotos.length === 0 ? (
+                    <p>No photos in library yet.</p>
+                  ) : (
+                    <ul className="photo-grid">
+                      {libraryPhotos.map(p => (
+                        <li key={p.id}>
+                          <PhotoThumbnail
+                            photoId={p.id}
+                            alt=""
+                            onClick={async () => {
+                              try {
+                                await api.photos.attachToEntry(entry.id, p.id)
+                                const refreshed = await api.entries.get(entry.id)
+                                setEntry(refreshed)
+                                setShowAttachPicker(false)
+                              } catch (e: unknown) {
+                                setError(e instanceof Error ? e.message : 'Failed to attach photo')
+                              }
+                            }}
+                            className="thumbnail"
+                          />
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
               )}
             </div>
