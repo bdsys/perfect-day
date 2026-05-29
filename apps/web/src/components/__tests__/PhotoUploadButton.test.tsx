@@ -4,7 +4,7 @@ import { api } from "../../lib/api";
 
 jest.mock("../../lib/api");
 
-it("calls onUploaded after full upload flow", async () => {
+function makeUploadMocks() {
   (api.photos.requestUploadUrl as jest.Mock).mockResolvedValue({
     photo_id: "p1",
     upload_url: "https://example/upload",
@@ -26,13 +26,38 @@ it("calls onUploaded after full upload flow", async () => {
     deleted_at: null,
     has_thumbnail: true,
   });
+}
+
+it("calls onUploaded after full upload flow", async () => {
+  makeUploadMocks();
 
   const onUploaded = jest.fn();
-  render(<PhotoUploadButton onUploaded={onUploaded} />);
+  const { getByRole, container } = render(<PhotoUploadButton onUploaded={onUploaded} />);
+
+  // Button is present
+  expect(getByRole("button", { name: /upload photo/i })).toBeInTheDocument();
 
   const file = new File([new Uint8Array(100)], "x.jpg", { type: "image/jpeg" });
-  const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+  const input = container.querySelector('input[type="file"]') as HTMLInputElement;
   fireEvent.change(input, { target: { files: [file] } });
 
   await waitFor(() => expect(onUploaded).toHaveBeenCalledWith(expect.objectContaining({ id: "p1" })));
+});
+
+it("clicking the button programmatically triggers the file input", () => {
+  makeUploadMocks();
+
+  const clickSpy = jest.spyOn(HTMLInputElement.prototype, "click").mockImplementation(() => {});
+  const { getByRole } = render(<PhotoUploadButton onUploaded={jest.fn()} />);
+
+  fireEvent.click(getByRole("button", { name: /upload photo/i }));
+  expect(clickSpy).toHaveBeenCalledTimes(1);
+
+  clickSpy.mockRestore();
+});
+
+it("renders custom label text when label prop is provided", () => {
+  const { getByRole } = render(<PhotoUploadButton onUploaded={jest.fn()} label="Upload new" />);
+
+  expect(getByRole("button", { name: /upload new/i })).toBeInTheDocument();
 });
