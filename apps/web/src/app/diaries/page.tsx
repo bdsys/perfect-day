@@ -97,6 +97,7 @@ export default function DiariesPage() {
         <div className="page-header">
           <h1 className="page-title">Your diaries</h1>
           <div className="page-actions">
+            <Link href="/photos" className="btn btn-secondary">Photos</Link>
             <Link href="/diaries/restore" className="btn btn-secondary">Deleted diaries</Link>
           </div>
         </div>
