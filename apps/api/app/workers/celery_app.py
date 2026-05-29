@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import timedelta
+
 from celery import Celery
 
 from app.core.config import get_settings
@@ -38,7 +40,7 @@ def create_celery() -> Celery:
             },
             "sweep-orphaned-photos": {
                 "task": "app.workers.beat_tasks.sweep_orphaned_photos",
-                "schedule": 21600,  # every 6 hours
+                "schedule": timedelta(hours=6),
             },
         },
     )
