@@ -783,7 +783,7 @@ async def test_list_user_photos_ordered(client):
     assert r.status_code == 200, r.text
     photos = r.json()
     ids = [p["id"] for p in photos]
-    assert len(ids) >= 3
+    assert len(ids) == 3
     # Verify all 3 IDs are present
     assert pid1 in ids
     assert pid2 in ids
@@ -800,6 +800,11 @@ async def test_list_user_photos_cross_user_isolation(client):
     body = _read_fixture("sample.jpg")
 
     await _upload_and_finalize(client, headers_a, body)
+
+    # Verify user A's upload succeeded before checking isolation
+    r_a = await client.get("/v1/photos", headers=headers_a)
+    assert r_a.status_code == 200, r_a.text
+    assert len(r_a.json()) == 1, "user A should have exactly 1 photo after upload"
 
     r = await client.get("/v1/photos", headers=headers_b)
     assert r.status_code == 200, r.text
