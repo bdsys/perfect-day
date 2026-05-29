@@ -740,3 +740,105 @@ async def test_list_diary_photos(client):
     photos = r2.json()
     assert len(photos) >= 1
     assert any(p["id"] == pid for p in photos)
+
+
+# ---------------------------------------------------------------------------
+# Task 18: GET /v1/photos — user-global photo library
+# ---------------------------------------------------------------------------
+
+
+async def _upload_and_finalize(client, headers, body) -> str:
+    """Helper: upload + finalize a photo; returns photo_id as str."""
+    import httpx
+
+    r1 = await client.post(
+        "/v1/photos/upload-url",
+        json={"declared_mime": "image/jpeg", "declared_size": len(body)},
+        headers=headers,
+    )
+    assert r1.status_code == 201, r1.text
+    payload = r1.json()
+    pid = payload["photo_id"]
+    httpx.put(
+        payload["upload_url"],
+        content=body,
+        headers={"Content-Type": "image/jpeg", "Content-Length": str(len(body))},
+    ).raise_for_status()
+    r2 = await client.post(f"/v1/photos/{pid}/finalize", headers=headers)
+    assert r2.status_code == 200, r2.text
+    return pid
+
+
+@pytest.mark.asyncio
+async def test_list_user_photos_ordered(client):
+    """GET /v1/photos returns user's finalized photos in created_at DESC order."""
+    headers = await _login(client, "list_order@example.com")
+    body = _read_fixture("sample.jpg")
+
+    pid1 = await _upload_and_finalize(client, headers, body)
+    pid2 = await _upload_and_finalize(client, headers, body)
+    pid3 = await _upload_and_finalize(client, headers, body)
+
+    r = await client.get("/v1/photos", headers=headers)
+    assert r.status_code == 200, r.text
+    photos = r.json()
+    ids = [p["id"] for p in photos]
+    assert len(ids) >= 3
+    # Verify all 3 IDs are present
+    assert pid1 in ids
+    assert pid2 in ids
+    assert pid3 in ids
+    # Verify created_at DESC order: pid3 was created last, pid1 first
+    assert ids.index(pid3) < ids.index(pid2) < ids.index(pid1)
+
+
+@pytest.mark.asyncio
+async def test_list_user_photos_cross_user_isolation(client):
+    """GET /v1/photos does not return another user's photos."""
+    headers_a = await _login(client, "list_iso_a@example.com")
+    headers_b = await _login(client, "list_iso_b@example.com")
+    body = _read_fixture("sample.jpg")
+
+    await _upload_and_finalize(client, headers_a, body)
+
+    r = await client.get("/v1/photos", headers=headers_b)
+    assert r.status_code == 200, r.text
+    photos = r.json()
+    assert len(photos) == 0
+
+
+@pytest.mark.asyncio
+async def test_list_user_photos_excludes_deleted(client):
+    """GET /v1/photos excludes soft-deleted photos."""
+    headers = await _login(client, "list_del@example.com")
+    body = _read_fixture("sample.jpg")
+
+    pid = await _upload_and_finalize(client, headers, body)
+
+    r_del = await client.delete(f"/v1/photos/{pid}", headers=headers)
+    assert r_del.status_code == 204
+
+    r = await client.get("/v1/photos", headers=headers)
+    assert r.status_code == 200, r.text
+    photos = r.json()
+    assert len(photos) == 0
+
+
+@pytest.mark.asyncio
+async def test_list_user_photos_excludes_unfinalized(client):
+    """GET /v1/photos excludes photos that have not been finalized."""
+    headers = await _login(client, "list_unfin@example.com")
+    body = _read_fixture("sample.jpg")
+
+    # Request upload URL but do NOT call finalize
+    r1 = await client.post(
+        "/v1/photos/upload-url",
+        json={"declared_mime": "image/jpeg", "declared_size": len(body)},
+        headers=headers,
+    )
+    assert r1.status_code == 201, r1.text
+
+    r = await client.get("/v1/photos", headers=headers)
+    assert r.status_code == 200, r.text
+    photos = r.json()
+    assert len(photos) == 0

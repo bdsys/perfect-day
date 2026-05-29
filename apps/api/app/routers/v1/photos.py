@@ -212,6 +212,29 @@ async def finalize_photo(
 
 
 # ---------------------------------------------------------------------------
+# Task 18: GET /v1/photos — user-global photo library
+# ---------------------------------------------------------------------------
+
+
+@router.get("/photos", response_model=list[PhotoOut])
+async def list_user_photos(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[PhotoOut]:
+    q = (
+        select(Photo)
+        .where(
+            Photo.user_id == user.id,
+            Photo.deleted_at.is_(None),
+            Photo.finalized_at.is_not(None),
+        )
+        .order_by(Photo.created_at.desc())
+    )
+    rows = (await db.execute(q)).scalars().all()
+    return [_photo_out(p) for p in rows]
+
+
+# ---------------------------------------------------------------------------
 # Task 12: GET /v1/photos/{id}?kind=full|thumb
 # ---------------------------------------------------------------------------
 
