@@ -8,7 +8,7 @@ from datetime import UTC, date, datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import hash_password
-from app.models import Diary, DiaryPhoto, Entry, EntryPhoto, Event, Photo, ScanJob, User
+from app.models import Diary, Entry, EntryPhoto, Event, Photo, ScanJob, User
 
 
 async def make_user(
@@ -144,13 +144,6 @@ async def make_photo(
     db.add(photo)
     await db.flush()
     return photo
-
-
-async def make_diary_photo(db: AsyncSession, *, diary: Diary, photo: Photo) -> DiaryPhoto:
-    dp = DiaryPhoto(diary_id=diary.id, photo_id=photo.id)
-    db.add(dp)
-    await db.flush()
-    return dp
 
 
 async def make_entry_photo(
