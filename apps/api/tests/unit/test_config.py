@@ -68,3 +68,12 @@ class TestCorsOrigins:
 
         s = Settings()
         assert "http://localhost:3000" in s.cors_origins
+
+
+def test_settings_have_open_meteo_defaults():
+    from app.core.config import get_settings
+    s = get_settings()
+    assert s.weather_enabled is True
+    assert s.open_meteo_forecast_url == "https://api.open-meteo.com/v1/forecast"
+    assert s.open_meteo_archive_url == "https://archive-api.open-meteo.com/v1/archive"
+    assert s.open_meteo_timeout_seconds == 30

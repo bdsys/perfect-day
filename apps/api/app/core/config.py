@@ -63,6 +63,12 @@ class Settings(BaseSettings):
     rate_limit_default: str = "100/minute"
     rate_limit_auth: str = "10/minute"
 
+    # Weather enrichment (Open-Meteo, no API key required)
+    weather_enabled: bool = True
+    open_meteo_forecast_url: str = "https://api.open-meteo.com/v1/forecast"
+    open_meteo_archive_url: str = "https://archive-api.open-meteo.com/v1/archive"
+    open_meteo_timeout_seconds: int = 30
+
     @field_validator("master_secret", "oauth_token_secret")
     @classmethod
     def validate_hex_32(cls, v: str) -> str:
