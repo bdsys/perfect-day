@@ -13,15 +13,15 @@ Items must be built in wave order. Within a wave, items are independent and can 
 |---|---|---|
 | 22 | Gemini fallback for LLM | **done** |
 | 17 | Backfill — slice 1 (Calendar-only, spec-compliant) | **done** |
-| 15 | Multi-day entry support | pending |
+| 15 | Multi-day entry support | **done** |
 
 Build 22 first within Wave A — it introduces the LLM provider abstraction that 15 and 16 build on.
 
 ### Wave B — requires Wave A complete
 | # | Feature | Status |
 |---|---|---|
-| 13 | MinIO + photo upload | pending |
-| 16 | Weather enrichment (Open-Meteo) | pending |
+| 13 | MinIO + photo upload | **done** |
+| 16 | Weather enrichment (Open-Meteo) | **done** |
 | 19 | Diary create wizard + edit settings | pending |
 | 23 | Manual entry creation form (popover) | **done** |
 
@@ -56,7 +56,7 @@ What's already in the codebase vs. what needs to be built. Verified by direct co
 | 17 | Backfill slice 1 | `POST /scan/backfill` endpoint, `BackfillRun` model, `run_backfill()` worker, 365-day cap | 4 spec gaps: body is `{days}` not `{from_date, to_date, sources}`; no weekly chunking/2s sleep; no `scan_lock:{diary_id}`; no `DELETE /scan/backfill/{runId}` |
 | 15 | Multi-day entries | `entry_end_date` column, API/CRUD accepts it, TZ helper | Worker grouping logic for events spanning midnight; timeline UI for multi-day entries |
 | 13 | MinIO + photo upload | AES-GCM helpers (`core/security.py:87-101`), `Photo`/`EntryPhoto`/`DiaryPhoto` models | S3 client wiring, `upload-url`/`finalize` endpoints, per-photo DEK encryption, decrypt-and-stream download |
-| 16 | Weather enrichment | `Enrichment` model | Open-Meteo client (no API key needed), per-entry enrichment call at draft generation, backfill chunk extension |
+| 16 | Weather enrichment | `open_meteo.py` client, `enrichments.py` orchestrator, migration 0009, Diary lat/lon, citation validator extended | **done** — all code shipped; `make test-all` green |
 | 14 | Google Photos | OAuth scaffolding reusable from Calendar (same `oauth_tokens` table, encryption, partial-grant pattern) | Photos scope + grant flow, `ingest_photo` worker, metadata-first filter, `entry_photos` attachment, backfill extension |
 | 18 | Tier enforcement | `services/tier.py` with `enforce_entry_tier_limit`; wired into manual-entry router paths | Not called from worker auto-entry path (`workers/tasks.py`); not gating photo uploads; 403 + structured error in UI |
 | 19 | Diary create wizard + edit settings | `PATCH /v1/diaries/{id}` endpoint + `DiaryPatch` schema; `subject_name`/`subject_relation` already in `DiaryOut` | Commit bug in patch handler (line 231, no `db.commit`); `DiaryCreate` missing optional fields; `DiaryOut` missing `voice_override`/`tone_hint`; no frontend wizard or settings panel; no `api.diaries.patch()` client method. Plan: `.claude/plans/can-you-give-me-sorted-scroll.md` |

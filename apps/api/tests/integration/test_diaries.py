@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from httpx import AsyncClient
 
 
@@ -99,3 +100,79 @@ class TestSoftDeleteDiary:
         r2 = await client.post(f"/v1/diaries/{diary['id']}/restore", headers=auth)
         assert r2.status_code == 200
         assert r2.json()["deleted_at"] is None
+
+
+class TestDiaryLatLon:
+    async def test_patch_diary_sets_lat_lon(self, client):
+        token = await _register_and_login(client, "latlon@example.com")
+        auth = {"Authorization": f"Bearer {token}"}
+        diary = (
+            await client.post(
+                "/v1/diaries",
+                json={"name": "LatLon", "timezone": "UTC"},
+                headers=auth,
+            )
+        ).json()
+
+        r = await client.patch(
+            f"/v1/diaries/{diary['id']}",
+            json={"lat": 40.4406, "lon": -79.9959},
+            headers=auth,
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert float(body["lat"]) == pytest.approx(40.4406, abs=1e-4)
+        assert float(body["lon"]) == pytest.approx(-79.9959, abs=1e-4)
+
+    async def test_patch_diary_rejects_out_of_range_lat(self, client):
+        token = await _register_and_login(client, "latlonbad@example.com")
+        auth = {"Authorization": f"Bearer {token}"}
+        diary = (
+            await client.post(
+                "/v1/diaries",
+                json={"name": "BadLat", "timezone": "UTC"},
+                headers=auth,
+            )
+        ).json()
+
+        r = await client.patch(
+            f"/v1/diaries/{diary['id']}",
+            json={"lat": 999.0, "lon": 0.0},
+            headers=auth,
+        )
+        assert r.status_code == 422
+
+    async def test_patch_diary_rejects_out_of_range_lon(self, client):
+        token = await _register_and_login(client, "latlonbad2@example.com")
+        auth = {"Authorization": f"Bearer {token}"}
+        diary = (
+            await client.post(
+                "/v1/diaries",
+                json={"name": "BadLon", "timezone": "UTC"},
+                headers=auth,
+            )
+        ).json()
+
+        r = await client.patch(
+            f"/v1/diaries/{diary['id']}",
+            json={"lat": 0.0, "lon": 999.0},
+            headers=auth,
+        )
+        assert r.status_code == 422
+
+    async def test_diary_out_exposes_lat_lon(self, client):
+        """DiaryOut includes lat and lon fields (None when not set)."""
+        token = await _register_and_login(client, "latlonout@example.com")
+        auth = {"Authorization": f"Bearer {token}"}
+        diary = (
+            await client.post(
+                "/v1/diaries",
+                json={"name": "LatLonOut", "timezone": "UTC"},
+                headers=auth,
+            )
+        ).json()
+
+        assert "lat" in diary
+        assert "lon" in diary
+        assert diary["lat"] is None
+        assert diary["lon"] is None

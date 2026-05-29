@@ -69,7 +69,12 @@ Key entities:
 **Entitlement/tier checks:**
 - Entry creation (auto and manual) must check tier limits before proceeding
 - Backend enforces tier gating — not just the frontend
-- Free tier: 1 diary, 3 auto-generated entries, 5 manual entries
+- Working tier model: **Free / Plus / Family** — see `COMPETITION.md` for the full feature matrix. The archived Free/Tier 1/Tier 2 table in `docs/archive/OPUS_INITIAL_PLAN.md` is superseded.
+- Free tier: 1 diary, unlimited manual entries, **5 AI auto-generated drafts per month**
+
+## Competitive positioning
+
+The primary competitor is Day One (`dayoneapp.com`). Perfect Day's core differentiator is that AI *generates* diary entries from a user's real life data (Calendar, Photos, weather, music) — not assists the user in writing them. See `COMPETITION.md` for: Day One pricing snapshot, where they're weak, our tier model, and a parity tracker covering AI differentiators (AI-1..AI-7), UX table stakes (P-1..P-7), premium content types (C-1..C-4), ambient capture integrations (I-1..I-5), and export/physical products (X-1..X-4).
 
 **Notifications:**
 - Push notifications via Expo Push Notifications when a draft entry is ready

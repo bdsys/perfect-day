@@ -66,6 +66,8 @@ Phase 2 leftovers grouped by theme. Build after Phase 2 is stable.
 
 Not in PoC. Two groups: **deployment/infrastructure** that the PoC can ship without, and **product features** that need explicit user/business signal before being built. Leave breadcrumbs (schema columns, commented router stubs) where noted.
 
+See also [`COMPETITION.md`](../COMPETITION.md) for the full competitive-parity tracker (AI differentiators AI-1..AI-7, table stakes P-1..P-7, content types C-1..C-4, integrations I-1..I-5, export/physical X-1..X-4) and the revised **Free / Plus / Family** tier model that supersedes the archived Free/Tier 1/Tier 2 table.
+
 ### Deployment / infrastructure
 
 | Item | Notes |
@@ -79,7 +81,8 @@ Not in PoC. Two groups: **deployment/infrastructure** that the PoC can ship with
 
 | Feature | Schema/code hook | How to add later |
 |---|---|---|
-| Vision LLM photo attribution (L3) | `photos.ai_description` column | Celery task calling Claude vision on flagged photos; gate behind paid tier |
+| Vision LLM photo attribution (L3) — see `COMPETITION.md` AI-1 | `photos.ai_description` column | Celery task calling Claude vision on flagged photos; select top 3–5 photos per entry; gate behind paid tier (Family: unlimited, Plus: 50/month) |
+| Ask Your Diary — RAG over entry history (see `COMPETITION.md` AI-2) | None yet — needs architecture decision | **Architecture decision required before pulling into a wave:** `pgvector` (semantic similarity, ~15 MB extension, GPU-optional) vs. `pg_trgm` (keyword/fuzzy, already in Postgres, lighter, less semantic). Add to `design/10-open-questions.md` as OQ-12 before scheduling. |
 | Spotify enrichment | Stub OAuth endpoints | Add full integration when Tier 2 is defined |
 | Export (PDF/JPG/PNG) | Breadcrumb API routes | Add `render_export` Celery task |
 | Social sharing (OG cards) | Breadcrumb API routes | Add `share_tokens` table + Next.js SSR share route |

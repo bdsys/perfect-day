@@ -125,7 +125,7 @@ def truncate_tables(sync_engine, run_migrations):
                 "entry_edit_diffs, diary_permissions, invitations, scan_runs, "
                 "backfill_runs, diary_calendar_filters, notification_preferences, "
                 "notifications, auto_creation_rules, entry_rule_matches, rule_series_claims, "
-                "photos, diary_photos, entry_photos "
+                "photos, diary_photos, entry_photos, enrichments "
                 "RESTART IDENTITY CASCADE"
             )
         )
@@ -221,3 +221,63 @@ async def client(
         from app.core.dependencies import close_redis_for_current_loop
 
         await close_redis_for_current_loop()
+
+
+# ---------------------------------------------------------------------------
+# Common model factories (as pytest fixtures)
+# ---------------------------------------------------------------------------
+
+
+@pytest_asyncio.fixture
+async def make_user(db_session):
+    async def _mk(
+        email: str | None = None,
+        password: str = "Password1!",  # noqa: S107
+        display_name: str | None = None,
+        subscription_tier: str = "free",
+    ):
+        import uuid as _uuid
+
+        from app.core.security import hash_password
+        from app.models import User
+
+        u = User(
+            email=email or f"test-{_uuid.uuid4().hex[:8]}@example.com",
+            password_hash=hash_password(password),
+            display_name=display_name,
+            subscription_tier=subscription_tier,
+        )
+        db_session.add(u)
+        await db_session.commit()
+        await db_session.refresh(u)
+        return u
+
+    return _mk
+
+
+@pytest_asyncio.fixture
+async def make_diary_for_user(db_session):
+    async def _mk(user, lat=None, lon=None, timezone="America/Chicago"):
+        import uuid as _uuid
+
+        from app.models import Diary, ScanJob
+
+        slug = f"test-diary-{_uuid.uuid4().hex[:6]}"
+        d = Diary(
+            owner_user_id=user.id,
+            name="test-diary",
+            slug=slug,
+            timezone=timezone,
+            tone_hint="warm, narrative",
+            subject_relation="self",
+            lat=lat,
+            lon=lon,
+        )
+        db_session.add(d)
+        scan_job = ScanJob(diary=d)
+        db_session.add(scan_job)
+        await db_session.commit()
+        await db_session.refresh(d)
+        return d
+
+    return _mk
