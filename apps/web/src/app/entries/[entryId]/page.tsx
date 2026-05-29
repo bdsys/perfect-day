@@ -11,6 +11,7 @@ import { useAuth } from '@/lib/auth-context'
 import { StatusPanel } from '@/components/StatusPanel'
 import { usePolling } from '@/lib/usePolling'
 import { formatDateRange } from '@/lib/date'
+import { WeatherBadge } from '@/components/WeatherBadge'
 
 function formatEventTime(event: EventItem): string {
   const start = event.start?.dateTime ?? event.start?.date ?? ''
@@ -284,9 +285,10 @@ function EntryDetailPageInner() {
       <div className="container" style={{ paddingTop: '1.5rem', maxWidth: 720 }}>
         {error && <p className="error-message" style={{ marginBottom: '1rem' }}>{error}</p>}
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.25rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.25rem', flexWrap: 'wrap' }}>
           <span className={`status-badge status-${entry.status}`}>{entry.status}</span>
           <span style={{ fontSize: '0.875rem', color: 'var(--text-muted)' }}>{formatDateRange(entry.entry_date, entry.entry_end_date)}</span>
+          <WeatherBadge enrichments={entry.enrichments ?? []} />
         </div>
 
         {editing ? (
