@@ -243,6 +243,8 @@ async def get_photo(
         key = photo.s3_key
         media_type = photo.mime_type or "application/octet-stream"
 
+    if photo.dek_ciphertext is None:
+        raise HTTPException(status_code=409, detail="not_finalized")
     dek = unwrap_dek(photo.dek_ciphertext, user.id)
 
     def _stream():

@@ -142,8 +142,8 @@ def generate_thumbnail(image_bytes: bytes, mime: str) -> bytes:
     from PIL import Image, ImageOps, UnidentifiedImageError
 
     try:
-        img = Image.open(BytesIO(image_bytes))
-        img = ImageOps.exif_transpose(img)
+        img: Image.Image = Image.open(BytesIO(image_bytes))
+        img = ImageOps.exif_transpose(img) or img
         if img.mode != "RGB":
             img = img.convert("RGB")
         img.thumbnail(
