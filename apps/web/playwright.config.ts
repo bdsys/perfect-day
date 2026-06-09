@@ -15,7 +15,13 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
-      use: { ...devices['Desktop Chrome'] },
+      use: {
+        ...devices['Desktop Chrome'],
+        // Use system Chrome on Linux (Playwright's bundled Chromium doesn't support Ubuntu 26+)
+        ...(process.platform === 'linux' && {
+          channel: 'chrome',
+        }),
+      },
     },
   ],
   // Only needed for local dev; in CI the stack is already up
