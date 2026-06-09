@@ -22,6 +22,30 @@ make test-all    # lint + typecheck + unit + integration + e2e
 
 For the full walkthrough see [docs/local-dev.md](docs/local-dev.md).
 
+### Linux / WSL one-time setup
+
+Before running `make test-all` for the first time on Linux or WSL, install two extra packages:
+
+```bash
+# 1. Python venv support (required to create apps/api/.venv)
+sudo apt install -y python3-venv   # or python3.X-venv to match your Python version
+
+# 2. Google Chrome (Playwright's bundled Chromium doesn't support Ubuntu 26+)
+wget -q -O - https://dl.google.com/linux/linux_signing_key.pub \
+  | sudo gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg
+echo "deb [signed-by=/usr/share/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" \
+  | sudo tee /etc/apt/sources.list.d/google-chrome.list
+sudo apt-get update -q && sudo apt-get install -y google-chrome-stable
+```
+
+Then run `make bootstrap` as normal. The Playwright config detects Linux automatically and uses system Chrome for e2e tests.
+
+> **Important:** `make bootstrap` is the single command that does everything — creates the Python
+> venv, runs DB migrations, seeds the MinIO `photos` bucket, and installs Node deps. If you set up
+> manually (e.g. `docker compose up -d` only), you **must** also run `make migrate` and
+> `make seed-bucket` before the app is usable. Skipping either causes confusing downstream errors
+> (HTTP 500 on auth, HTTP 404 on photo uploads) that are hard to attribute to missing setup.
+
 ---
 
 ## Where to go next

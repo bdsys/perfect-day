@@ -13,20 +13,35 @@ FAIL=0
 # Skipped for remote BASE values (staging, prod) since we don't have local DB access.
 if [[ "${BASE}" == *"localhost"* || "${BASE}" == *"127.0.0.1"* ]]; then
   if command -v docker &>/dev/null && docker compose ps postgres --quiet 2>/dev/null | grep -q .; then
-    DB_VERSION=$(docker compose exec -T postgres \
-      psql -U perfectday -d perfectday -tAq \
-      -c "SELECT version_num FROM alembic_version LIMIT 1;" 2>/dev/null || echo "unknown")
+    # Resolve expected head first; if we can't (venv missing, etc.) skip the whole check.
     ALEMBIC_HEAD=$(cd apps/api 2>/dev/null && \
       ../../apps/api/.venv/bin/alembic heads --resolve-dependencies 2>/dev/null | \
-      grep -oE '^[0-9a-f]+' | head -1 || echo "unknown")
-    if [ "${DB_VERSION}" = "unknown" ] || [ "${ALEMBIC_HEAD}" = "unknown" ]; then
-      echo "⚠ Could not determine migration status — skipping check"
-    elif [ "${DB_VERSION}" != "${ALEMBIC_HEAD}" ]; then
-      echo "✗ Migration mismatch: DB is on ${DB_VERSION}, head is ${ALEMBIC_HEAD}" >&2
-      echo "  Run: make migrate" >&2
-      exit 1
+      grep -oE '^[0-9a-f]+' | head -1 || true)
+    if [ -z "${ALEMBIC_HEAD}" ]; then
+      echo "⚠ Could not resolve alembic head — skipping migration check"
     else
-      echo "✓ DB migrations current (${DB_VERSION})"
+      # Use to_regclass so the query succeeds even when alembic_version doesn't exist yet.
+      TABLE_EXISTS=$(docker compose exec -T postgres psql -U perfectday -d perfectday -tAq \
+        -c "SELECT to_regclass('public.alembic_version') IS NOT NULL;" 2>/dev/null \
+        | tr -d '[:space:]')
+      if [ "${TABLE_EXISTS}" != "t" ]; then
+        echo "✗ Database is not migrated (no alembic_version table)" >&2
+        echo "  Run: make migrate" >&2
+        exit 1
+      fi
+      DB_VERSION=$(docker compose exec -T postgres psql -U perfectday -d perfectday -tAq \
+        -c "SELECT version_num FROM alembic_version LIMIT 1;" 2>/dev/null \
+        | tr -d '[:space:]')
+      if [ -z "${DB_VERSION}" ]; then
+        echo "✗ alembic_version table exists but has no rows — run: make migrate" >&2
+        exit 1
+      elif [ "${DB_VERSION}" != "${ALEMBIC_HEAD}" ]; then
+        echo "✗ Migration mismatch: DB is on ${DB_VERSION}, head is ${ALEMBIC_HEAD}" >&2
+        echo "  Run: make migrate" >&2
+        exit 1
+      else
+        echo "✓ DB migrations current (${DB_VERSION})"
+      fi
     fi
   fi
 fi

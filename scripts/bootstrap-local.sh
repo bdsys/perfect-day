@@ -32,10 +32,12 @@ fi
 
 # ---- 2. Start infrastructure ----
 echo "→ Starting postgres, redis, minio..."
-docker compose -f "${REPO_ROOT}/docker-compose.yml" up -d postgres redis minio
+docker compose -f "${REPO_ROOT}/docker-compose.yml" -f "${REPO_ROOT}/docker-compose.dev.yml" \
+  up -d postgres redis minio
 
-echo "→ Waiting for postgres..."
+echo "→ Waiting for MinIO..."
 "${REPO_ROOT}/scripts/wait-for-healthy.sh" "http://localhost:9000/minio/health/live" 60
+echo "→ Waiting for postgres..."
 # Postgres via pg_isready
 for i in $(seq 1 20); do
   docker compose -f "${REPO_ROOT}/docker-compose.yml" exec -T postgres \
@@ -69,10 +71,15 @@ else
 fi
 
 # ---- 6. Playwright browsers ----
-echo "→ Installing Playwright browsers (chromium)..."
-cd "${WEB_DIR}" && npx playwright install chromium
-cd "${REPO_ROOT}"
-echo "✓ Playwright browsers ready"
+if [ "$(uname)" = "Linux" ]; then
+  echo "→ Linux detected — using system Chrome, skipping Playwright browser download."
+  echo "✓ Playwright browsers ready (system Chrome)"
+else
+  echo "→ Installing Playwright browsers (chromium)..."
+  cd "${WEB_DIR}" && npx playwright install chromium
+  cd "${REPO_ROOT}"
+  echo "✓ Playwright browsers ready"
+fi
 
 echo ""
 echo "=== Bootstrap complete ==="

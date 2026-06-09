@@ -29,7 +29,7 @@ logs:
 #     make beat   — Celery beat scheduler
 #     make web    — Next.js dev server on :3000
 infra:
-	docker compose up -d postgres redis minio
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres redis minio
 
 # Run app processes locally (use after `make infra`, not after `make up`)
 api:
@@ -85,6 +85,8 @@ test:
 # Run lint → typecheck → unit+integration → e2e in fail-fast order (~10 min).
 # Excludes test-live (real API cost) and smoke-test.sh (needs a running stack).
 test-all:
+	@echo "TIP: First time on Linux/WSL? See the 'Linux / WSL one-time setup' section in README.md."
+	@echo "TIP: Before the app is usable locally, run: make bootstrap  (or manually: make migrate && make seed-bucket)"
 	@$(MAKE) lint
 	@$(MAKE) typecheck
 	@$(MAKE) test
@@ -109,12 +111,16 @@ test-e2e:
 	  'mc alias set local http://minio:9000 minioadmin minioadmin && mc mb --ignore-existing local/photos'
 	cd $(API_DIR) && DATABASE_URL_SYNC=postgresql://perfectday:perfectday@localhost:5432/perfectday_test \
 	  $(CURDIR)/$(VENV_BIN)/alembic upgrade head
-	test -d "$$HOME/Library/Caches/ms-playwright" || $(MAKE) web-e2e-install
+	$(MAKE) web-e2e-install
 	cd $(WEB_DIR) && CI=1 npx playwright test
 	docker compose -f docker-compose.yml -f docker-compose.test.yml down -v
 
 web-e2e-install:
-	cd $(WEB_DIR) && npx playwright install chromium
+	@if [ "$$(uname)" = "Linux" ]; then \
+	  echo "Linux detected — using system Chrome, skipping Playwright browser download."; \
+	else \
+	  cd $(WEB_DIR) && npx playwright install chromium; \
+	fi
 
 test-live:
 	@echo "Runs live LLM golden tests — never in CI. Requires ANTHROPIC_API_KEY (and optionally GEMINI_API_KEY)."
