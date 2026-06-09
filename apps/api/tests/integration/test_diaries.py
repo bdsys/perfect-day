@@ -102,6 +102,58 @@ class TestSoftDeleteDiary:
         assert r2.json()["deleted_at"] is None
 
 
+class TestDiaryVoiceAndTone:
+    async def test_diary_out_includes_voice_and_tone_fields(self, client):
+        """DiaryOut exposes voice_override and tone_hint on all responses."""
+        token = await _register_and_login(client, "voicetone@example.com")
+        auth = {"Authorization": f"Bearer {token}"}
+        diary = (
+            await client.post("/v1/diaries", json={"name": "V", "timezone": "UTC"}, headers=auth)
+        ).json()
+        assert "voice_override" in diary
+        assert "tone_hint" in diary
+        assert diary["voice_override"] is None
+        assert diary["tone_hint"] == "warm, narrative"
+
+    async def test_create_with_voice_override_returns_it(self, client):
+        """DiaryCreate accepts voice_override and it appears in the response."""
+        token = await _register_and_login(client, "voicecreate@example.com")
+        auth = {"Authorization": f"Bearer {token}"}
+        r = await client.post(
+            "/v1/diaries",
+            json={"name": "V", "timezone": "UTC", "voice_override": "first_singular"},
+            headers=auth,
+        )
+        assert r.status_code == 201
+        assert r.json()["voice_override"] == "first_singular"
+
+    async def test_patch_voice_override(self, client):
+        """PATCH updates voice_override and returns the new value."""
+        token = await _register_and_login(client, "voicepatch@example.com")
+        auth = {"Authorization": f"Bearer {token}"}
+        diary = (
+            await client.post("/v1/diaries", json={"name": "VP", "timezone": "UTC"}, headers=auth)
+        ).json()
+        r = await client.patch(
+            f"/v1/diaries/{diary['id']}", json={"voice_override": "third"}, headers=auth
+        )
+        assert r.status_code == 200
+        assert r.json()["voice_override"] == "third"
+
+    async def test_patch_tone_hint(self, client):
+        """PATCH updates tone_hint and returns the new value."""
+        token = await _register_and_login(client, "tonepatch@example.com")
+        auth = {"Authorization": f"Bearer {token}"}
+        diary = (
+            await client.post("/v1/diaries", json={"name": "TP", "timezone": "UTC"}, headers=auth)
+        ).json()
+        r = await client.patch(
+            f"/v1/diaries/{diary['id']}", json={"tone_hint": "playful and whimsical"}, headers=auth
+        )
+        assert r.status_code == 200
+        assert r.json()["tone_hint"] == "playful and whimsical"
+
+
 class TestDiaryLatLon:
     async def test_patch_diary_sets_lat_lon(self, client):
         token = await _register_and_login(client, "latlon@example.com")

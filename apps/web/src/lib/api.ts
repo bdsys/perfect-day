@@ -183,8 +183,12 @@ export interface Diary {
   timezone: string
   subject_name: string | null
   subject_relation: string
+  voice_override: string | null
+  tone_hint: string
   scan_enabled: boolean
   scan_interval_minutes: number
+  lat: number | null
+  lon: number | null
   deleted_at: string | null
   hard_delete_after: string | null
   created_at: string
@@ -381,8 +385,30 @@ export const api = {
     async get(id: string): Promise<Diary> {
       return apiFetch(`/v1/diaries/${id}`)
     },
-    async create(data: { name: string; timezone: string; subject_name?: string }): Promise<Diary> {
+    async create(data: {
+      name: string
+      timezone: string
+      subject_name?: string
+      subject_relation?: string
+      voice_override?: string | null
+      tone_hint?: string
+      scan_interval_minutes?: number
+    }): Promise<Diary> {
       return apiFetch('/v1/diaries', { method: 'POST', body: JSON.stringify(data) })
+    },
+    async patch(id: string, data: {
+      name?: string
+      timezone?: string
+      subject_name?: string | null
+      subject_relation?: string
+      voice_override?: string | null
+      tone_hint?: string
+      scan_interval_minutes?: number
+      scan_enabled?: boolean
+      lat?: number | null
+      lon?: number | null
+    }): Promise<Diary> {
+      return apiFetch(`/v1/diaries/${id}`, { method: 'PATCH', body: JSON.stringify(data) })
     },
     async triggerScan(
       id: string,
