@@ -181,3 +181,41 @@ class TestValidateCitationModes:
         # Hybrid skips the token-flag scan; flagged must be empty even for invented tokens
         assert flagged == []
 
+
+# ---------------------------------------------------------------------------
+# Enrichment payload tests (item 16, task 7)
+# ---------------------------------------------------------------------------
+
+
+class TestValidateCitationEnrichments:
+    def test_validate_citation_allows_words_present_in_enrichment_payload(self):
+        from types import SimpleNamespace
+
+        events = [SimpleNamespace(payload={"summary": "Park visit"})]
+        enrichments = [SimpleNamespace(payload={
+            "date": "2024-01-15", "condition": "Sunny", "location": "Brooklyn",
+        })]
+        output = {
+            "body_markdown": "It was Sunny in Brooklyn at the park.",
+            "title": "Park morning",
+            "facts_used": [1],
+            "title_facts_used": [1],
+        }
+        ok, msg, flagged = validate_citation(output, events, mode="events", enrichments=enrichments)
+        assert ok is True, msg
+        assert flagged == []
+
+    def test_validate_citation_still_flags_unrelated_capitalized_tokens(self):
+        from types import SimpleNamespace
+
+        events = [SimpleNamespace(payload={"summary": "Park visit"})]
+        enrichments = [SimpleNamespace(payload={"condition": "clear sky"})]
+        output = {
+            "body_markdown": "We saw Aunt Mildred at the park.",
+            "title": "T",
+            "facts_used": [1],
+            "title_facts_used": [1],
+        }
+        ok, msg, flagged = validate_citation(output, events, mode="events", enrichments=enrichments)
+        assert "Mildred" in flagged or "Aunt" in flagged
+

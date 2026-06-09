@@ -3,9 +3,10 @@ from __future__ import annotations
 import re
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -49,6 +50,8 @@ class DiaryPatch(BaseModel):
     scan_interval_minutes: int | None = None
     scan_enabled: bool | None = None
     notifications_muted: bool | None = None
+    lat: Annotated[float | None, Field(ge=-90, le=90)] = None
+    lon: Annotated[float | None, Field(ge=-180, le=180)] = None
 
 
 class DiaryOut(BaseModel):
@@ -60,6 +63,8 @@ class DiaryOut(BaseModel):
     subject_relation: str
     scan_enabled: bool
     scan_interval_minutes: int
+    lat: float | None = None
+    lon: float | None = None
     deleted_at: datetime | None
     hard_delete_after: datetime | None
     created_at: datetime
@@ -225,9 +230,13 @@ async def patch_diary(
 ) -> Diary:
     diary, _ = await _get_diary_or_404(diary_id, user, db, require_owner=True)
 
-    for field, value in body.model_dump(exclude_none=True).items():
+    for field, value in body.model_dump(exclude_unset=True).items():
+        if value is None and field not in ("lat", "lon"):
+            continue  # don't null out non-nullable columns
         setattr(diary, field, value)
 
+    await db.flush()
+    await db.refresh(diary)
     return diary
 
 

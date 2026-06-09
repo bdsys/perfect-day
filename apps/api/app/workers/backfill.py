@@ -99,6 +99,7 @@ async def run_backfill(
                 .isoformat()
             )
 
+            chunk_entry_ids: set[str] = set()
             for calendar_id in calendar_ids:
                 events = await _fetch_events_range(calendar_id, headers, time_min, time_max)
                 total_events += len(events)
@@ -108,8 +109,19 @@ async def run_backfill(
                     result = _tasks.ingest_calendar_event.delay(event, str(diary_id), diary_timezone)
                     if result:
                         entry_ids.add(str(result))
+                        chunk_entry_ids.add(str(result))
 
             # TODO(item-15): call group_events_into_entries for this chunk once it exists.
+
+            # Weather enrichment per entry created/updated this chunk.
+            from app.workers.enrichments import enrich_entry_weather
+            for eid in chunk_entry_ids:
+                try:
+                    async with db_session() as db:
+                        await enrich_entry_weather(uuid.UUID(eid), db)
+                except Exception as exc:
+                    log.warning("backfill_weather_failed", entry_id=eid, error=str(exc))
+
             await asyncio.sleep(2)
 
         return total_events, len(entry_ids)
