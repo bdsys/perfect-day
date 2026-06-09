@@ -388,8 +388,8 @@ export const api = {
     async create(data: {
       name: string
       timezone: string
-      subject_name?: string
-      subject_relation?: string
+      subject_name?: string | null
+      subject_relation?: string | null
       voice_override?: string | null
       tone_hint?: string
       scan_interval_minutes?: number
@@ -400,7 +400,7 @@ export const api = {
       name?: string
       timezone?: string
       subject_name?: string | null
-      subject_relation?: string
+      subject_relation?: string | null
       voice_override?: string | null
       tone_hint?: string
       scan_interval_minutes?: number
