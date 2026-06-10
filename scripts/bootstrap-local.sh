@@ -32,10 +32,12 @@ fi
 
 # ---- 2. Start infrastructure ----
 echo "→ Starting postgres, redis, minio..."
-docker compose -f "${REPO_ROOT}/docker-compose.yml" up -d postgres redis minio
+docker compose -f "${REPO_ROOT}/docker-compose.yml" -f "${REPO_ROOT}/docker-compose.dev.yml" \
+  up -d postgres redis minio
 
-echo "→ Waiting for postgres..."
+echo "→ Waiting for MinIO..."
 "${REPO_ROOT}/scripts/wait-for-healthy.sh" "http://localhost:9000/minio/health/live" 60
+echo "→ Waiting for postgres..."
 # Postgres via pg_isready
 for i in $(seq 1 20); do
   docker compose -f "${REPO_ROOT}/docker-compose.yml" exec -T postgres \
@@ -69,28 +71,15 @@ else
 fi
 
 # ---- 6. Playwright browsers ----
-echo "→ Installing Playwright browsers (chromium)..."
-# Playwright has no prebuilt browsers for Ubuntu > 24.04. On those distros,
-# download the 24.04 build (what CI uses) instead. No-op on macOS/Ubuntu <= 24.04.
-# Note: PLAYWRIGHT_HOST_PLATFORM_OVERRIDE must include the arch suffix
-# (e.g. "-x64"/"-arm64") — Playwright does not append it for overrides.
-PW_OVERRIDE=""
-PW_SKIP_HOST_CHECK=""
-if [ -r /etc/os-release ]; then
-  . /etc/os-release
-  case "${VERSION_ID:-}" in
-    25.*|26.*|27.*)
-      PW_ARCH=$(uname -m | sed -e 's/x86_64/x64/' -e 's/aarch64/arm64/')
-      PW_OVERRIDE="ubuntu24.04-${PW_ARCH}"
-      PW_SKIP_HOST_CHECK="1"
-      ;;
-  esac
+if [ "$(uname)" = "Linux" ]; then
+  echo "→ Linux detected — using system Chrome, skipping Playwright browser download."
+  echo "✓ Playwright browsers ready (system Chrome)"
+else
+  echo "→ Installing Playwright browsers (chromium)..."
+  cd "${WEB_DIR}" && npx playwright install chromium
+  cd "${REPO_ROOT}"
+  echo "✓ Playwright browsers ready"
 fi
-cd "${WEB_DIR}" && PLAYWRIGHT_HOST_PLATFORM_OVERRIDE="${PW_OVERRIDE}" \
-  PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS="${PW_SKIP_HOST_CHECK}" \
-  npx playwright install chromium
-cd "${REPO_ROOT}"
-echo "✓ Playwright browsers ready"
 
 echo ""
 echo "=== Bootstrap complete ==="

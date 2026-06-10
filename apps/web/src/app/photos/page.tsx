@@ -52,7 +52,7 @@ export default function UserPhotosPage() {
         <PhotoUploadButton onUploaded={handleUploaded} />
         <ul className="photo-grid">
           {photos.map((p, i) => (
-            <li key={p.id}>
+            <li key={p.id} data-photo-id={p.id}>
               <PhotoThumbnail
                 photoId={p.id}
                 alt=""

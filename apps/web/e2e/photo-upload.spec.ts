@@ -114,39 +114,59 @@ test.describe("Photo library (/photos)", () => {
   });
 
   test("delete photo from library → thumbnail disappears", async ({ page }) => {
+    // Upload + delete in Docker can take ~40s; give this test extra budget.
+    test.setTimeout(60_000);
+
     await loginViaUI(page);
+
+    // Register the response waiter BEFORE navigating so we never miss the
+    // initial GET /v1/photos that fires from the page's useEffect on mount.
+    const initialLoad = page.waitForResponse(
+      (r) => r.url().includes("/v1/photos") && r.request().method() === "GET" && r.ok(),
+    );
     await page.goto("/photos");
     await expect(page.getByRole("heading", { name: /photo library/i })).toBeVisible();
+    await initialLoad;
 
-    // Ensure there is at least one photo — upload one if the grid is empty.
+    // Upload one photo unconditionally so this test owns a known item regardless
+    // of state left by sibling tests. Register the post-upload refetch waiter
+    // BEFORE triggering the upload so we never miss handleUploaded's listForUser() call.
     const grid = page.locator("ul.photo-grid");
-    const initialItems = grid.locator("li");
-    const initialCount = await initialItems.count();
+    const afterUpload = page.waitForResponse(
+      (r) => r.url().includes("/v1/photos") && r.request().method() === "GET" && r.ok(),
+    );
+    const [fileChooser] = await Promise.all([
+      page.waitForEvent("filechooser"),
+      page.getByRole("button", { name: /upload photo/i }).click(),
+    ]);
+    await fileChooser.setFiles(FIXTURE);
+    // Wait for the handleUploaded GET to settle the grid before reading any IDs.
+    await afterUpload;
+    await expect(grid.locator("li").first()).toBeVisible({ timeout: 5_000 });
 
-    if (initialCount === 0) {
-      const [fileChooser] = await Promise.all([
-        page.waitForEvent("filechooser"),
-        page.getByRole("button", { name: /upload photo/i }).click(),
-      ]);
-      await fileChooser.setFiles(FIXTURE);
-      await expect(initialItems.first()).toBeVisible({ timeout: 20_000 });
-    }
+    // Capture the identity of the first item now that the list is stable.
+    const targetId = await grid.locator("li").first().getAttribute("data-photo-id");
+    expect(targetId).toBeTruthy();
 
-    const countBefore = await grid.locator("li").count();
-    expect(countBefore).toBeGreaterThan(0);
+    // Pin the locator to the specific photo by ID — immune to any subsequent
+    // re-renders that might reorder the grid between getAttribute and click.
+    const targetItem = page.locator(`li[data-photo-id="${targetId}"]`);
 
-    // Accept the window.confirm dialog automatically — register BEFORE the click.
-    page.on("dialog", (dialog) => dialog.accept());
+    // Stub window.confirm to always return true — avoids any race between
+    // registering a dialog event handler and the synchronous confirm() call
+    // in the delete onClick handler.
+    await page.evaluate(() => {
+      window.confirm = () => true;
+    });
 
-    // Hover over the first thumbnail to make the action button visible.
-    const firstItem = grid.locator("li").first();
-    await firstItem.hover();
+    // Hover to reveal the action button, wait for it to be visible, then delete.
+    await targetItem.hover();
+    const deleteBtn = targetItem.getByRole("button", { name: "Delete photo" });
+    await expect(deleteBtn).toBeVisible();
+    await deleteBtn.click();
 
-    // Click the delete button.
-    await firstItem.getByRole("button", { name: "Delete photo" }).click();
-
-    // The grid item count should decrease by one.
-    await expect(grid.locator("li")).toHaveCount(countBefore - 1, { timeout: 10_000 });
+    // Assert that *this specific photo* is gone, not just that the count changed.
+    await expect(targetItem).toHaveCount(0, { timeout: 15_000 });
   });
 });
 

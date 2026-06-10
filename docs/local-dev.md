@@ -151,14 +151,14 @@ This:
 
 Playwright report on failure: `apps/web/playwright-report/`.
 
-**Ubuntu > 24.04 (e.g. 26.04):** Playwright doesn't ship a prebuilt Chromium for
-these yet. `make test-e2e` / `make web-e2e-install` (and `bootstrap-local.sh`)
-automatically set `PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24.04-<arch>` (e.g.
-`-x64`) and `PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=1` to download and run
-the same Ubuntu 24.04 build CI uses. This is a no-op on macOS and Ubuntu <=
-24.04. If that build fails to *launch* (as opposed to download), fall back to
-the system Google Chrome by setting `channel: 'chrome'` on the `chromium`
-project in `apps/web/playwright.config.ts`.
+**Linux / WSL (incl. Ubuntu > 24.04, e.g. 26.04):** Playwright doesn't ship a
+prebuilt Chromium for Ubuntu > 24.04. On Linux, `apps/web/playwright.config.ts`
+sets `channel: 'chrome'` so Playwright drives the system Google Chrome instead
+of its bundled Chromium — `make test-e2e` / `make web-e2e-install` (and
+`bootstrap-local.sh`) skip the Chromium download entirely on Linux. See the
+"Linux / WSL one-time setup" section in the root `README.md` for installing
+Google Chrome. This is a no-op on macOS, which still uses Playwright's bundled
+Chromium.
 
 ### Live LLM goldens (manual, never in CI)
 
