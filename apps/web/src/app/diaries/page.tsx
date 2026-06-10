@@ -49,9 +49,6 @@ export default function DiariesPage() {
   const [diaries, setDiaries] = useState<Diary[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [creating, setCreating] = useState(false)
-  const [newName, setNewName] = useState('')
-  const [newTz] = useState(Intl.DateTimeFormat().resolvedOptions().timeZone)
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -68,20 +65,6 @@ export default function DiariesPage() {
     }
   }, [user])
 
-  async function handleCreate(e: React.FormEvent) {
-    e.preventDefault()
-    setCreating(true)
-    try {
-      const d = await api.diaries.create({ name: newName, timezone: newTz })
-      setDiaries([...diaries, d])
-      setNewName('')
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to create diary')
-    } finally {
-      setCreating(false)
-    }
-  }
-
   async function handleLogout() {
     await logout()
     router.push('/login')
@@ -97,6 +80,7 @@ export default function DiariesPage() {
         <div className="page-header">
           <h1 className="page-title">Your diaries</h1>
           <div className="page-actions">
+            <Link href="/diaries/new" className="btn btn-primary">New diary</Link>
             <Link href="/photos" className="btn btn-secondary">Photos</Link>
             <Link href="/diaries/restore" className="btn btn-secondary">Deleted diaries</Link>
           </div>
@@ -128,26 +112,6 @@ export default function DiariesPage() {
           </div>
         )}
 
-        <div className="card" style={{ marginTop: '1.5rem' }}>
-          <h2 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '1rem' }}>Create a diary</h2>
-          <form onSubmit={handleCreate}>
-            <div className="form-field">
-              <label className="form-label" htmlFor="diary-name">Name</label>
-              <input
-                id="diary-name"
-                type="text"
-                value={newName}
-                onChange={(e) => setNewName(e.target.value)}
-                required
-                placeholder="My diary"
-              />
-            </div>
-            {/* TODO: surface timezone editing in a settings/edit-diary flow once PATCH /v1/diaries/{id} exists */}
-            <button type="submit" className="btn btn-primary" disabled={creating}>
-              {creating ? 'Creating…' : 'Create diary'}
-            </button>
-          </form>
-        </div>
       </div>
     </>
   )

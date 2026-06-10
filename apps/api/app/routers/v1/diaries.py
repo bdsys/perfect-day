@@ -35,6 +35,7 @@ class DiaryCreate(BaseModel):
     timezone: str
     subject_name: str | None = None
     subject_relation: str = "self"
+    voice_override: str | None = None
     tone_hint: str = "warm, narrative"
     scan_interval_minutes: int = 60
 
@@ -61,6 +62,8 @@ class DiaryOut(BaseModel):
     timezone: str
     subject_name: str | None
     subject_relation: str
+    voice_override: str | None
+    tone_hint: str
     scan_enabled: bool
     scan_interval_minutes: int
     lat: float | None = None
@@ -179,6 +182,7 @@ async def create_diary(
         timezone=body.timezone,
         subject_name=body.subject_name,
         subject_relation=body.subject_relation,
+        voice_override=body.voice_override,
         tone_hint=body.tone_hint,
         scan_interval_minutes=body.scan_interval_minutes,
     )

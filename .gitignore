@@ -91,3 +91,6 @@ test-results/
 *.tfstate
 *.tfstate.backup
 .terraform/
+
+# Superpowers plugin local state
+.superpowers/

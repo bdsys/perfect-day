@@ -34,11 +34,20 @@ test.describe('Phase 1 golden path', () => {
     await page.click('button[type=submit]')
     await page.waitForURL('**/diaries', { timeout: 10_000 })
 
-    // Only create if not already present (re-runnable)
+    // Only create if not already present (re-runnable). The list loads
+    // asynchronously, so wait (rather than a point-in-time isVisible check,
+    // which doesn't poll) for it to either appear or time out.
     const existing = page.locator('text=My Test Diary')
-    if (!(await existing.isVisible({ timeout: 500 }).catch(() => false))) {
+    const alreadyExists = await existing
+      .waitFor({ state: 'visible', timeout: 5_000 })
+      .then(() => true)
+      .catch(() => false)
+    if (!alreadyExists) {
+      await page.click('text=New diary')
+      await page.waitForURL('**/diaries/new', { timeout: 5_000 })
       await page.fill('#diary-name', 'My Test Diary')
-      await page.click('button[type=submit]')
+      await page.getByRole('button', { name: 'Create diary' }).click()
+      await page.waitForURL(/\/diaries\/[^/]+$/, { timeout: 10_000 })
     }
 
     await expect(page.locator('text=My Test Diary')).toBeVisible({ timeout: 5_000 })

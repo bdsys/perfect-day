@@ -291,6 +291,7 @@ export default function DiaryDetailPage() {
         <div className="page-header">
           <h1 className="page-title">{diary?.name ?? 'Diary'}</h1>
           <div className="page-actions">
+            <Link href={`/diaries/${diaryId}/settings`} className="btn btn-secondary">Settings</Link>
             {googleIntegration ? (
               <span className="btn btn-secondary" style={{ cursor: 'default', opacity: 0.7 }}>
                 Connected: {googleIntegration.google_name ?? 'Google account'}
