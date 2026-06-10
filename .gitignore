@@ -84,3 +84,7 @@ test-results/
 *.tfstate
 *.tfstate.backup
 .terraform/
+
+# Local tooling (Claude Code, Superpowers plugin)
+.claude/
+.superpowers/

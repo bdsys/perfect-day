@@ -91,6 +91,17 @@ describe('DiaryForm — onSave callback', () => {
     expect(values.voice_override).toBeNull()
   })
 
+  it('defaults subject_relation to "self" when no relation button is selected', () => {
+    render(<DiaryForm mode="create" saving={false} onSave={defaultSave} />)
+
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'My diary' } })
+    fireEvent.click(screen.getByRole('button', { name: /create diary/i }))
+
+    expect(defaultSave).toHaveBeenCalledTimes(1)
+    const values: DiaryFormValues = defaultSave.mock.calls[0][0]
+    expect(values.subject_relation).toBe('self')
+  })
+
   it('does not call onSave when name is empty', () => {
     render(<DiaryForm mode="create" saving={false} onSave={defaultSave} />)
     fireEvent.click(screen.getByRole('button', { name: /create diary/i }))

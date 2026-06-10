@@ -70,7 +70,25 @@ fi
 
 # ---- 6. Playwright browsers ----
 echo "→ Installing Playwright browsers (chromium)..."
-cd "${WEB_DIR}" && npx playwright install chromium
+# Playwright has no prebuilt browsers for Ubuntu > 24.04. On those distros,
+# download the 24.04 build (what CI uses) instead. No-op on macOS/Ubuntu <= 24.04.
+# Note: PLAYWRIGHT_HOST_PLATFORM_OVERRIDE must include the arch suffix
+# (e.g. "-x64"/"-arm64") — Playwright does not append it for overrides.
+PW_OVERRIDE=""
+PW_SKIP_HOST_CHECK=""
+if [ -r /etc/os-release ]; then
+  . /etc/os-release
+  case "${VERSION_ID:-}" in
+    25.*|26.*|27.*)
+      PW_ARCH=$(uname -m | sed -e 's/x86_64/x64/' -e 's/aarch64/arm64/')
+      PW_OVERRIDE="ubuntu24.04-${PW_ARCH}"
+      PW_SKIP_HOST_CHECK="1"
+      ;;
+  esac
+fi
+cd "${WEB_DIR}" && PLAYWRIGHT_HOST_PLATFORM_OVERRIDE="${PW_OVERRIDE}" \
+  PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS="${PW_SKIP_HOST_CHECK}" \
+  npx playwright install chromium
 cd "${REPO_ROOT}"
 echo "✓ Playwright browsers ready"
 

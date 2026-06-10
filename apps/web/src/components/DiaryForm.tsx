@@ -63,7 +63,9 @@ export function DiaryForm({ mode, initialValues, saving, onSave }: DiaryFormProp
     if (!name.trim()) return
     onSave({
       name: name.trim(),
-      subject_relation: subjectRelation,
+      // Backend stores subject_relation as a non-nullable string (default
+      // "self") — fall back to that when no relation button was selected.
+      subject_relation: subjectRelation ?? 'self',
       subject_name: subjectName.trim() || null,
       tone_hint: toneHint,
       voice_override: voiceOverride || null,

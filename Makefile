@@ -7,6 +7,17 @@ WEB_DIR  := apps/web
 PYTEST   := $(API_DIR)/.venv/bin/pytest
 VENV_BIN := $(API_DIR)/.venv/bin
 
+# Playwright has no prebuilt browsers for Ubuntu > 24.04. On those distros,
+# download/run the 24.04 build (what CI uses) and skip the distro-keyed host
+# library check. No-op on macOS and on Ubuntu <= 24.04.
+# Note: PLAYWRIGHT_HOST_PLATFORM_OVERRIDE must include the arch suffix
+# (e.g. "-x64"/"-arm64") — Playwright does not append it for overrides.
+PW_VERSION_ID := $(shell . /etc/os-release 2>/dev/null && echo $$VERSION_ID)
+PW_MAJOR      := $(shell echo "$(PW_VERSION_ID)" | cut -d. -f1)
+PW_ARCH       := $(shell uname -m | sed -e 's/x86_64/x64/' -e 's/aarch64/arm64/')
+PW_OVERRIDE   := $(if $(filter $(PW_MAJOR),25 26 27),ubuntu24.04-$(PW_ARCH),)
+PW_ENV        := $(if $(PW_OVERRIDE),PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=$(PW_OVERRIDE) PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=1,)
+
 # ---------------------------------------------------------------------------
 # Stack lifecycle
 # ---------------------------------------------------------------------------
@@ -109,12 +120,14 @@ test-e2e:
 	  'mc alias set local http://minio:9000 minioadmin minioadmin && mc mb --ignore-existing local/photos'
 	cd $(API_DIR) && DATABASE_URL_SYNC=postgresql://perfectday:perfectday@localhost:5432/perfectday_test \
 	  $(CURDIR)/$(VENV_BIN)/alembic upgrade head
-	test -d "$$HOME/Library/Caches/ms-playwright" || $(MAKE) web-e2e-install
-	cd $(WEB_DIR) && CI=1 npx playwright test
+	ls -d "$$HOME/.cache/ms-playwright"/chromium-* >/dev/null 2>&1 \
+	  || ls -d "$$HOME/Library/Caches/ms-playwright"/chromium-* >/dev/null 2>&1 \
+	  || $(MAKE) web-e2e-install
+	cd $(WEB_DIR) && CI=1 $(PW_ENV) npx playwright test
 	docker compose -f docker-compose.yml -f docker-compose.test.yml down -v
 
 web-e2e-install:
-	cd $(WEB_DIR) && npx playwright install chromium
+	cd $(WEB_DIR) && $(PW_ENV) npx playwright install chromium
 
 test-live:
 	@echo "Runs live LLM golden tests — never in CI. Requires ANTHROPIC_API_KEY (and optionally GEMINI_API_KEY)."

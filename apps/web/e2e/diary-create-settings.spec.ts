@@ -3,27 +3,26 @@ import { test, expect, request as playwrightRequest } from '@playwright/test'
 const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
 const password = 'Password1!'
 
-const sharedState = {
-  email: '',
-  token: '',
-}
-
-test.beforeAll(async () => {
+// Free tier allows only 1 diary per user, so each test that creates a diary
+// needs its own freshly-registered user — sharing one across tests would make
+// later diary creations hit the tier limit depending on run order.
+async function registerUser(): Promise<{ email: string; token: string }> {
   const ctx = await playwrightRequest.newContext()
-  const email = `e2e-diary-settings-${Date.now()}@example.com`
+  const email = `e2e-diary-settings-${Date.now()}-${Math.random().toString(36).slice(2)}@example.com`
 
   const regResp = await ctx.post(`${API}/v1/auth/register`, { data: { email, password } })
   if (!regResp.ok()) throw new Error(`Register failed: ${regResp.status()} ${await regResp.text()}`)
   const { access_token: token } = await regResp.json() as { access_token: string }
 
-  sharedState.email = email
-  sharedState.token = token
   await ctx.dispose()
-})
+  return { email, token }
+}
 
-async function mockAuthAndGo(page: import('@playwright/test').Page, url: string) {
-  const { token, email } = sharedState
-
+async function mockAuthAndGo(
+  page: import('@playwright/test').Page,
+  url: string,
+  { token, email }: { token: string; email: string },
+) {
   await page.route(`${API}/v1/auth/refresh`, (route) =>
     route.fulfill({
       status: 200,
@@ -45,10 +44,11 @@ async function mockAuthAndGo(page: import('@playwright/test').Page, url: string)
 
 test.describe('Diary create → settings round-trip', () => {
   test('creates a diary via /diaries/new and lands on the diary detail', async ({ page }) => {
-    await mockAuthAndGo(page, '/diaries/new')
+    const user = await registerUser()
+    await mockAuthAndGo(page, '/diaries/new', user)
 
     // Fill in the form
-    await page.getByLabel('Name').fill("Emma's diary")
+    await page.getByLabel('Name', { exact: true }).fill("Emma's diary")
     await page.getByRole('button', { name: 'My child' }).click()
     await page.getByLabel(/their name/i).fill('Emma')
     await page.getByLabel(/tone/i).fill('warm, narrative')
@@ -62,9 +62,11 @@ test.describe('Diary create → settings round-trip', () => {
   })
 
   test('settings page pre-fills form and saves changes', async ({ page }) => {
+    const user = await registerUser()
+
     // Create a diary first via API
     const ctx = await playwrightRequest.newContext()
-    const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${sharedState.token}` }
+    const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${user.token}` }
     const diaryResp = await ctx.post(`${API}/v1/diaries`, {
       headers,
       data: {
@@ -79,11 +81,11 @@ test.describe('Diary create → settings round-trip', () => {
     const { id: diaryId } = await diaryResp.json() as { id: string }
     await ctx.dispose()
 
-    await mockAuthAndGo(page, `/diaries/${diaryId}/settings`)
+    await mockAuthAndGo(page, `/diaries/${diaryId}/settings`, user)
     await page.waitForURL(`**/diaries/${diaryId}/settings`, { timeout: 10_000 })
 
     // Form should be pre-filled
-    await expect(page.getByLabel('Name')).toHaveValue('Settings Test Diary')
+    await expect(page.getByLabel('Name', { exact: true })).toHaveValue('Settings Test Diary')
     await expect(page.getByLabel(/their name/i)).toHaveValue('Leo')
     await expect(page.getByLabel(/tone/i)).toHaveValue('warm, narrative')
     await expect(page.getByRole('button', { name: 'My child' })).toHaveClass(/btn-primary/)
@@ -102,9 +104,11 @@ test.describe('Diary create → settings round-trip', () => {
   })
 
   test('scan-enabled toggle is visible on settings page', async ({ page }) => {
+    const user = await registerUser()
+
     // Create a diary via API
     const ctx = await playwrightRequest.newContext()
-    const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${sharedState.token}` }
+    const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${user.token}` }
     const diaryResp = await ctx.post(`${API}/v1/diaries`, {
       headers,
       data: { name: 'Scan Toggle Test', timezone: 'UTC' },
@@ -113,7 +117,7 @@ test.describe('Diary create → settings round-trip', () => {
     const { id: diaryId } = await diaryResp.json() as { id: string }
     await ctx.dispose()
 
-    await mockAuthAndGo(page, `/diaries/${diaryId}/settings`)
+    await mockAuthAndGo(page, `/diaries/${diaryId}/settings`, user)
     await page.waitForURL(`**/diaries/${diaryId}/settings`, { timeout: 10_000 })
 
     await expect(page.getByRole('checkbox', { name: /scan enabled/i })).toBeVisible()
