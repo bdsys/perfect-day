@@ -41,7 +41,7 @@ dependencies = [
     "sendgrid>=6.11",
     # Rate limiting
     "slowapi>=0.1.9",
-    "limits>=3.13",
+    "limits>=5.8.0",
     # Object storage (S3-compatible)
     "boto3>=1.35",
     # Image processing
