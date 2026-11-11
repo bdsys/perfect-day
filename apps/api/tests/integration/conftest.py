@@ -125,7 +125,8 @@ def truncate_tables(sync_engine, run_migrations):
                 "entry_edit_diffs, diary_permissions, invitations, scan_runs, "
                 "backfill_runs, diary_calendar_filters, notification_preferences, "
                 "notifications, auto_creation_rules, entry_rule_matches, rule_series_claims, "
-                "photos, diary_photos, entry_photos, enrichments "
+                "photos, diary_photos, entry_photos, enrichments, magic_link_tokens, "
+                "social_identities "
                 "RESTART IDENTITY CASCADE"
             )
         )
