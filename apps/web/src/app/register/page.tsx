@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation'
 import { ApiError } from '@/lib/api'
 import { useAuth } from '@/lib/auth-context'
 import GoogleSignInButton from '@/components/GoogleSignInButton'
+import { authErrorMessage } from '@/lib/authErrors'
 
 export default function RegisterPage() {
   const router = useRouter()
@@ -30,7 +31,7 @@ export default function RegisterPage() {
       await register(email, password, displayName || undefined)
       router.push('/diaries')
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Registration failed')
+      setError(authErrorMessage(err, 'Registration failed'))
     } finally {
       setLoading(false)
     }

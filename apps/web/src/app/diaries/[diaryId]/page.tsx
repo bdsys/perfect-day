@@ -9,6 +9,9 @@ import { StatusPanel } from '@/components/StatusPanel'
 import { usePolling } from '@/lib/usePolling'
 import { formatDateRange } from '@/lib/date'
 
+// Must match the API's default page size for GET /v1/diaries/{id}/entries.
+const ENTRIES_PAGE_SIZE = 20
+
 function EntryCard({ entry }: { entry: Entry }) {
   const preview = entry.body_markdown?.slice(0, 120) ?? ''
   const firstEventSummary = !entry.body_markdown && entry.events?.length > 0 ? entry.events[0].summary : null
@@ -41,6 +44,8 @@ export default function DiaryDetailPage() {
   const router = useRouter()
   const [diary, setDiary] = useState<Diary | null>(null)
   const [entries, setEntries] = useState<Entry[]>([])
+  const [hasMoreEntries, setHasMoreEntries] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [googleIntegration, setGoogleIntegration] = useState<Integration | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -91,11 +96,35 @@ export default function DiaryDetailPage() {
     ])
       .then(([d, e]) => {
         setDiary(d)
-        setEntries(e)
+        showFirstPage(e)
       })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false))
   }, [user, diaryId, statusFilter])
+
+  // The API returns one page at a time; a full page means there may be more.
+  function showFirstPage(page: Entry[]) {
+    setEntries(page)
+    setHasMoreEntries(page.length === ENTRIES_PAGE_SIZE)
+  }
+
+  async function handleLoadMore() {
+    const last = entries[entries.length - 1]
+    if (!last || loadingMore) return
+    setLoadingMore(true)
+    try {
+      const older = await api.entries.list(diaryId, {
+        ...(statusFilter ? { status: statusFilter } : {}),
+        cursor: last.id,
+      })
+      setEntries((current) => [...current, ...older])
+      setHasMoreEntries(older.length === ENTRIES_PAGE_SIZE)
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Failed to load older entries')
+    } finally {
+      setLoadingMore(false)
+    }
+  }
 
   async function handleScan() {
     try {
@@ -170,7 +199,7 @@ export default function DiaryDetailPage() {
       if (run.status === 'success' || run.status === 'partial' || run.status === 'failed') {
         setPollingScan(false)
         const updated = await api.entries.list(diaryId, statusFilter ? { status: statusFilter } : {})
-        setEntries(updated)
+        showFirstPage(updated)
       }
     } catch {
     }
@@ -197,7 +226,7 @@ export default function DiaryDetailPage() {
         setPollingBackfill(false)
         if (run.status === 'completed') {
           const updated = await api.entries.list(diaryId, statusFilter ? { status: statusFilter } : {})
-          setEntries(updated)
+          showFirstPage(updated)
         }
       }
     } catch {
@@ -539,6 +568,14 @@ export default function DiaryDetailPage() {
           </div>
         ) : (
           entries.map((e) => <EntryCard key={e.id} entry={e} />)
+        )}
+
+        {hasMoreEntries && (
+          <div style={{ textAlign: 'center', marginTop: '1rem' }}>
+            <button className="btn btn-secondary" onClick={handleLoadMore} disabled={loadingMore}>
+              {loadingMore ? 'Loading…' : 'Load older entries'}
+            </button>
+          </div>
         )}
       </div>
     </>

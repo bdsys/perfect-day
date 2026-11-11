@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation'
 import { ApiError } from '@/lib/api'
 import { useAuth } from '@/lib/auth-context'
 import GoogleSignInButton from '@/components/GoogleSignInButton'
+import { authErrorMessage } from '@/lib/authErrors'
 
 export default function LoginPage() {
   const { user, loading: authLoading, login, loginWithGoogle } = useAuth()
@@ -29,7 +30,7 @@ export default function LoginPage() {
       await login(email, password)
       router.push('/diaries')
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Login failed')
+      setError(authErrorMessage(err, 'Login failed'))
     } finally {
       setLoading(false)
     }

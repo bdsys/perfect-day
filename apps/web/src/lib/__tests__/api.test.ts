@@ -53,3 +53,51 @@ describe("api.photos", () => {
     expect(result).toEqual(mockPhotos);
   });
 });
+
+describe("API error parsing", () => {
+  const respond = (status: number, body: unknown) =>
+    (global.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status,
+      json: async () => body,
+    }));
+
+  it("surfaces the reason from the plain error envelope", async () => {
+    respond(409, { error: { code: "http_error", message: "email_taken" } });
+    await expect(api.auth.register("a@b.co", "password1")).rejects.toMatchObject({
+      name: "ApiError",
+      status: 409,
+      message: "email_taken",
+      code: "email_taken",
+    });
+  });
+
+  it("keeps structured tier_limit details", async () => {
+    respond(403, { detail: { code: "tier_limit", details: { limit: 1, current: 1 } } });
+    await expect(api.diaries.list()).rejects.toMatchObject({
+      status: 403,
+      code: "tier_limit",
+      details: { limit: 1, current: 1 },
+    });
+  });
+
+  it("reports wrong credentials on login without trying to refresh the session", async () => {
+    const fetchMock = respond(401, { error: { code: "http_error", message: "invalid_credentials" } });
+    await expect(api.auth.login("a@b.co", "wrong")).rejects.toMatchObject({
+      status: 401,
+      code: "invalid_credentials",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to the status when the body is not JSON", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 502,
+      json: async () => {
+        throw new Error("not json");
+      },
+    });
+    await expect(api.diaries.list()).rejects.toMatchObject({ status: 502, message: "HTTP 502" });
+  });
+});
