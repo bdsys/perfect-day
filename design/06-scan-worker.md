@@ -53,6 +53,8 @@ scan_diary(diary_id):
 
 ## Event-to-Entry grouping (Model 3)
 
+> **Superseded in part (2026-11-11).** See [`docs/superpowers/specs/2026-11-11-code-review-decisions-design.md`](../docs/superpowers/specs/2026-11-11-code-review-decisions-design.md) section 1: entries now come from rules, the event picker and manual creation; rules run only for events that have ended; one entry per event. This section is rewritten when that work is built.
+
 ```
 group_events_into_entries(diary_id, scan_run_id):
   For each calendar event from this scan, not yet attached to an entry:

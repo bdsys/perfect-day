@@ -93,6 +93,8 @@ Residual risk is documented in [`design/THREATMODEL.md`](THREATMODEL.md) § Prom
 
 ## Model choice and cost
 
+> **Superseded in part (2026-11-11).** See [`docs/superpowers/specs/2026-11-11-code-review-decisions-design.md`](../docs/superpowers/specs/2026-11-11-code-review-decisions-design.md) section 2: the primary model is `claude-opus-5-5`, set by `ANTHROPIC_MODEL`; the caching and cost assumptions below do not hold. This section is rewritten when that work is built.
+
 - **Primary:** Claude Sonnet 4.6.
 - **Fallback:** Gemini 2.x Pro. Triggered only on Anthropic 5xx or hard rate-limit after retries. Backend abstracts both behind a single `LLMClient` interface.
 - **Caching:** Anthropic prompt caching enabled on Parts 1 + 2. First call in a scan misses; subsequent entries in same scan hit on cached prefix.

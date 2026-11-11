@@ -6,12 +6,10 @@ Issues identified during Phase 1 build that did not block PoC completion but nee
 
 ## Open
 
-### `require_reauth` async-loop bug — `app/core/auth.py:59`
-**Flagged:** 2026-05-25. **Will break:** Phase 2 admin endpoints.
+### Code review, November 2026
+**Flagged:** 2026-11-11.
 
-Calls `loop.run_until_complete()` inside a running async loop. Not currently triggered (no Phase 1 endpoint uses it), but any Phase 2 admin endpoint that requires re-auth will hit it.
-
-**Fix:** Refactor to `await` the inner coroutine directly; remove the `run_until_complete` call. Add a regression test that exercises the path under an async test client.
+Open findings from the whole-codebase review are tracked in [`code-review-2026-11.md`](code-review-2026-11.md) (rows marked **Open**), together with six decisions that need an owner.
 
 ---
 
@@ -31,3 +29,8 @@ LLM does not run in test mode. Use `make test-live` to exercise it manually once
 **Flagged:** 2026-05-25. **Resolved:** 2026-05-27.
 
 Restore page (`/diaries/restore`) ships with the grace-period countdown UI. Verified end-to-end against the live stack.
+
+### `require_reauth` async-loop bug — `app/core/auth.py`
+**Flagged:** 2026-05-25. **Resolved:** 2026-11-11.
+
+Rewritten as an async dependency that awaits the Redis check. Covered by `tests/unit/test_require_reauth.py`.
