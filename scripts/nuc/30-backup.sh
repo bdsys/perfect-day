@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 # scripts/nuc/30-backup.sh — Provision daily encrypted backup with rclone → B2
+#
+# SCOPE: this backs up the Postgres database only. Photo objects in MinIO are
+# NOT backed up. A restore from this backup alone brings back photo rows whose
+# files are gone. See design/code-review-2026-11.md, finding D-6.
 # Run on the NUC as: sudo ./scripts/nuc/30-backup.sh
 # Creates an age keypair, backup service + systemd timer.
 set -euo pipefail
@@ -13,6 +17,7 @@ SECRETS_DIR=/etc/perfect-day
 AGE_KEY="${SECRETS_DIR}/backup.key"
 AGE_PUB="${SECRETS_DIR}/backup.pub"
 BACKUP_DIR=/var/backups/perfect-day
+DEPLOY_DIR=/opt/perfect-day
 LOG_DIR=/var/log/perfect-day
 KEEP_DAYS=7
 TIMER_HOUR=2
@@ -78,12 +83,18 @@ source /etc/perfect-day/app.env
 echo "[backup] Starting backup: \${DATE}"
 
 # pg_dump → gzip → age encrypt
-PGPASSWORD="\${POSTGRES_PASSWORD}" pg_dump \
-    -h localhost -U perfectday perfectday \
-    --no-password \
+# pg_dump runs inside the postgres container: Postgres publishes no port on the
+# host and the host has no Postgres client installed. The dump is written to a
+# .partial file first so a failed run never leaves a truncated file that looks
+# like a backup (and gets uploaded as one).
+PARTIAL="\${OUTFILE}.partial"
+trap 'rm -f "\${PARTIAL}"' EXIT
+docker compose --project-directory '${DEPLOY_DIR}' exec -T postgres \
+    pg_dump -U "\${POSTGRES_USER:-perfectday}" "\${POSTGRES_DB:-perfectday}" \
     | gzip \
     | age --recipients-file "\${AGE_PUB}" \
-    > "\${OUTFILE}"
+    > "\${PARTIAL}"
+mv "\${PARTIAL}" "\${OUTFILE}"
 
 echo "[backup] Encrypted backup written: \${OUTFILE}"
 echo "[backup] Size: \$(du -sh \${OUTFILE} | cut -f1)"

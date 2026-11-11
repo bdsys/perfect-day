@@ -114,6 +114,10 @@ services:
     build:
       context: ./apps/web
       dockerfile: Dockerfile
+      # Baked into the browser bundle at build time; see apps/web/Dockerfile.
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+        NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${NEXT_PUBLIC_GOOGLE_CLIENT_ID:-}
     environment:
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
     depends_on:

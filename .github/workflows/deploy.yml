@@ -90,6 +90,10 @@ jobs:
         with:
           context: apps/web
           push: true
+          # NEXT_PUBLIC_* are inlined by `next build`; see apps/web/Dockerfile.
+          build-args: |
+            NEXT_PUBLIC_API_URL=${{ vars.NEXT_PUBLIC_API_URL || 'https://api.diary.perfectday.andrewlass.com' }}
+            NEXT_PUBLIC_GOOGLE_CLIENT_ID=${{ vars.NEXT_PUBLIC_GOOGLE_CLIENT_ID }}
           tags: |
             ghcr.io/${{ github.repository_owner }}/perfect-day-web:sha-${{ steps.meta.outputs.short_sha }}
             ghcr.io/${{ github.repository_owner }}/perfect-day-web:latest
@@ -105,6 +109,8 @@ jobs:
     if: needs.gate.outputs.enabled == 'true'
     runs-on: ubuntu-24.04
     environment: production
+    env:
+      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
 
     steps:
       - uses: actions/checkout@v4
@@ -138,10 +144,11 @@ jobs:
         run: |
           ./scripts/smoke-test.sh https://api.diary.perfectday.andrewlass.com
 
+      # The `secrets` context is not available in step-level `if:`. Referencing it
+      # there makes the whole workflow file invalid, so every run failed at 0s.
+      # Read the secret into the job env (below) and test that instead.
       - name: Sentry release marker (optional)
-        if: secrets.SENTRY_AUTH_TOKEN != ''
-        env:
-          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+        if: env.SENTRY_AUTH_TOKEN != ''
         run: |
           pip install sentry-cli
           sentry-cli releases new "${{ needs.build-and-push.outputs.image_tag }}"
