@@ -107,6 +107,22 @@ def _derive_voice(diary) -> tuple[str, str]:
 # ---------------------------------------------------------------------------
 
 
+# Calendar descriptions are often pasted invites or HTML; cap what reaches the prompt.
+MAX_DESCRIPTION_CHARS = 2000
+
+_DELIMITER_TAG = re.compile(r"<\s*(/?)\s*(event|draft_body)\b", re.IGNORECASE)
+
+
+def _neutralize_delimiters(text: str) -> str:
+    """Stop user-controlled text from opening or closing the prompt's data tags.
+
+    Event fields and the diarist's draft are wrapped in <event>/<draft_body> tags
+    that the system prompt marks as data. A calendar title containing "</event>"
+    would otherwise end that region early and let the rest read as instructions.
+    """
+    return _DELIMITER_TAG.sub(lambda m: f"&lt;{m.group(1)}{m.group(2)}", text)
+
+
 def _format_duration(minutes: int) -> str:
     """Return a human-readable duration string, e.g. '30m' or '1h 30m'."""
     if minutes < 60:
@@ -120,7 +136,7 @@ def _format_duration(minutes: int) -> str:
 def _format_event_line(i: int, event) -> str:
     """Render one <event> line with time range, summary, and optional extras."""
     p = event.payload
-    summary = p.get("summary", "(no title)")
+    summary = _neutralize_delimiters(p.get("summary", "(no title)"))
 
     # --- Time range ---
     start_dt_str = (p.get("start") or {}).get("dateTime")
@@ -147,7 +163,7 @@ def _format_event_line(i: int, event) -> str:
         time_str = event.occurred_at.isoformat() if event.occurred_at else "unknown time"
 
     # --- Optional extras ---
-    location = p.get("location", "")
+    location = _neutralize_delimiters(p.get("location", "") or "")
     loc_str = f', location: "{location}"' if location else ""
 
     attendees_raw = p.get("attendees") or []
@@ -157,10 +173,13 @@ def _format_event_line(i: int, event) -> str:
         if not name:
             name = (a.get("email") or "").strip()
         if name:
-            attendee_names.append(name)
+            attendee_names.append(_neutralize_delimiters(name))
     attendees_str = f', attendees: "{", ".join(attendee_names)}"' if attendee_names else ""
 
     description = (p.get("description") or "").strip()
+    if len(description) > MAX_DESCRIPTION_CHARS:
+        description = description[:MAX_DESCRIPTION_CHARS].rstrip() + "…"
+    description = _neutralize_delimiters(description)
     desc_str = f', description: "{description}"' if description else ""
 
     return (
@@ -174,6 +193,7 @@ def build_prompt(
 ) -> tuple[str, str]:
     """Return (diary_context_message, per_entry_message)."""
     voice, pronoun = _derive_voice(diary)
+    body_seed = _neutralize_delimiters(body_seed)
 
     # Part 2 — diary context (semi-stable, cacheable)
     # NOTE: This section must remain byte-for-byte identical across all modes
@@ -404,6 +424,10 @@ async def generate_draft_for_entry(entry_id: uuid.UUID) -> None:
             log.warning("generate_draft_entry_not_found", entry_id=str(entry_id))
             return
 
+        if entry.deleted_at is not None:
+            log.info("generate_draft_skipped_deleted", entry_id=str(entry_id))
+            return
+
         if entry.status == "published":
             log.info("generate_draft_skipped_published", entry_id=str(entry_id))
             from sqlalchemy import update as sql_update
@@ -581,6 +605,13 @@ async def generate_draft_for_entry(entry_id: uuid.UUID) -> None:
         entry_result = await db.execute(select(Entry).where(Entry.id == entry_id))
         entry_update = entry_result.scalar_one_or_none()
         if entry_update is None:
+            return
+
+        # The provider call above can take many seconds. If the entry was published
+        # or deleted meanwhile, the diarist's decision wins: record nothing over it.
+        if entry_update.status == "published" or entry_update.deleted_at is not None:
+            log.info("generate_draft_discarded_entry_changed", entry_id=str(entry_id))
+            entry_update.updated_at = datetime.now(UTC)
             return
 
         if llm_usable:

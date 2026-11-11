@@ -141,7 +141,11 @@ async def _fetch_events_range(
 
     import httpx
 
-    from app.workers.calendar_sync import CALENDAR_LIST_URL
+    from app.workers.calendar_sync import (
+        CALENDAR_LIST_URL,
+        MAX_RATE_LIMIT_WAITS,
+        _retry_after_seconds,
+    )
 
     url = CALENDAR_LIST_URL.format(calendarId=calendar_id)
     params: dict = {
@@ -153,6 +157,7 @@ async def _fetch_events_range(
     }
 
     all_events: list[dict] = []
+    rate_limit_waits = 0
 
     for attempt in range(max_retries):
         try:
@@ -160,10 +165,11 @@ async def _fetch_events_range(
                 while True:
                     resp = await client.get(url, headers=headers, params=params)
 
-                    if resp.status_code == 429:
-                        retry_after = int(resp.headers.get("Retry-After", str(2**attempt)))
+                    if resp.status_code == 429 and rate_limit_waits < MAX_RATE_LIMIT_WAITS:
+                        rate_limit_waits += 1
+                        retry_after = _retry_after_seconds(resp, 2**attempt)
                         log.warning("backfill_rate_limited", retry_after=retry_after)
-                        await asyncio.sleep(min(retry_after, 16))
+                        await asyncio.sleep(retry_after)
                         continue
 
                     resp.raise_for_status()

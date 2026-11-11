@@ -268,3 +268,127 @@ class TestStreamingDecrypt:
         with pytest.raises(InvalidTag):
             # Consume all chunks to trigger the tampered one.
             list(iter_decrypt_stream(reader, dek))
+
+
+# ---------------------------------------------------------------------------
+# PD02: per-blob subkeys, authenticated header, legacy PD01 compatibility
+# ---------------------------------------------------------------------------
+
+
+def _legacy_pd01_encrypt(plaintext: bytes, dek: bytes) -> bytes:
+    """Re-implementation of the original PD01 writer, used to prove old blobs still open."""
+    import struct
+
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+    from app.core.photo_crypto import CHUNK_SIZE as _CS
+    from app.core.photo_crypto import HEADER_FORMAT, MAGIC_V1, derive_chunk_nonce
+
+    chunks = [plaintext[i : i + _CS] for i in range(0, len(plaintext), _CS)]
+    blob = struct.pack(HEADER_FORMAT, MAGIC_V1, len(chunks), _CS, len(plaintext))
+    for i, chunk in enumerate(chunks):
+        ct = AESGCM(dek).encrypt(derive_chunk_nonce(dek, i), chunk, None)
+        blob += struct.pack("!I", len(ct)) + ct
+    return blob
+
+
+class TestBlobSeparation:
+    def test_full_and_thumb_do_not_share_keystream(self):
+        """Same DEK, same chunk index: XOR of ciphertexts must not equal XOR of plaintexts."""
+        import struct
+
+        from app.core.photo_crypto import (
+            HEADER_FORMAT,
+            PURPOSE_FULL,
+            PURPOSE_THUMB,
+            encrypt_stream,
+            generate_dek,
+        )
+
+        dek = generate_dek()
+        full, thumb = b"A" * 64, b"B" * 64
+        start = struct.calcsize(HEADER_FORMAT) + 4
+        ct_full = encrypt_stream(full, dek, PURPOSE_FULL)[start : start + 64]
+        ct_thumb = encrypt_stream(thumb, dek, PURPOSE_THUMB)[start : start + 64]
+
+        xor_ct = bytes(a ^ b for a, b in zip(ct_full, ct_thumb, strict=True))
+        xor_pt = bytes(a ^ b for a, b in zip(full, thumb, strict=True))
+        assert xor_ct != xor_pt
+
+    def test_wrong_purpose_fails(self):
+        from cryptography.exceptions import InvalidTag
+
+        from app.core.photo_crypto import (
+            PURPOSE_FULL,
+            PURPOSE_THUMB,
+            decrypt_stream,
+            encrypt_stream,
+            generate_dek,
+        )
+
+        dek = generate_dek()
+        blob = encrypt_stream(b"thumbnail bytes", dek, PURPOSE_THUMB)
+        assert decrypt_stream(blob, dek, PURPOSE_THUMB) == b"thumbnail bytes"
+        with pytest.raises(InvalidTag):
+            decrypt_stream(blob, dek, PURPOSE_FULL)
+
+    def test_truncating_via_header_chunk_count_fails(self):
+        """Lowering chunk_count in the header must not yield a silently truncated photo."""
+        import struct
+
+        from cryptography.exceptions import InvalidTag
+
+        from app.core.photo_crypto import CHUNK_SIZE as _CS
+        from app.core.photo_crypto import (
+            HEADER_FORMAT,
+            decrypt_stream,
+            encrypt_stream,
+            generate_dek,
+        )
+
+        dek = generate_dek()
+        blob = bytearray(encrypt_stream(os.urandom(2 * _CS), dek))
+        magic, count, size, total = struct.unpack_from(HEADER_FORMAT, blob, 0)
+        assert count == 2
+        struct.pack_into(HEADER_FORMAT, blob, 0, magic, 1, size, total)
+
+        with pytest.raises(InvalidTag):
+            decrypt_stream(bytes(blob), dek)
+
+    def test_new_blobs_use_pd02_magic(self):
+        from app.core.photo_crypto import MAGIC, encrypt_stream, generate_dek
+
+        assert MAGIC == b"PD02"
+        assert encrypt_stream(b"x", generate_dek())[:4] == b"PD02"
+
+
+class TestLegacyPD01:
+    @pytest.mark.parametrize("purpose_name", ["PURPOSE_FULL", "PURPOSE_THUMB"])
+    def test_legacy_blob_still_decrypts(self, purpose_name: str):
+        """Blobs written before PD02 stay readable whichever purpose is asked for."""
+        import app.core.photo_crypto as pc
+
+        dek = pc.generate_dek()
+        plaintext = os.urandom(pc.CHUNK_SIZE + 123)
+        blob = _legacy_pd01_encrypt(plaintext, dek)
+        purpose = getattr(pc, purpose_name)
+
+        assert pc.decrypt_stream(blob, dek, purpose) == plaintext
+
+        pos = 0
+
+        def reader(n: int) -> bytes:
+            nonlocal pos
+            out = blob[pos : pos + n]
+            pos += n
+            return out
+
+        assert b"".join(pc.iter_decrypt_stream(reader, dek, purpose)) == plaintext
+
+    def test_unknown_magic_raises_value_error(self):
+        import app.core.photo_crypto as pc
+
+        blob = bytearray(pc.encrypt_stream(b"x", pc.generate_dek()))
+        blob[:4] = b"NOPE"
+        with pytest.raises(ValueError, match="invalid magic"):
+            pc.decrypt_stream(bytes(blob), pc.generate_dek())

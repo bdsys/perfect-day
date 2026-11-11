@@ -153,6 +153,9 @@ async def evaluate_event_against_rules(
     # Track the first entry attached to the event across all rules so that
     # event.entry_id is set exactly once.
     first_attached_entry_id: uuid.UUID | None = None
+    # Entries needing a draft. Queued only after commit: a worker that picks the
+    # task up before this transaction commits cannot see the entry and gives up.
+    entries_to_draft: list[uuid.UUID] = []
 
     for rule in rules:
         if not match_event(rule.condition, p):
@@ -270,13 +273,7 @@ async def evaluate_event_against_rules(
                 # multi-event entry. Known follow-up: dedupe these calls at
                 # the LLM-task layer so a scan window with N grouped events
                 # does not produce N regenerations.
-                try:
-                    generate_entry_draft.delay(str(entry_id_to_use))
-                except Exception:
-                    log.exception(
-                        "evaluate_rules_llm_queue_failed",
-                        entry_id=str(entry_id_to_use),
-                    )
+                entries_to_draft.append(entry_id_to_use)
             else:
                 ok, reason = await try_enforce_entry_tier_limit(
                     owner_user_id=user.id,
@@ -325,13 +322,13 @@ async def evaluate_event_against_rules(
 
             # 6. Queue LLM generation only for newly created entries.
             if new_entry is not None:
-                try:
-                    generate_entry_draft.delay(str(new_entry.id))
-                except Exception:
-                    log.exception(
-                        "evaluate_rules_llm_queue_failed",
-                        entry_id=str(new_entry.id),
-                    )
+                entries_to_draft.append(new_entry.id)
 
-    # 7. Commit all changes in a single transaction.
+    # 7. Commit all changes in a single transaction, then queue the drafts.
     await db.commit()
+
+    for entry_id in entries_to_draft:
+        try:
+            generate_entry_draft.delay(str(entry_id))
+        except Exception:
+            log.exception("evaluate_rules_llm_queue_failed", entry_id=str(entry_id))

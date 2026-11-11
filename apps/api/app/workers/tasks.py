@@ -13,9 +13,6 @@ from app.workers.utils import run_sync
 
 log = structlog.get_logger()
 
-CHUNK_NONCE_NFKC = 1_048_576  # 1 MiB per chunk for photo encryption
-
-
 # ---------------------------------------------------------------------------
 # Ping — confirms Celery pipeline works
 # ---------------------------------------------------------------------------
@@ -47,7 +44,7 @@ async def _scan_diary(diary_id_str: str, past_days: int | None = None, future_da
     from sqlalchemy import select
 
     from app.core.dependencies import get_redis
-    from app.models import Diary, OAuthToken, ScanJob, ScanRun
+    from app.models import Diary, OAuthToken, ScanJob, ScanRun, User
     from app.workers.calendar_sync import sync_calendar
     from app.workers.token_refresh import ensure_fresh_access_token
     from app.workers.utils import db_session
@@ -72,6 +69,13 @@ async def _scan_diary(diary_id_str: str, past_days: int | None = None, future_da
             )
             diary = result.scalar_one_or_none()
             if diary is None or not diary.scan_enabled:
+                return
+
+            owner_deleted_at = (
+                await db.execute(select(User.deleted_at).where(User.id == diary.owner_user_id))
+            ).scalar_one_or_none()
+            if owner_deleted_at is not None:
+                log.info("scan_skipped_owner_deleted", diary_id=diary_id_str)
                 return
 
             job_result = await db.execute(select(ScanJob).where(ScanJob.diary_id == diary_id))
@@ -523,6 +527,15 @@ async def _backfill_diary(backfill_run_id_str: str) -> None:
         )
         oauth_token = token_result.scalar_one_or_none()
 
+        if backfill_run.status != "pending":
+            # Cancelled before the worker got to it, or a duplicate delivery.
+            log.info(
+                "backfill_not_pending",
+                backfill_run_id=backfill_run_id_str,
+                status=backfill_run.status,
+            )
+            return
+
         backfill_run.status = "running"
         backfill_run.started_at = datetime.now(tz=UTC)
 
@@ -566,8 +579,11 @@ async def _backfill_diary(backfill_run_id_str: str) -> None:
         async with db_session() as db:
             result = await db.execute(select(BackfillRun).where(BackfillRun.id == backfill_run_id))
             run = result.scalar_one()
-            run.status = "completed"
-            run.completed_at = datetime.now(tz=UTC)
+            # A run cancelled mid-flight stops at the next chunk boundary; keep
+            # its "cancelled" status instead of overwriting it.
+            if run.status != "cancelled":
+                run.status = "completed"
+                run.completed_at = datetime.now(tz=UTC)
             run.events_ingested = events_ingested
             run.entries_created = entries_created
     except Exception as e:

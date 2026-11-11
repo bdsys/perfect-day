@@ -19,7 +19,7 @@ async def _dispatch_due_scans() -> None:
 
     from sqlalchemy import func, select
 
-    from app.models import Diary, ScanJob
+    from app.models import Diary, ScanJob, User
     from app.workers.tasks import scan_diary
     from app.workers.utils import db_session
 
@@ -28,8 +28,11 @@ async def _dispatch_due_scans() -> None:
         result = await db.execute(
             select(Diary.id)
             .join(ScanJob, ScanJob.diary_id == Diary.id)
+            .join(User, User.id == Diary.owner_user_id)
             .where(
                 Diary.deleted_at.is_(None),
+                # An account in its deletion grace window must not keep being scanned.
+                User.deleted_at.is_(None),
                 Diary.scan_enabled.is_(True),
                 (ScanJob.next_scan_after.is_(None)) | (ScanJob.next_scan_after <= now),
             )
@@ -77,11 +80,19 @@ async def _process_hard_deletes() -> None:
 
     log.info("process_hard_deletes", diaries=len(diary_ids), users=len(user_ids))
 
+    # One failing row must not block every deletion queued behind it, on this
+    # run and on every later one.
     for diary_id in diary_ids:
-        await hard_delete_diary(diary_id)
+        try:
+            await hard_delete_diary(diary_id)
+        except Exception:
+            log.exception("hard_delete_diary_failed", diary_id=str(diary_id))
 
     for user_id in user_ids:
-        await hard_delete_user(user_id)
+        try:
+            await hard_delete_user(user_id)
+        except Exception:
+            log.exception("hard_delete_user_failed", user_id=str(user_id))
 
 
 @celery_app.task(name="app.workers.beat_tasks.sweep_orphaned_photos")

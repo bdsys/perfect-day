@@ -15,6 +15,17 @@ log = structlog.get_logger()
 CALENDAR_LIST_URL = "https://www.googleapis.com/calendar/v3/calendars/{calendarId}/events"
 DEFAULT_SCAN_PAST_DAYS = 90
 DEFAULT_SCAN_FUTURE_DAYS = 90
+# How many 429 responses one fetch tolerates before giving up. Without a cap a
+# calendar that keeps answering 429 holds the scan lock (and its heartbeat) forever.
+MAX_RATE_LIMIT_WAITS = 5
+
+
+def _retry_after_seconds(resp: httpx.Response, default: int) -> int:
+    """Seconds to wait after a 429, capped at 16. Retry-After may be an HTTP date."""
+    try:
+        return min(int(resp.headers.get("Retry-After", default)), 16)
+    except (TypeError, ValueError):
+        return min(default, 16)
 
 
 def _scan_window(
@@ -119,6 +130,7 @@ async def _fetch_events(
 
     all_events: list[dict] = []
     next_sync_token = None
+    rate_limit_waits = 0
 
     for attempt in range(max_retries):
         try:
@@ -126,17 +138,31 @@ async def _fetch_events(
                 while True:
                     resp = await client.get(url, headers=headers, params=params)
 
-                    if resp.status_code == 410:
-                        # Sync token expired — start fresh next scan
+                    if resp.status_code == 410 and "syncToken" in params:
+                        # Sync token expired. Google requires a full resync, so restart
+                        # this fetch as a windowed full sync. The caller stores the fresh
+                        # token it yields; returning nothing here would leave the dead
+                        # token in place and every later scan would 410 again.
                         log.warning("calendar_sync_token_expired", calendar_id=calendar_id)
-                        return all_events, None
+                        if time_min is None or time_max is None:
+                            return [], None
+                        all_events = []
+                        params = {
+                            "maxResults": 250,
+                            "singleEvents": "true",
+                            "timeMin": time_min.isoformat(),
+                            "timeMax": time_max.isoformat(),
+                            "orderBy": "startTime",
+                        }
+                        continue
 
-                    if resp.status_code == 429:
+                    if resp.status_code == 429 and rate_limit_waits < MAX_RATE_LIMIT_WAITS:
                         import asyncio
 
-                        retry_after = int(resp.headers.get("Retry-After", str(2**attempt)))
+                        rate_limit_waits += 1
+                        retry_after = _retry_after_seconds(resp, 2**attempt)
                         log.warning("calendar_rate_limited", retry_after=retry_after)
-                        await asyncio.sleep(min(retry_after, 16))
+                        await asyncio.sleep(retry_after)
                         continue
 
                     resp.raise_for_status()

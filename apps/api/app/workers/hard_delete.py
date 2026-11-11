@@ -49,6 +49,20 @@ async def hard_delete_diary(diary_id: uuid.UUID) -> None:
             )
             photo_ids_in_diary = {r[0] for r in entry_photo_result.fetchall()}
 
+            # Photos live in a user-wide library and can be attached to entries in
+            # several diaries. Only delete the ones no other diary still uses;
+            # the rest just lose their entry_photos rows via the entry cascade.
+            if photo_ids_in_diary:
+                shared_result = await db.execute(
+                    select(EntryPhoto.photo_id)
+                    .join(Entry, Entry.id == EntryPhoto.entry_id)
+                    .where(
+                        EntryPhoto.photo_id.in_(photo_ids_in_diary),
+                        Entry.diary_id != diary_id,
+                    )
+                )
+                photo_ids_in_diary -= {r[0] for r in shared_result.fetchall()}
+
             for photo_id in list(photo_ids_in_diary):
                 try:
                     settings = get_settings()
@@ -134,11 +148,12 @@ async def hard_delete_user(user_id: uuid.UUID) -> None:
         )
         await db.execute(delete(OAuthToken).where(OAuthToken.user_id == user_id))
         await db.execute(delete(RefreshToken).where(RefreshToken.user_id == user_id))
-        await db.execute(
-            delete(MagicLinkToken).where(
-                # Can't FK to user_id on magic_link_tokens but clean up by matching email
-            )
-        )
+        # magic_link_tokens has no user FK; match on the user's email. An empty
+        # .where() here would delete every user's tokens.
+        email_result = await db.execute(select(User.email).where(User.id == user_id))
+        user_email = email_result.scalar_one_or_none()
+        if user_email:
+            await db.execute(delete(MagicLinkToken).where(MagicLinkToken.email == user_email))
         await db.execute(delete(SocialIdentity).where(SocialIdentity.user_id == user_id))
 
         # Scrub MinIO: delete everything under {user_id}/ prefix and tmp/{user_id}/ prefix

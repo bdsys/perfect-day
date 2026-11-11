@@ -3,10 +3,11 @@ from __future__ import annotations
 import re
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import Annotated
+from typing import Annotated, Literal
 
+import pytz
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import AfterValidator, BaseModel, Field
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -30,25 +31,41 @@ def _slugify(name: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _valid_timezone(v: str) -> str:
+    # Workers resolve this with pytz on every event; an unknown name would fail
+    # every scan for the diary, so reject it at the door.
+    if v not in pytz.all_timezones_set:
+        raise ValueError("unknown IANA timezone")
+    return v
+
+
+SubjectRelation = Literal["self", "child", "family", "other_person"]
+VoiceOverride = Literal["first_singular", "first_plural", "second", "third"]
+Timezone = Annotated[str, AfterValidator(_valid_timezone)]
+DiaryName = Annotated[str, Field(min_length=1, max_length=200)]
+# Beat dispatches due scans every 5 minutes, so anything lower buys nothing.
+ScanIntervalMinutes = Annotated[int, Field(ge=5, le=10080)]
+
+
 class DiaryCreate(BaseModel):
-    name: str
-    timezone: str
-    subject_name: str | None = None
-    subject_relation: str = "self"
-    voice_override: str | None = None
-    tone_hint: str = "warm, narrative"
-    scan_interval_minutes: int = 60
+    name: DiaryName
+    timezone: Timezone
+    subject_name: Annotated[str, Field(max_length=200)] | None = None
+    subject_relation: SubjectRelation = "self"
+    voice_override: VoiceOverride | None = None
+    tone_hint: Annotated[str, Field(min_length=1, max_length=500)] = "warm, narrative"
+    scan_interval_minutes: ScanIntervalMinutes = 60
 
 
 class DiaryPatch(BaseModel):
-    name: str | None = None
-    slug: str | None = None
-    subject_name: str | None = None
-    subject_relation: str | None = None
-    voice_override: str | None = None
-    tone_hint: str | None = None
-    timezone: str | None = None
-    scan_interval_minutes: int | None = None
+    name: DiaryName | None = None
+    slug: Annotated[str, Field(pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$", max_length=80)] | None = None
+    subject_name: Annotated[str, Field(max_length=200)] | None = None
+    subject_relation: SubjectRelation | None = None
+    voice_override: VoiceOverride | None = None
+    tone_hint: Annotated[str, Field(min_length=1, max_length=500)] | None = None
+    timezone: Timezone | None = None
+    scan_interval_minutes: ScanIntervalMinutes | None = None
     scan_enabled: bool | None = None
     notifications_muted: bool | None = None
     lat: Annotated[float | None, Field(ge=-90, le=90)] = None
@@ -112,6 +129,20 @@ async def _get_diary_or_404(
     return diary, perm.role
 
 
+# Columns a PATCH may set to NULL. An explicit null for any other field is
+# ignored, because those columns are NOT NULL.
+_CLEARABLE_DIARY_FIELDS = frozenset({"lat", "lon", "voice_override", "subject_name"})
+
+
+def _diary_updates(body: DiaryPatch) -> dict:
+    """Fields to write for a PATCH: everything sent, minus nulls for required columns."""
+    return {
+        field: value
+        for field, value in body.model_dump(exclude_unset=True).items()
+        if value is not None or field in _CLEARABLE_DIARY_FIELDS
+    }
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -143,9 +174,11 @@ async def create_diary(
 ) -> Diary:
     limit = TIER_DIARY_LIMITS.get(user.subscription_tier, 1)
 
-    # Advisory lock to prevent check-then-create race
+    # Advisory lock to prevent check-then-create race. The key is derived in
+    # Postgres: Python's hash() of a str is salted per process, so two API
+    # workers would compute different keys and never contend.
     await db.execute(
-        text(f"SELECT pg_advisory_xact_lock({hash(str(user.id)) & 0x7FFFFFFF})")
+        text("SELECT pg_advisory_xact_lock(hashtext(:uid))").bindparams(uid=str(user.id))
     )
     count_result = await db.execute(
         select(func.count())
@@ -234,9 +267,7 @@ async def patch_diary(
 ) -> Diary:
     diary, _ = await _get_diary_or_404(diary_id, user, db, require_owner=True)
 
-    for field, value in body.model_dump(exclude_unset=True).items():
-        if value is None and field not in ("lat", "lon"):
-            continue  # don't null out non-nullable columns
+    for field, value in _diary_updates(body).items():
         setattr(diary, field, value)
 
     await db.flush()
@@ -279,7 +310,7 @@ async def restore_diary(
     # Check tier limit before restoring
     limit = TIER_DIARY_LIMITS.get(user.subscription_tier, 1)
     await db.execute(
-        text(f"SELECT pg_advisory_xact_lock({hash(str(user.id)) & 0x7FFFFFFF})")
+        text("SELECT pg_advisory_xact_lock(hashtext(:uid))").bindparams(uid=str(user.id))
     )
     count_result = await db.execute(
         select(func.count())

@@ -137,14 +137,18 @@ async def create_entry_from_event(
     await db.flush()
 
     event.entry_id = entry.id
+    await db.flush()
     await db.refresh(entry, ["events", "rule_matches", "llm_generations", "entry_photos", "enrichments"])
+    out = _entry_out_from_orm(entry)
+    # Commit before queuing so the worker can see the entry and its event.
+    await db.commit()
 
     try:
-        generate_entry_draft.delay(str(entry.id))
+        generate_entry_draft.delay(str(out.id))
     except Exception:
         import logging
         logging.getLogger(__name__).exception(
-            "Failed to queue generate_entry_draft for entry %s", entry.id
+            "Failed to queue generate_entry_draft for entry %s", out.id
         )
 
-    return _entry_out_from_orm(entry)
+    return out

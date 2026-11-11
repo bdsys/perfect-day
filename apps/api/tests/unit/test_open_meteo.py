@@ -29,7 +29,7 @@ async def test_fetch_daily_uses_archive_for_old_date():
         "temperature_min_c": -1.8,
         "precipitation_mm": 3.2,
         "weathercode": 71,
-        "condition": "moderate snow",
+        "condition": "slight snow",
         "sunrise": "2024-01-15T07:32",
         "sunset": "2024-01-15T16:48",
     }
@@ -100,3 +100,12 @@ async def test_fetch_daily_returns_none_on_repeated_failure():
     with patch("httpx.AsyncClient.get", AsyncMock(return_value=err)):
         result = await fetch_daily(40.4406, -79.9959, date(2024, 1, 15))
     assert result is None
+
+
+def test_weathercode_labels_match_wmo_intensities():
+    """Labels are passed to the LLM as facts; intensity words must match the WMO table."""
+    from app.workers.open_meteo import _WEATHERCODE_LABELS as labels
+
+    assert (labels[71], labels[73], labels[75]) == ("slight snow", "moderate snow", "heavy snow")
+    for code in (56, 57, 66, 67, 77, 85, 86):
+        assert code in labels

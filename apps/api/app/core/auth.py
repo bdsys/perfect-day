@@ -88,19 +88,13 @@ async def get_current_admin(user: User = Depends(get_current_user)) -> User:
     return user
 
 
-def require_reauth(request: Request) -> None:
-    """Check that admin has re-authed within 15 min for destructive ops."""
-    import asyncio
-
+async def require_reauth(
+    request: Request,
+    user: User = Depends(get_current_user),
+) -> None:
+    """Check that the caller re-authenticated within 15 min. For destructive admin ops."""
     from app.core.dependencies import get_redis
 
-    user = getattr(request.state, "user", None)
-    if user is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="unauthorized")
-    # Sync-ish check: use event loop
-    r = get_redis()
-    loop = asyncio.get_event_loop()
     key = f"reauth:{user.id}:{request.headers.get('X-Session-ID', '')}"
-    valid = loop.run_until_complete(r.exists(key))
-    if not valid:
+    if not await get_redis().exists(key):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="reauth_required")
