@@ -151,7 +151,7 @@ async def _get_rule_or_404(
 async def list_rules(
     diary_id: uuid.UUID,
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> list[RuleOut]:
     """List all auto-creation rules for a diary."""
     await _get_diary_or_404(diary_id, user, db)
@@ -173,7 +173,7 @@ async def create_rule(
     diary_id: uuid.UUID,
     body: RuleCreate,
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> RuleOut:
     """Create a new auto-creation rule."""
     _, role = await _get_diary_or_404(diary_id, user, db)
@@ -205,7 +205,7 @@ async def create_rule(
 async def get_rule(
     rule_id: uuid.UUID,
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> RuleOut:
     """Retrieve a single rule by ID."""
     rule, _ = await _get_rule_or_404(rule_id, user, db)
@@ -220,7 +220,7 @@ async def patch_rule(
     rule_id: uuid.UUID,
     body: RulePatch,
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> RuleOut:
     """Partially update a rule."""
     rule, role = await _get_rule_or_404(rule_id, user, db)
@@ -254,7 +254,7 @@ async def patch_rule(
 async def delete_rule(
     rule_id: uuid.UUID,
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> None:
     """Hard-delete a rule (cascade handles EntryRuleMatch / RuleSeriesClaim)."""
     rule, role = await _get_rule_or_404(rule_id, user, db)
@@ -273,7 +273,7 @@ async def preview_rule(
     diary_id: uuid.UUID,
     body: PreviewBody,
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> PreviewOut:
     """Preview how many events a condition would match over the last 90 days."""
     await _get_diary_or_404(diary_id, user, db)
@@ -325,7 +325,7 @@ async def apply_rule(
     rule_id: uuid.UUID,
     body: ApplyBody,
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> dict:
     """Queue a backfill job to apply a rule over the past N days."""
     rule, role = await _get_rule_or_404(rule_id, user, db)

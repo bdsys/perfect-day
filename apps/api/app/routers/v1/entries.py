@@ -307,7 +307,7 @@ def _after_cursor(entry_date: date, created_at: datetime, entry_id: uuid.UUID):
 async def list_deleted_entries(
     diary_id: uuid.UUID,
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> list[EntryOut]:
     # Raw ownership check — intentionally allows deleted diaries so their entries can be restored
     result = await db.execute(
@@ -339,7 +339,7 @@ async def list_entries(
     cursor: uuid.UUID | None = None,
     limit: int = Query(20, ge=1, le=100),
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> list[EntryOut]:
     diary, role = await _get_diary_or_404(diary_id, user, db)
 
@@ -393,7 +393,7 @@ async def create_entry(
     diary_id: uuid.UUID,
     body: EntryCreate,
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> EntryOut:
     diary, role = await _get_diary_or_404(diary_id, user, db)
     if role == "viewer":
@@ -428,7 +428,7 @@ async def create_entry(
 async def get_entry(
     entry_id: uuid.UUID,
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> EntryOut:
     entry, _, role = await _get_entry_or_404(entry_id, user, db)
     return _entry_out_from_orm(entry, can_edit=role != "viewer")
@@ -439,7 +439,7 @@ async def patch_entry(
     entry_id: uuid.UUID,
     body: EntryPatch,
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> EntryOut:
     entry, _, _ = await _get_entry_or_404(entry_id, user, db, require_editor=True)
 
@@ -466,7 +466,7 @@ async def patch_entry(
 async def publish_entry(
     entry_id: uuid.UUID,
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> EntryOut:
     entry, diary, role = await _get_entry_or_404(entry_id, user, db, require_editor=True)
     if entry.status == "published":
@@ -486,7 +486,7 @@ async def publish_entry(
 async def accept_suggestion(
     entry_id: uuid.UUID,
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> EntryOut:
     """Replace the entry's title and text with the AI's pending suggestion."""
     entry, _, _ = await _get_entry_or_404(entry_id, user, db, require_editor=True)
@@ -513,7 +513,7 @@ async def accept_suggestion(
 async def dismiss_suggestion(
     entry_id: uuid.UUID,
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> EntryOut:
     """Discard the AI's pending suggestion; the entry's text is unchanged."""
     entry, _, _ = await _get_entry_or_404(entry_id, user, db, require_editor=True)
@@ -527,7 +527,7 @@ async def dismiss_suggestion(
 async def unpublish_entry(
     entry_id: uuid.UUID,
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> EntryOut:
     entry, _, _ = await _get_entry_or_404(entry_id, user, db, require_editor=True)
     entry.status = "draft"
@@ -539,7 +539,7 @@ async def unpublish_entry(
 async def delete_entry(
     entry_id: uuid.UUID,
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> None:
     entry, _, _ = await _get_entry_or_404(entry_id, user, db, require_editor=True)
     entry.deleted_at = datetime.now(tz=UTC)
@@ -549,7 +549,7 @@ async def delete_entry(
 async def restore_entry(
     entry_id: uuid.UUID,
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> EntryOut:
     result = await db.execute(
         select(Entry)
@@ -584,7 +584,7 @@ async def restore_entry(
 async def regenerate_entry(
     entry_id: uuid.UUID,
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> EntryOut:
     entry, _, _ = await _get_entry_or_404(entry_id, user, db, require_editor=True)
     from app.workers.tasks import generate_entry_draft

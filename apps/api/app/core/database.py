@@ -34,6 +34,12 @@ def get_session_factory() -> async_sessionmaker[AsyncSession]:
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
+    """One session per request, committed when the endpoint returns.
+
+    Always use it as `Depends(get_db, scope="function")`. Without that scope
+    FastAPI runs the commit after the response is sent, so a client can be
+    told "saved" before the data is saved, or when saving fails (D-8).
+    """
     factory = get_session_factory()
     async with factory() as session:
         try:

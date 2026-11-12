@@ -151,7 +151,7 @@ def _diary_updates(body: DiaryPatch) -> dict:
 @router.get("", response_model=list[DiaryOut])
 async def list_diaries(
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> list[Diary]:
     owned = await db.execute(
         select(Diary).where(Diary.owner_user_id == user.id, Diary.deleted_at.is_(None))
@@ -170,7 +170,7 @@ async def list_diaries(
 async def create_diary(
     body: DiaryCreate,
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> Diary:
     limit = TIER_DIARY_LIMITS.get(user.subscription_tier, 1)
 
@@ -234,7 +234,7 @@ async def create_diary(
 @router.get("/trash", response_model=list[DiaryOut])
 async def list_deleted_diaries(
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> list[Diary]:
     result = await db.execute(
         select(Diary)
@@ -252,7 +252,7 @@ async def list_deleted_diaries(
 async def get_diary(
     diary_id: uuid.UUID,
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> Diary:
     diary, _ = await _get_diary_or_404(diary_id, user, db)
     return diary
@@ -263,7 +263,7 @@ async def patch_diary(
     diary_id: uuid.UUID,
     body: DiaryPatch,
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> Diary:
     diary, _ = await _get_diary_or_404(diary_id, user, db, require_owner=True)
 
@@ -279,7 +279,7 @@ async def patch_diary(
 async def delete_diary(
     diary_id: uuid.UUID,
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> Diary:
     diary, _ = await _get_diary_or_404(diary_id, user, db, require_owner=True)
     now = datetime.now(tz=UTC)
@@ -296,7 +296,7 @@ async def delete_diary(
 async def restore_diary(
     diary_id: uuid.UUID,
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> Diary:
     # Fetch even soft-deleted diaries for restore
     result = await db.execute(

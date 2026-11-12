@@ -97,7 +97,7 @@ def _photo_out(photo) -> PhotoOut:
 async def create_upload_url(
     body: UploadUrlRequest,
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> UploadUrlResponse:
     if body.declared_mime not in ALLOWED_MIME:
         raise HTTPException(status_code=415, detail="unsupported_mime")
@@ -134,7 +134,7 @@ async def create_upload_url(
 async def finalize_photo(
     photo_id: uuid.UUID,
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> PhotoOut:
     # Look up photo owned by this user
     result = await db.execute(
@@ -239,7 +239,7 @@ async def finalize_photo(
 @router.get("/photos", response_model=list[PhotoOut])
 async def list_user_photos(
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> list[PhotoOut]:
     q = (
         select(Photo)
@@ -264,7 +264,7 @@ async def get_photo(
     photo_id: uuid.UUID,
     kind: Literal["full", "thumb"] = "full",
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     result = await db.execute(
         select(Photo).where(
@@ -318,7 +318,7 @@ async def get_photo(
 async def delete_photo(
     photo_id: uuid.UUID,
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> None:
     result = await db.execute(
         select(Photo).where(
@@ -343,7 +343,7 @@ async def attach_photo_to_entry(
     entry_id: uuid.UUID,
     body: PhotoAttachRequest,
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> PhotoOut:
     from app.routers.v1.entries import _get_entry_or_404
 
@@ -389,7 +389,7 @@ async def detach_photo_from_entry(
     entry_id: uuid.UUID,
     photo_id: uuid.UUID,
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> None:
     from app.routers.v1.entries import _get_entry_or_404
 
@@ -415,7 +415,7 @@ async def detach_photo_from_entry(
 async def get_photo_metadata(
     photo_id: uuid.UUID,
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> PhotoOut:
     result = await db.execute(
         select(Photo).where(
