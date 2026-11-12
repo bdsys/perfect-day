@@ -329,6 +329,53 @@ async def _ingest_calendar_event(
     return str(event_id)
 
 
+# ---------------------------------------------------------------------------
+# cancel_calendar_event
+# ---------------------------------------------------------------------------
+
+
+@celery_app.task(name="app.workers.tasks.cancel_calendar_event", bind=True, max_retries=3)
+def cancel_calendar_event(self, external_id: str, diary_id: str) -> None:
+    """Apply a cancellation reported by Google Calendar."""
+    try:
+        run_sync(_cancel_calendar_event(external_id, diary_id))
+    except Exception as exc:
+        raise self.retry(exc=exc)
+
+
+async def _cancel_calendar_event(external_id: str, diary_id: str) -> None:
+    """Remove a cancelled event; its entry follows only if nobody has touched it."""
+    from sqlalchemy import select
+
+    from app.models import Event
+    from app.workers.event_changes import release_event_from_entry
+    from app.workers.utils import db_session
+
+    async with db_session() as db:
+        event = (
+            await db.execute(
+                select(Event)
+                .where(
+                    Event.diary_id == uuid.UUID(diary_id),
+                    Event.source == "google_calendar",
+                    Event.external_id == external_id,
+                )
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if event is None:
+            return  # never stored, or already removed
+        entry_to_redraft = await release_event_from_entry(db, event)
+        await db.delete(event)
+
+    # The session has committed; only now can a worker see the change.
+    if entry_to_redraft is not None:
+        try:
+            generate_entry_draft.delay(str(entry_to_redraft))
+        except Exception:
+            log.exception("cancel_event_redraft_queue_failed", entry_id=str(entry_to_redraft))
+
+
 def _has_ended(ends_at: datetime | None) -> bool:
     """An event with no known end counts as over."""
     return ends_at is None or ends_at <= datetime.now(tz=UTC)

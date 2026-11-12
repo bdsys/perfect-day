@@ -184,3 +184,182 @@ class TestDueSweep:
             await _apply_rule_backfill(str(rule_id), 30)
 
         assert (await db_session.execute(select(Entry.id))).scalars().all() == []
+
+
+async def _attached(
+    db: AsyncSession,
+    diary: Diary,
+    *,
+    external_id: str = "evt-1",
+    body_source: str = "llm",
+    status: str = "draft",
+    creation_source: str = "rule",
+    ends_at: datetime | None = None,
+) -> tuple[Entry, Event]:
+    """An entry with one calendar event on it."""
+    entry = Entry(
+        diary_id=diary.id,
+        entry_date=datetime(2026, 6, 1, tzinfo=UTC).date(),
+        title="Soccer practice",
+        body_markdown="Practice ran from ten until eleven.",
+        body_source=body_source,
+        status=status,
+        created_by="auto",
+        creation_source=creation_source,
+    )
+    db.add(entry)
+    await db.commit()
+    event = await make_event(
+        db,
+        diary_id=diary.id,
+        entry=entry,
+        external_id=external_id,
+        ends_at=ends_at or datetime.now(tz=UTC) - timedelta(days=1),
+        rules_evaluated_at=datetime.now(tz=UTC) - timedelta(hours=1),
+    )
+    return entry, event
+
+
+async def _entry_row(db: AsyncSession, entry_id: uuid.UUID):
+    return (
+        await db.execute(
+            select(Entry.deleted_at, Entry.body_markdown, Entry.status).where(Entry.id == entry_id)
+        )
+    ).one()
+
+
+async def _external_ids(db: AsyncSession) -> list[str]:
+    return sorted((await db.execute(select(Event.external_id))).scalars().all())
+
+
+class TestCancellation:
+    async def test_cancelled_before_any_entry_leaves_no_event(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
+        from app.workers.tasks import _cancel_calendar_event
+
+        diary = await _diary_with_rule(db_session)
+        await make_event(db_session, diary_id=diary.id, external_id="evt-1")
+
+        await _cancel_calendar_event("evt-1", str(diary.id))
+
+        assert await _external_ids(db_session) == []
+
+    async def test_cancelled_after_an_untouched_draft_removes_the_entry(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
+        from app.models import RuleSeriesClaim
+        from app.workers.tasks import _cancel_calendar_event
+
+        diary = await _diary_with_rule(db_session)
+        entry, _ = await _attached(db_session, diary)
+        rule_id = (await db_session.execute(select(AutoCreationRule.id))).scalar_one()
+        db_session.add(
+            RuleSeriesClaim(rule_id=rule_id, recurring_event_id="series-1", entry_id=entry.id)
+        )
+        await db_session.commit()
+
+        with patch("app.workers.tasks.generate_entry_draft") as draft:
+            await _cancel_calendar_event("evt-1", str(diary.id))
+
+        assert (await _entry_row(db_session, entry.id)).deleted_at is not None
+        assert await _external_ids(db_session) == []
+        claims = (await db_session.execute(select(RuleSeriesClaim.entry_id))).scalars().all()
+        assert claims == [], "a later instance must not be attached to the trashed entry"
+        draft.delay.assert_not_called()
+
+    async def test_cancelled_after_an_edited_draft_leaves_the_text_intact(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
+        from app.workers.tasks import _cancel_calendar_event
+
+        diary = await _diary_with_rule(db_session)
+        entry, _ = await _attached(db_session, diary, body_source="user")
+
+        with patch("app.workers.tasks.generate_entry_draft") as draft:
+            await _cancel_calendar_event("evt-1", str(diary.id))
+
+        row = await _entry_row(db_session, entry.id)
+        assert row.deleted_at is None
+        assert row.body_markdown == "Practice ran from ten until eleven."
+        assert await _external_ids(db_session) == []
+        draft.delay.assert_not_called()
+
+    async def test_cancelled_after_publishing_leaves_the_entry_published(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
+        from app.workers.tasks import _cancel_calendar_event
+
+        diary = await _diary_with_rule(db_session)
+        entry, _ = await _attached(db_session, diary, status="published")
+
+        with patch("app.workers.tasks.generate_entry_draft") as draft:
+            await _cancel_calendar_event("evt-1", str(diary.id))
+
+        row = await _entry_row(db_session, entry.id)
+        assert (row.deleted_at, row.status) == (None, "published")
+        assert row.body_markdown == "Practice ran from ten until eleven."
+        draft.delay.assert_not_called()
+
+    async def test_entry_a_person_made_from_the_picker_is_never_removed(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
+        from app.workers.tasks import _cancel_calendar_event
+
+        diary = await _diary_with_rule(db_session)
+        entry, _ = await _attached(db_session, diary, creation_source="calendar_pick")
+
+        with patch("app.workers.tasks.generate_entry_draft"):
+            await _cancel_calendar_event("evt-1", str(diary.id))
+
+        assert (await _entry_row(db_session, entry.id)).deleted_at is None
+        assert await _external_ids(db_session) == []
+
+    async def test_untouched_draft_with_other_events_is_kept_and_redrafted(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
+        from app.models import RuleSeriesClaim
+        from app.workers.tasks import _cancel_calendar_event
+
+        diary = await _diary_with_rule(db_session)
+        entry, _ = await _attached(db_session, diary)
+        await make_event(db_session, diary_id=diary.id, entry=entry, external_id="evt-2")
+        rule_id = (await db_session.execute(select(AutoCreationRule.id))).scalar_one()
+        db_session.add(
+            RuleSeriesClaim(rule_id=rule_id, recurring_event_id="series-1", entry_id=entry.id)
+        )
+        await db_session.commit()
+
+        with patch("app.workers.tasks.generate_entry_draft") as draft:
+            await _cancel_calendar_event("evt-1", str(diary.id))
+
+        assert (await _entry_row(db_session, entry.id)).deleted_at is None
+        assert await _external_ids(db_session) == ["evt-2"]
+        claims = (await db_session.execute(select(RuleSeriesClaim.entry_id))).scalars().all()
+        assert claims == [entry.id], "the series is still running"
+        draft.delay.assert_called_once_with(str(entry.id))
+
+    async def test_cancelling_an_event_we_never_stored_does_nothing(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
+        from app.workers.tasks import _cancel_calendar_event
+
+        diary = await _diary_with_rule(db_session)
+        await make_event(db_session, diary_id=diary.id, external_id="evt-1")
+
+        await _cancel_calendar_event("never-seen", str(diary.id))
+
+        assert await _external_ids(db_session) == ["evt-1"]
+
+    async def test_cancellation_in_one_diary_does_not_touch_another(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
+        from app.workers.tasks import _cancel_calendar_event
+
+        diary = await _diary_with_rule(db_session)
+        other = await make_diary(db_session, owner=await make_user(db_session), name="Other")
+        await make_event(db_session, diary_id=other.id, external_id="evt-1")
+
+        await _cancel_calendar_event("evt-1", str(diary.id))
+
+        assert await _external_ids(db_session) == ["evt-1"]
