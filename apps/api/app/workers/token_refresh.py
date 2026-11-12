@@ -75,10 +75,23 @@ async def ensure_fresh_access_token(oauth_token, db) -> str | None:
             )
 
         if resp.status_code != 200:
+            try:
+                error_code = str(resp.json().get("error", ""))
+            except ValueError:
+                error_code = ""
+            # Only "invalid_grant" means the user's grant is gone for good. A 5xx,
+            # a 429 or a misconfigured client must not disconnect the integration:
+            # the next scan simply tries again.
+            grant_revoked = resp.status_code in (400, 401) and error_code == "invalid_grant"
             log.error(
-                "token_refresh_failed", status=resp.status_code, user_id=str(oauth_token.user_id)
+                "token_refresh_failed",
+                status=resp.status_code,
+                error=error_code,
+                grant_revoked=grant_revoked,
+                user_id=str(oauth_token.user_id),
             )
-            oauth_token.revoked_at = datetime.now(tz=UTC)
+            if grant_revoked:
+                oauth_token.revoked_at = datetime.now(tz=UTC)
             return None
 
         token_data = resp.json()

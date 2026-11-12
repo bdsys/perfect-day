@@ -352,3 +352,86 @@ async def test_post_filter_handles_all_day_events():
     assert ingested_event["id"] == "evt-allday", (
         f"Wrong event ingested: {ingested_event['id']!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Test F: an expired sync token (410) falls back to a full sync and yields a new token
+# Test G: a calendar that keeps answering 429 gives up instead of looping forever
+# ---------------------------------------------------------------------------
+
+
+def _client_returning(responses: list[httpx.Response], seen_params: list[dict]):
+    it = iter(responses)
+
+    async def _mock_get(url, *, headers, params, **kwargs):
+        seen_params.append(dict(params))
+        return next(it)
+
+    client = AsyncMock()
+    client.get = _mock_get
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=False)
+    return client
+
+
+@pytest.mark.asyncio
+async def test_expired_sync_token_falls_back_to_full_sync():
+    now = datetime(2026, 6, 15, 12, 0, 0, tzinfo=UTC)
+    seen: list[dict] = []
+    client = _client_returning(
+        [
+            _make_httpx_response({"error": "gone"}, status_code=410),
+            _make_httpx_response(_google_response([{"id": "e1"}], "fresh")),
+        ],
+        seen,
+    )
+
+    with patch("app.workers.calendar_sync.httpx.AsyncClient", return_value=client):
+        events, token = await _fetch_events(
+            calendar_id="primary",
+            sync_token="expired",  # noqa: S106
+            headers={},
+            time_min=now - timedelta(days=90),
+            time_max=now + timedelta(days=90),
+        )
+
+    assert seen[0]["syncToken"] == "expired"
+    assert "syncToken" not in seen[1]
+    assert "timeMin" in seen[1] and "timeMax" in seen[1]
+    assert events == [{"id": "e1"}]
+    assert token == "fresh"  # noqa: S105 — caller persists this, replacing the dead token
+
+
+@pytest.mark.asyncio
+async def test_persistent_429_raises_instead_of_looping():
+    now = datetime(2026, 6, 15, 12, 0, 0, tzinfo=UTC)
+    seen: list[dict] = []
+    always_429 = [_make_httpx_response({}, status_code=429) for _ in range(50)]
+    client = _client_returning(always_429, seen)
+
+    with (
+        patch("app.workers.calendar_sync.httpx.AsyncClient", return_value=client),
+        patch("asyncio.sleep", new=AsyncMock()),
+        pytest.raises(httpx.HTTPStatusError),
+    ):
+        await _fetch_events(
+            calendar_id="primary",
+            sync_token=None,
+            headers={},
+            time_min=now - timedelta(days=90),
+            time_max=now + timedelta(days=90),
+        )
+
+    assert len(seen) < 50
+
+
+def test_retry_after_accepts_http_date():
+    from app.workers.calendar_sync import _retry_after_seconds
+
+    request = httpx.Request("GET", "https://example.test")
+    dated = httpx.Response(
+        429, headers={"Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT"}, request=request
+    )
+    numeric = httpx.Response(429, headers={"Retry-After": "120"}, request=request)
+    assert _retry_after_seconds(dated, 4) == 4
+    assert _retry_after_seconds(numeric, 4) == 16

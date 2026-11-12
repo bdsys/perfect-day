@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import structlog
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
 router = APIRouter(tags=["health"])
+log = structlog.get_logger()
 
 
 @router.get("/healthz")
@@ -27,7 +29,8 @@ async def readiness() -> JSONResponse:
             await conn.execute(__import__("sqlalchemy", fromlist=["text"]).text("SELECT 1"))
         checks["postgres"] = "ok"
     except Exception as e:
-        checks["postgres"] = f"error: {e}"
+        log.warning("readiness_check_failed", check="postgres", error=str(e))
+        checks["postgres"] = "error"
         healthy = False
 
     # Redis
@@ -36,7 +39,8 @@ async def readiness() -> JSONResponse:
         await r.ping()
         checks["redis"] = "ok"
     except Exception as e:
-        checks["redis"] = f"error: {e}"
+        log.warning("readiness_check_failed", check="redis", error=str(e))
+        checks["redis"] = "error"
         healthy = False
 
     # MinIO / S3
@@ -56,7 +60,8 @@ async def readiness() -> JSONResponse:
             )
         checks["minio"] = "ok"
     except Exception as e:
-        checks["minio"] = f"error: {e}"
+        log.warning("readiness_check_failed", check="minio", error=str(e))
+        checks["minio"] = "error"
         # MinIO failure is warning-level — don't fail readiness for photo storage unavailability
         # on startup (bucket may not exist yet before first upload)
 

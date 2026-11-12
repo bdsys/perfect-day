@@ -77,6 +77,7 @@ def _make_entry_and_diary():
     entry.id = entry_id
     entry.diary_id = diary.id
     entry.status = "draft"
+    entry.deleted_at = None
     entry.entry_date = date(2026, 5, 19)
     entry.entry_end_date = None
     entry.events = [_make_event()]
@@ -93,6 +94,8 @@ def _db_context(entry, diary):
     """Return a context-manager mock that returns entry (with events) on first
     execute and a fresh entry_update on the second execute."""
     entry_update = MagicMock()
+    entry_update.status = "draft"
+    entry_update.deleted_at = None
     entry_update.id = entry.id
     entry_update.entry_date = entry.entry_date
 

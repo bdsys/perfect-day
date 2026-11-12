@@ -20,40 +20,95 @@ echo "This script writes application secrets to ${ENV_FILE}."
 echo "The file is readable only by root and the docker group."
 echo ""
 
-# ── Helper ────────────────────────────────────────────────────────────────────
+# ── Helpers ───────────────────────────────────────────────────────────────────
+# These are called as VAR=$(helper ...), so stdout must carry the value and
+# nothing else. Prompts and the newline after a hidden read go to stderr;
+# otherwise every captured value starts with "\n" (GitHub issue #39).
+
+# Print the current value of KEY from an existing env file, or nothing.
+existing_value() {
+    local key="$1"
+    [[ -f "${ENV_FILE}" ]] || return 0
+    sed -n "s/^${key}=//p" "${ENV_FILE}" | head -n 1
+}
+
+# Required value. If one is already stored, a blank answer keeps it.
 prompt_secret() {
     local varname="$1"
     local prompt="$2"
-    local value=""
+    local current value=""
+    current="$(existing_value "${varname}")"
+    [[ -n "${current}" ]] && prompt="${prompt} (blank keeps current value)"
     while [[ -z "${value}" ]]; do
-        read -rsp "${prompt}: " value
-        echo ""
-        if [[ -z "${value}" ]]; then
-            echo "  (Value cannot be empty. Press Ctrl+C to abort.)"
+        read -rsp "${prompt}: " value || true
+        echo "" >&2
+        if [[ -z "${value}" && -n "${current}" ]]; then
+            value="${current}"
+        elif [[ -z "${value}" ]]; then
+            echo "  (Value cannot be empty. Press Ctrl+C to abort.)" >&2
         fi
     done
     printf '%s' "${value}"
 }
 
+# Optional value. A blank answer keeps the stored value, or skips if none.
 prompt_optional() {
     local varname="$1"
     local prompt="$2"
-    local value=""
-    read -rsp "${prompt} (leave blank to skip): " value
-    echo ""
-    printf '%s' "${value}"
+    local current value=""
+    current="$(existing_value "${varname}")"
+    if [[ -n "${current}" ]]; then
+        prompt="${prompt} (blank keeps current value)"
+    else
+        prompt="${prompt} (leave blank to skip)"
+    fi
+    read -rsp "${prompt}: " value || true
+    echo "" >&2
+    printf '%s' "${value:-${current}}"
 }
 
 hex32() {
     python3 -c "import secrets; print(secrets.token_hex(32))"
 }
 
+# Generated secrets are created once and then kept for the life of the install.
+# Photos and OAuth tokens are encrypted under MASTER_SECRET / OAUTH_TOKEN_SECRET
+# and the Postgres and MinIO volumes are initialised with their passwords, so
+# regenerating any of them on a re-run would make existing data unreadable.
+keep_or_generate() {
+    local varname="$1"
+    local generator="$2"
+    local current
+    current="$(existing_value "${varname}")"
+    if [[ -n "${current}" ]]; then
+        echo "  ${varname} kept (already provisioned)" >&2
+        printf '%s' "${current}"
+    else
+        echo "  ${varname} generated" >&2
+        "${generator}"
+    fi
+}
+
+hex24() {
+    openssl rand -hex 24
+}
+# ── End helpers ───────────────────────────────────────────────────────────────
+
+if [[ -f "${ENV_FILE}" ]]; then
+    BACKUP_FILE="${ENV_FILE}.bak.$(date -u +%Y%m%dT%H%M%SZ)"
+    cp -p "${ENV_FILE}" "${BACKUP_FILE}"
+    echo "Existing ${ENV_FILE} found."
+    echo "  Backed up to ${BACKUP_FILE}"
+    echo "  Cryptographic secrets and passwords will be kept, not regenerated."
+    echo ""
+fi
+
 # ── Operator-provided secrets ─────────────────────────────────────────────────
 echo "--- API Keys (operator-provided) ---"
 echo ""
 
 ANTHROPIC_API_KEY=$(prompt_secret ANTHROPIC_API_KEY "ANTHROPIC_API_KEY")
-GEMINI_API_KEY=$(prompt_optional GEMINI_API_KEY "GEMINI_API_KEY (LLM fallback, leave blank to disable)")
+GEMINI_API_KEY=$(prompt_optional GEMINI_API_KEY "GEMINI_API_KEY (LLM fallback)")
 GOOGLE_CLIENT_ID=$(prompt_secret GOOGLE_CLIENT_ID "GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET=$(prompt_secret GOOGLE_CLIENT_SECRET "GOOGLE_CLIENT_SECRET")
 SENDGRID_API_KEY=$(prompt_optional SENDGRID_API_KEY "SENDGRID_API_KEY (email notifications)")
@@ -77,21 +132,12 @@ FORTIGATE_LAN_IP=$(prompt_optional FORTIGATE_LAN_IP "FORTIGATE_LAN_IP (FortiGate
 echo ""
 echo "--- Generating cryptographic secrets ---"
 
-# ── Auto-generated secrets ────────────────────────────────────────────────────
-MASTER_SECRET=$(hex32)
-echo "  MASTER_SECRET        generated"
-
-OAUTH_TOKEN_SECRET=$(hex32)
-echo "  OAUTH_TOKEN_SECRET   generated"
-
-SECRET_KEY=$(hex32)
-echo "  SECRET_KEY           generated"
-
-POSTGRES_PASSWORD=$(hex32)
-echo "  POSTGRES_PASSWORD    generated"
-
-MINIO_ROOT_PASSWORD=$(openssl rand -hex 24)
-echo "  MINIO_ROOT_PASSWORD  generated"
+# ── Auto-generated secrets (kept if already provisioned) ─────────────────────
+MASTER_SECRET=$(keep_or_generate MASTER_SECRET hex32)
+OAUTH_TOKEN_SECRET=$(keep_or_generate OAUTH_TOKEN_SECRET hex32)
+SECRET_KEY=$(keep_or_generate SECRET_KEY hex32)
+POSTGRES_PASSWORD=$(keep_or_generate POSTGRES_PASSWORD hex32)
+MINIO_ROOT_PASSWORD=$(keep_or_generate MINIO_ROOT_PASSWORD hex24)
 
 echo ""
 echo "--- Writing ${ENV_FILE} ---"
@@ -104,8 +150,9 @@ cat > "${ENV_FILE}" <<EOF
 #
 # IMPORTANT: This file contains cryptographic keys.
 # Back it up to a password manager or offline device immediately.
-# If MASTER_SECRET or OAUTH_TOKEN_SECRET is lost, encrypted OAuth tokens
-# in the database become permanently unreadable (users must re-authorize).
+# If MASTER_SECRET is lost, every stored photo is permanently unreadable.
+# If OAUTH_TOKEN_SECRET is lost, stored OAuth tokens are unreadable
+# (users must re-authorize).
 
 ENV=production
 
@@ -167,8 +214,10 @@ NEXT_PUBLIC_API_URL=https://api.diary.perfectday.andrewlass.com
 NEXT_PUBLIC_GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
 EOF
 
-chmod 600 "${ENV_FILE}"
+# 640, not 600: compose runs as the perfectday service user (docker group) and
+# has to read this file through the .env symlinks.
 chown root:docker "${ENV_FILE}"
+chmod 640 "${ENV_FILE}"
 
 echo "  Written: ${ENV_FILE}"
 echo "  Mode:    $(stat -c '%a %U:%G' ${ENV_FILE})"
@@ -178,26 +227,21 @@ DDNS_CONFIG=/etc/perfect-day/cloudflare-ddns.config.json
 if [[ -n "${CLOUDFLARE_API_TOKEN:-}" && -n "${CLOUDFLARE_ZONE_ID:-}" ]]; then
     echo ""
     echo "--- Writing ${DDNS_CONFIG} ---"
-    cat > "${DDNS_CONFIG}" <<EOF
-{
-  "cloudflare": [
-    {
-      "authentication": { "api_token": "${CLOUDFLARE_API_TOKEN}" },
-      "zone_id": "${CLOUDFLARE_ZONE_ID}",
-      "subdomains": [
-        "diary.perfectday",
-        "api.diary.perfectday",
-        "media.diary.perfectday"
+    # jq escapes the values, so a stray character can never produce invalid JSON.
+    jq -n --arg token "${CLOUDFLARE_API_TOKEN}" --arg zone "${CLOUDFLARE_ZONE_ID}" '{
+      cloudflare: [
+        {
+          authentication: { api_token: $token },
+          zone_id: $zone,
+          subdomains: ["diary.perfectday", "api.diary.perfectday", "media.diary.perfectday"],
+          proxied: false
+        }
       ],
-      "proxied": false
-    }
-  ],
-  "a": true,
-  "aaaa": false,
-  "purgeUnknownRecords": false,
-  "ttl": 300
-}
-EOF
+      a: true,
+      aaaa: false,
+      purgeUnknownRecords: false,
+      ttl: 300
+    }' > "${DDNS_CONFIG}"
     chmod 600 "${DDNS_CONFIG}"
     chown root:docker "${DDNS_CONFIG}"
     echo "  Written: ${DDNS_CONFIG}"
@@ -207,7 +251,8 @@ else
     echo "  Cloudflare DDNS config skipped."
     echo "  Note: the cloudflare-ddns container will fail to start until"
     echo "  ${DDNS_CONFIG} exists. Re-run this script later when you"
-    echo "  have your Cloudflare API token and Zone ID, or stop the service:"
+    echo "  have your Cloudflare API token and Zone ID (existing secrets are"
+    echo "  kept on a re-run), or stop the service:"
     echo "    cd /opt/perfect-day && docker compose stop cloudflare-ddns"
 fi
 
@@ -220,9 +265,9 @@ echo "║  offline device before continuing.                               ║"
 echo "║                                                                  ║"
 echo "║  If this NUC's disk fails and you have no backup:               ║"
 echo "║  - MASTER_SECRET and OAUTH_TOKEN_SECRET are unrecoverable.      ║"
+echo "║  - Every stored photo becomes permanently unreadable.           ║"
 echo "║  - All encrypted OAuth tokens in the database become            ║"
-echo "║    permanently unreadable.                                       ║"
-echo "║  - Users will need to re-authorize Google Calendar.             ║"
+echo "║    permanently unreadable; users must re-authorize Google.      ║"
 echo "╚══════════════════════════════════════════════════════════════════╝"
 echo ""
 echo "Next step: run scripts/nuc/20-deploy.sh to deploy the application."

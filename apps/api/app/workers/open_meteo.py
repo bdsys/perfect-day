@@ -20,8 +20,9 @@ from app.core.config import get_settings
 
 log = structlog.get_logger()
 
-# WMO weather interpretation codes — abbreviated mapping. Full table at
-# https://open-meteo.com/en/docs#api_form. Unknown codes fall back to "unknown".
+# WMO weather interpretation codes as listed at https://open-meteo.com/en/docs
+# ("WMO Weather interpretation codes (WW)"). Unknown codes fall back to "unknown".
+# These labels are handed to the LLM as facts, so intensity words must match the table.
 _WEATHERCODE_LABELS: dict[int, str] = {
     0: "clear sky",
     1: "mainly clear",
@@ -32,17 +33,24 @@ _WEATHERCODE_LABELS: dict[int, str] = {
     51: "light drizzle",
     53: "moderate drizzle",
     55: "dense drizzle",
+    56: "light freezing drizzle",
+    57: "dense freezing drizzle",
     61: "slight rain",
     63: "moderate rain",
     65: "heavy rain",
-    71: "moderate snow",
-    73: "heavy snow",
-    75: "snowfall",
-    80: "rain showers",
+    66: "light freezing rain",
+    67: "heavy freezing rain",
+    71: "slight snow",
+    73: "moderate snow",
+    75: "heavy snow",
+    77: "snow grains",
+    80: "slight rain showers",
     81: "moderate rain showers",
     82: "violent rain showers",
+    85: "slight snow showers",
+    86: "heavy snow showers",
     95: "thunderstorm",
-    96: "thunderstorm with hail",
+    96: "thunderstorm with slight hail",
     99: "thunderstorm with heavy hail",
 }
 

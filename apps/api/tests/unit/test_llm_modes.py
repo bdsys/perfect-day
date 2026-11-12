@@ -86,6 +86,7 @@ def _make_entry(
     entry.id = entry_id
     entry.diary_id = diary.id
     entry.status = "draft"
+    entry.deleted_at = None
     entry.entry_date = date(2026, 5, 19)
     entry.entry_end_date = None
     entry.title = title
@@ -106,6 +107,8 @@ def _db_context(entry: MagicMock, diary: MagicMock):
     Returns (ctx, entry_update) — entry_update is the write-side entry mock.
     """
     entry_update = MagicMock()
+    entry_update.status = "draft"
+    entry_update.deleted_at = None
     entry_update.id = entry.id
     entry_update.entry_date = entry.entry_date
     entry_update.body_markdown = entry.body_markdown  # preserve initial value
@@ -483,3 +486,55 @@ class TestPolishTitlePreservation:
         # positional_args: (system_prompt, diary_context, entry_data + user_message_extra)
         entry_data_arg = positional_args[2]
         assert "CURRENT_TITLE: My Title" in entry_data_arg
+
+
+# ---------------------------------------------------------------------------
+# A slow generation must not overwrite an entry the diarist published or deleted meanwhile
+# ---------------------------------------------------------------------------
+
+
+class TestEntryChangedDuringGeneration:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("change", ["published", "deleted"])
+    async def test_result_is_discarded(self, change: str):
+        entry_id, entry, diary = _make_entry(body_markdown=None, events=[_make_event()])
+        anthropic_p = _make_provider(name="anthropic", result=_llm_result(_EVENTS_OUTPUT))
+        gemini_p = _make_provider(name="gemini", configured=False)
+        ctx, entry_update, saved_gens = _db_context(entry, diary)
+
+        entry_update.title = "Title the diarist published"
+        entry_update.body_markdown = "Body the diarist published"
+        if change == "published":
+            entry_update.status = "published"
+        else:
+            entry_update.deleted_at = datetime(2026, 5, 20, tzinfo=UTC)
+
+        with (
+            patch("app.workers.llm.db_session", return_value=ctx),
+            patch("app.workers.llm.AnthropicProvider", return_value=anthropic_p),
+            patch("app.workers.llm.GeminiProvider", return_value=gemini_p),
+        ):
+            from app.workers.llm import generate_draft_for_entry
+            await generate_draft_for_entry(entry_id)
+
+        assert entry_update.title == "Title the diarist published"
+        assert entry_update.body_markdown == "Body the diarist published"
+        assert saved_gens == []
+
+    @pytest.mark.asyncio
+    async def test_deleted_entry_never_reaches_the_provider(self):
+        entry_id, entry, diary = _make_entry(body_markdown=None, events=[_make_event()])
+        entry.deleted_at = datetime(2026, 5, 20, tzinfo=UTC)
+        anthropic_p = _make_provider(name="anthropic", result=_llm_result(_EVENTS_OUTPUT))
+        gemini_p = _make_provider(name="gemini", configured=False)
+        ctx, _, _ = _db_context(entry, diary)
+
+        with (
+            patch("app.workers.llm.db_session", return_value=ctx),
+            patch("app.workers.llm.AnthropicProvider", return_value=anthropic_p),
+            patch("app.workers.llm.GeminiProvider", return_value=gemini_p),
+        ):
+            from app.workers.llm import generate_draft_for_entry
+            await generate_draft_for_entry(entry_id)
+
+        anthropic_p.generate.assert_not_called()

@@ -12,7 +12,10 @@ dependencies = [
     "uvicorn[standard]>=0.30",
     "python-multipart>=0.0.9",
     # Database
-    "sqlalchemy[asyncio]>=2.0",
+    # <2.1: from 2.1 a bare postgresql:// URL selects psycopg 3, which is not
+    # installed, so Alembic (DATABASE_URL_SYNC) fails. Lift with a lockfile and
+    # an explicit postgresql+psycopg2:// sync URL.
+    "sqlalchemy[asyncio]>=2.0,<2.1",
     "asyncpg>=0.29",
     "alembic>=1.13",
     "psycopg2-binary>=2.9",   # for alembic sync operations
@@ -20,7 +23,7 @@ dependencies = [
     "celery[redis]>=5.4",
     "redis>=5.0",
     # Auth / crypto
-    "python-jose[cryptography]>=3.3",
+    "python-jose[cryptography]>=3.4",  # 3.4.0 fixes CVE-2024-33663 / CVE-2024-33664
     "argon2-cffi>=23",
     "cryptography>=43",
     # Google OAuth

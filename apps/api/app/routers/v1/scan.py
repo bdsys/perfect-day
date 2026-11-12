@@ -175,6 +175,9 @@ async def trigger_backfill(
     db.add(backfill_run)
     await db.flush()
     await db.refresh(backfill_run)
+    # Commit before queuing: the worker looks the run up by id and silently
+    # returns if it cannot see the row yet, leaving the run "pending" forever.
+    await db.commit()
 
     from app.workers.tasks import backfill_diary
 

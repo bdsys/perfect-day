@@ -21,7 +21,7 @@ from app.core.security import (
     verify_password,
 )
 from app.middleware.rate_limit import auth_limiter
-from app.models import NotificationPreferences, RefreshToken, SocialIdentity, User
+from app.models import NotificationPreferences, OAuthToken, RefreshToken, SocialIdentity, User
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -311,9 +311,12 @@ async def refresh(
         # Outside grace window — revoke entire family (theft signal)
         await db.execute(
             update(RefreshToken)
-            .where(RefreshToken.family_id == rt.family_id)
+            .where(RefreshToken.family_id == rt.family_id, RefreshToken.revoked_at.is_(None))
             .values(revoked_at=now)
         )
+        # Commit before raising: get_db rolls the session back on any exception,
+        # which would silently undo the revocation.
+        await db.commit()
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="token_reuse_detected")
 
     settings = get_settings()
@@ -413,6 +416,13 @@ async def delete_account(
     await db.execute(
         update(RefreshToken)
         .where(RefreshToken.user_id == user.id, RefreshToken.revoked_at.is_(None))
+        .values(revoked_at=now)
+    )
+    # Stop pulling the user's Google data during the grace window. The scan
+    # worker also skips diaries whose owner is soft-deleted.
+    await db.execute(
+        update(OAuthToken)
+        .where(OAuthToken.user_id == user.id, OAuthToken.revoked_at.is_(None))
         .values(revoked_at=now)
     )
     response.delete_cookie(REFRESH_COOKIE, path="/v1/auth")

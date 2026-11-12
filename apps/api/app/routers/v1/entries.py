@@ -4,8 +4,8 @@ import uuid
 from datetime import UTC, date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, ConfigDict
-from sqlalchemy import select
+from pydantic import BaseModel, ConfigDict, model_validator
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -17,7 +17,6 @@ from app.models import (
     EntryPhoto,
     EntryRuleMatch,
     Event,
-    LLMGeneration,
     User,
 )
 from app.routers.v1.diaries import _get_diary_or_404
@@ -37,12 +36,25 @@ class EntryCreate(BaseModel):
     title: str | None = None
     body_markdown: str | None = None
 
+    @model_validator(mode="after")
+    def _end_not_before_start(self) -> EntryCreate:
+        if self.entry_end_date is not None and self.entry_end_date < self.entry_date:
+            raise ValueError("entry_end_date must be on or after entry_date")
+        return self
+
 
 class EntryPatch(BaseModel):
     title: str | None = None
     body_markdown: str | None = None
     entry_date: date | None = None
     entry_end_date: date | None = None
+
+    @model_validator(mode="after")
+    def _entry_date_not_null(self) -> EntryPatch:
+        # entry_date is NOT NULL; an explicit null would otherwise surface as a 500.
+        if "entry_date" in self.model_fields_set and self.entry_date is None:
+            raise ValueError("entry_date cannot be null")
+        return self
 
 
 class EventOut(BaseModel):
@@ -233,6 +245,24 @@ async def _get_entry_or_404(
     return entry, diary, role
 
 
+# Timeline order, newest first. `id` is the final tie-breaker so the order is
+# total and a cursor always resumes at exactly one place.
+ENTRY_TIMELINE_ORDER = (Entry.entry_date.desc(), Entry.created_at.desc(), Entry.id.desc())
+
+
+def _after_cursor(entry_date: date, created_at: datetime, entry_id: uuid.UUID):
+    """Predicate for entries that sort strictly after the given one in timeline order."""
+    return or_(
+        Entry.entry_date < entry_date,
+        and_(Entry.entry_date == entry_date, Entry.created_at < created_at),
+        and_(
+            Entry.entry_date == entry_date,
+            Entry.created_at == created_at,
+            Entry.id < entry_id,
+        ),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -301,7 +331,21 @@ async def list_entries(
     if to_date:
         q = q.where(Entry.entry_date <= to_date)
 
-    q = q.order_by(Entry.entry_date.desc(), Entry.created_at.desc()).limit(limit)
+    if cursor is not None:
+        # Keyset pagination: `cursor` is the id of the last entry on the previous
+        # page; return the entries that sort after it.
+        cursor_row = (
+            await db.execute(
+                select(Entry.entry_date, Entry.created_at, Entry.id).where(
+                    Entry.id == cursor, Entry.diary_id == diary_id
+                )
+            )
+        ).one_or_none()
+        if cursor_row is None:
+            raise HTTPException(status_code=400, detail="invalid_cursor")
+        q = q.where(_after_cursor(cursor_row.entry_date, cursor_row.created_at, cursor_row.id))
+
+    q = q.order_by(*ENTRY_TIMELINE_ORDER).limit(limit)
 
     result = await db.execute(q)
     return [_entry_out_from_orm(e) for e in result.scalars()]
@@ -363,6 +407,8 @@ async def patch_entry(
 
     for field, value in body.model_dump(exclude_unset=True).items():
         setattr(entry, field, value)
+    if entry.entry_end_date is not None and entry.entry_end_date < entry.entry_date:
+        raise HTTPException(status_code=422, detail="entry_end_date_before_entry_date")
     return _entry_out_from_orm(entry)
 
 
@@ -376,19 +422,8 @@ async def publish_entry(
     if entry.status == "published":
         return _entry_out_from_orm(entry)
 
-    # Capture edit diff if body was changed from last LLM output
-    gen_result = await db.execute(
-        select(LLMGeneration)
-        .where(LLMGeneration.entry_id == entry_id, LLMGeneration.status == "success")
-        .order_by(LLMGeneration.created_at.desc())
-        .limit(1)
-    )
-    last_gen = gen_result.scalar_one_or_none()
-    if last_gen is not None and entry.body_markdown:
-        # We don't store the original LLM body separately, so diff is best-effort here.
-        # The proper diff is captured by the UI passing original before editing.
-        pass
-
+    # entry_edit_diffs (design/04-llm-integration.md) is not captured yet: the
+    # original LLM body is not stored separately, so there is nothing to diff.
     entry.status = "published"
     entry.published_at = datetime.now(tz=UTC)
     return _entry_out_from_orm(entry)

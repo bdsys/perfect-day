@@ -6,6 +6,17 @@ File layout (binary):
     MAGIC (4 bytes) || chunk_count (uint32) || chunk_size (uint32) || plaintext_total (uint64)
     [ chunk_length (uint32) || ciphertext+tag ] * chunk_count
 
+Two format versions exist, told apart by MAGIC:
+
+* ``PD02`` (written today). Each blob is encrypted under its own subkey,
+  HKDF(DEK, info="photo-key/v2/" + purpose), so the full-size image and its
+  thumbnail never share a (key, nonce) pair even though they share a DEK. The
+  header and the chunk index are bound into every chunk as associated data, so
+  editing ``chunk_count`` or reordering chunks fails authentication.
+* ``PD01`` (legacy, read-only). Chunks were encrypted directly under the DEK
+  with no associated data. A full image and its thumbnail stored this way reuse
+  the same key and nonce for chunk 0; re-encrypt such photos to retire it.
+
 Wrapped-DEK layout:
     version (1 byte) || nonce (12 bytes) || ciphertext+tag (32 + 16 bytes)
 """
@@ -29,7 +40,10 @@ from app.core.config import get_settings
 
 KEY_VERSION_CURRENT = 0x01
 CHUNK_SIZE = 1024 * 1024  # 1 MiB plaintext per chunk
-MAGIC = b"PD01"
+MAGIC = b"PD02"
+MAGIC_V1 = b"PD01"  # legacy blobs: DEK used directly, no associated data
+PURPOSE_FULL = b"full"
+PURPOSE_THUMB = b"thumb"
 HEADER_FORMAT = "!4sIIQ"  # magic(4s), chunk_count(I), chunk_size(I), plaintext_total(Q)
 
 _HEADER_SIZE = struct.calcsize(HEADER_FORMAT)
@@ -112,12 +126,48 @@ def derive_chunk_nonce(dek: bytes, chunk_index: int) -> bytes:
 
 
 # ---------------------------------------------------------------------------
+# Per-blob subkey and associated data (PD02)
+# ---------------------------------------------------------------------------
+
+
+def derive_blob_key(dek: bytes, purpose: bytes) -> bytes:
+    """Derive the 32-byte key that encrypts one blob (*purpose*) of a photo.
+
+    Separate subkeys are what keep the full image and the thumbnail from
+    sharing a (key, nonce) pair: chunk nonces depend only on the chunk index.
+    """
+    return HKDF(
+        algorithm=SHA256(),
+        length=32,
+        salt=None,
+        info=b"photo-key/v2/" + purpose,
+    ).derive(dek)
+
+
+def _chunk_aad(header: bytes, chunk_index: int) -> bytes:
+    return header + chunk_index.to_bytes(8, "big")
+
+
+def _chunk_cipher(magic: bytes, dek: bytes, purpose: bytes) -> tuple[AESGCM, bytes, bool]:
+    """Return (cipher, nonce_key, use_aad) for a blob with the given magic."""
+    if magic == MAGIC:
+        key = derive_blob_key(dek, purpose)
+        return AESGCM(key), key, True
+    if magic == MAGIC_V1:
+        return AESGCM(dek), dek, False
+    raise ValueError(f"invalid magic: {magic!r}")
+
+
+# ---------------------------------------------------------------------------
 # Eager encrypt / decrypt (loads full payload into memory)
 # ---------------------------------------------------------------------------
 
 
-def encrypt_stream(plaintext: bytes, dek: bytes) -> bytes:
-    """Encrypt *plaintext* into a chunked AES-256-GCM blob.
+def encrypt_stream(plaintext: bytes, dek: bytes, purpose: bytes = PURPOSE_FULL) -> bytes:
+    """Encrypt *plaintext* into a chunked AES-256-GCM blob (PD02 format).
+
+    *purpose* names which blob of the photo this is (``PURPOSE_FULL`` or
+    ``PURPOSE_THUMB``) and must be passed again to decrypt.
 
     Returns the full binary blob (header + chunk records).
     A zero-length input produces a valid header with chunk_count=0 and no records.
@@ -126,28 +176,27 @@ def encrypt_stream(plaintext: bytes, dek: bytes) -> bytes:
     chunk_count = len(chunks)
 
     header = struct.pack(HEADER_FORMAT, MAGIC, chunk_count, CHUNK_SIZE, len(plaintext))
+    key = derive_blob_key(dek, purpose)
+    cipher = AESGCM(key)
     records: list[bytes] = []
     for i, chunk in enumerate(chunks):
-        nonce = derive_chunk_nonce(dek, i)
-        ct = AESGCM(dek).encrypt(nonce, chunk, None)
+        nonce = derive_chunk_nonce(key, i)
+        ct = cipher.encrypt(nonce, chunk, _chunk_aad(header, i))
         records.append(struct.pack("!I", len(ct)) + ct)
 
     return header + b"".join(records)
 
 
-def decrypt_stream(ciphertext: bytes, dek: bytes) -> bytes:
-    """Decrypt a blob produced by *encrypt_stream*.
+def decrypt_stream(ciphertext: bytes, dek: bytes, purpose: bytes = PURPOSE_FULL) -> bytes:
+    """Decrypt a blob produced by *encrypt_stream* (PD02) or a legacy PD01 blob.
 
     Raises ValueError if magic bytes do not match.
-    Raises InvalidTag on any tampered chunk.
+    Raises InvalidTag on any tampered chunk, a tampered header, or the wrong purpose.
     """
-    offset = 0
-    magic, chunk_count, _chunk_size, _plaintext_total = struct.unpack_from(
-        HEADER_FORMAT, ciphertext, offset
-    )
-    if magic != MAGIC:
-        raise ValueError(f"invalid magic: {magic!r}")
-    offset += _HEADER_SIZE
+    header = ciphertext[:_HEADER_SIZE]
+    magic, chunk_count, _chunk_size, _plaintext_total = struct.unpack(HEADER_FORMAT, header)
+    cipher, nonce_key, use_aad = _chunk_cipher(magic, dek, purpose)
+    offset = _HEADER_SIZE
 
     parts: list[bytes] = []
     for i in range(chunk_count):
@@ -155,8 +204,8 @@ def decrypt_stream(ciphertext: bytes, dek: bytes) -> bytes:
         offset += 4
         ct = ciphertext[offset : offset + ct_len]
         offset += ct_len
-        nonce = derive_chunk_nonce(dek, i)
-        parts.append(AESGCM(dek).decrypt(nonce, ct, None))
+        nonce = derive_chunk_nonce(nonce_key, i)
+        parts.append(cipher.decrypt(nonce, ct, _chunk_aad(header, i) if use_aad else None))
 
     return b"".join(parts)
 
@@ -166,21 +215,22 @@ def decrypt_stream(ciphertext: bytes, dek: bytes) -> bytes:
 # ---------------------------------------------------------------------------
 
 
-def iter_decrypt_stream(reader: Callable[[int], bytes], dek: bytes) -> Iterator[bytes]:
-    """Memory-bounded streaming decrypt.
+def iter_decrypt_stream(
+    reader: Callable[[int], bytes], dek: bytes, purpose: bytes = PURPOSE_FULL
+) -> Iterator[bytes]:
+    """Memory-bounded streaming decrypt of a PD02 or legacy PD01 blob.
 
     *reader* must return exactly N bytes when called as ``reader(N)``.
 
     Yields decrypted plaintext chunks one at a time.
-    Raises ValueError on bad magic; raises InvalidTag on tamper.
+    Raises ValueError on bad magic; raises InvalidTag on tamper or wrong purpose.
     """
-    header_data = reader(_HEADER_SIZE)
-    magic, chunk_count, _chunk_size, _plaintext_total = struct.unpack(HEADER_FORMAT, header_data)
-    if magic != MAGIC:
-        raise ValueError(f"invalid magic: {magic!r}")
+    header = reader(_HEADER_SIZE)
+    magic, chunk_count, _chunk_size, _plaintext_total = struct.unpack(HEADER_FORMAT, header)
+    cipher, nonce_key, use_aad = _chunk_cipher(magic, dek, purpose)
 
     for i in range(chunk_count):
         (ct_len,) = struct.unpack("!I", reader(4))
         ct = reader(ct_len)
-        nonce = derive_chunk_nonce(dek, i)
-        yield AESGCM(dek).decrypt(nonce, ct, None)
+        nonce = derive_chunk_nonce(nonce_key, i)
+        yield cipher.decrypt(nonce, ct, _chunk_aad(header, i) if use_aad else None)

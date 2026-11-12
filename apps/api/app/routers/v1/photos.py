@@ -16,6 +16,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import get_current_user
 from app.core.database import get_db
 from app.core.photo_crypto import (
+    PURPOSE_FULL,
+    PURPOSE_THUMB,
     encrypt_stream,
     generate_dek,
     iter_decrypt_stream,
@@ -31,6 +33,7 @@ from app.services.photos import (
     detect_mime,
     generate_thumbnail,
     get_object_bytes,
+    head_object_size,
     parse_exif,
     presign_put_url,
     put_object_bytes,
@@ -151,8 +154,24 @@ async def finalize_photo(
 
     tmp_key = f"tmp/{user.id}/{photo_id}"
 
-    # Fetch plaintext from tmp/
     loop = asyncio.get_event_loop()
+
+    # The declared size is not trustworthy on its own: check what was actually
+    # uploaded before reading it into memory.
+    try:
+        uploaded_size = await loop.run_in_executor(None, lambda: head_object_size(tmp_key))
+    except Exception:
+        raise HTTPException(status_code=422, detail="tmp_not_found")
+    if uploaded_size is None:
+        raise HTTPException(status_code=422, detail="tmp_not_found")
+    if uploaded_size > MAX_BYTES:
+        try:
+            await loop.run_in_executor(None, lambda: delete_object(tmp_key))
+        except Exception:  # noqa: BLE001, S110 — the orphan sweeper removes it later
+            pass
+        raise HTTPException(status_code=413, detail="size_exceeds_limit")
+
+    # Fetch plaintext from tmp/
     try:
         plaintext = await loop.run_in_executor(None, lambda: get_object_bytes(tmp_key))
     except Exception:
@@ -179,7 +198,9 @@ async def finalize_photo(
     wrapped_dek = wrap_dek(dek, user.id)
     enc_full = await loop.run_in_executor(None, lambda: encrypt_stream(plaintext, dek))
     enc_thumb = (
-        await loop.run_in_executor(None, lambda: encrypt_stream(thumb_bytes, dek))
+        await loop.run_in_executor(
+            None, lambda: encrypt_stream(thumb_bytes, dek, PURPOSE_THUMB)
+        )
         if thumb_bytes
         else None
     )
@@ -261,9 +282,11 @@ async def get_photo(
     if kind == "thumb" and photo.thumbnail_s3_key is not None:
         key = photo.thumbnail_s3_key
         media_type = "image/jpeg"
+        purpose = PURPOSE_THUMB
     else:
         key = photo.s3_key
         media_type = photo.mime_type or "application/octet-stream"
+        purpose = PURPOSE_FULL
 
     if photo.dek_ciphertext is None:
         raise HTTPException(status_code=409, detail="not_finalized")
@@ -281,7 +304,7 @@ async def get_photo(
                 buf += chunk
             return buf
 
-        yield from iter_decrypt_stream(exact_read, dek)
+        yield from iter_decrypt_stream(exact_read, dek, purpose)
 
     return StreamingResponse(_stream(), media_type=media_type)
 

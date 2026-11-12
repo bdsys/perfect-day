@@ -82,6 +82,8 @@ Images:
 
 ## Deployment — single-host (NUC)
 
+> **Superseded in part (2026-11-11).** See [`docs/superpowers/specs/2026-11-11-code-review-decisions-design.md`](../docs/superpowers/specs/2026-11-11-code-review-decisions-design.md) section 4: the NUC pulls and deploys on a timer; the SSH deploy step below is being removed. This section is rewritten when that work is built.
+
 The deploy step in `deploy.yml` SSHs into the NUC via a dedicated deploy key and runs:
 
 ```bash

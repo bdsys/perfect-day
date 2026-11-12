@@ -34,6 +34,44 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Turn a non-2xx response into an ApiError.
+ *
+ * The API uses two error bodies:
+ *   - `{ error: { code, message, details? } }` for plain errors. The machine-readable
+ *     reason (e.g. "email_taken") is in `message`; `code` is the generic "http_error".
+ *   - `{ detail: { code, details } }` for structured errors such as "tier_limit".
+ * The reason ends up in both `ApiError.message` and `ApiError.code`.
+ */
+export async function parseApiError(res: { status: number; json: () => Promise<unknown> }): Promise<ApiError> {
+  const fallback = `HTTP ${res.status}`
+  let body: unknown
+  try {
+    body = await res.json()
+  } catch {
+    return new ApiError(res.status, fallback)
+  }
+  const isRecord = (v: unknown): v is Record<string, unknown> =>
+    typeof v === 'object' && v !== null && !Array.isArray(v)
+  if (!isRecord(body)) return new ApiError(res.status, fallback)
+
+  const { detail, error } = body
+  if (isRecord(detail)) {
+    const code = typeof detail.code === 'string' ? detail.code : undefined
+    const details = isRecord(detail.details) ? detail.details : undefined
+    return new ApiError(res.status, code ?? JSON.stringify(detail), code, details)
+  }
+  if (typeof detail === 'string') return new ApiError(res.status, detail, detail)
+  if (isRecord(error)) {
+    const message = typeof error.message === 'string' && error.message ? error.message : fallback
+    const rawCode = typeof error.code === 'string' ? error.code : undefined
+    const code = rawCode === 'http_error' ? message : rawCode
+    const details = isRecord(error.details) ? error.details : undefined
+    return new ApiError(res.status, message, code, details)
+  }
+  return new ApiError(res.status, fallback)
+}
+
 async function apiFetchBlob(path: string, retryOn401 = true): Promise<Blob> {
   const headers: HeadersInit = {}
   if (_accessToken) {
@@ -60,28 +98,7 @@ async function apiFetchBlob(path: string, retryOn401 = true): Promise<Blob> {
     _accessToken = null
     throw new ApiError(401, 'unauthorized')
   }
-  if (!res.ok) {
-    let code: string | undefined
-    let details: Record<string, unknown> | undefined
-    let message: string
-    try {
-      const json = await res.json() as { detail?: unknown }
-      const detail = json.detail
-      if (detail && typeof detail === 'object' && !Array.isArray(detail)) {
-        const d = detail as Record<string, unknown>
-        code = typeof d.code === 'string' ? d.code : undefined
-        details = typeof d.details === 'object' && d.details !== null
-          ? (d.details as Record<string, unknown>)
-          : undefined
-        message = code ?? JSON.stringify(detail)
-      } else {
-        message = typeof detail === 'string' ? detail : `API error ${res.status}`
-      }
-    } catch {
-      message = `API error ${res.status}`
-    }
-    throw new ApiError(res.status, message, code, details)
-  }
+  if (!res.ok) throw await parseApiError(res)
   return res.blob()
 }
 
@@ -123,28 +140,7 @@ async function apiFetch<T>(
     throw new Error('unauthorized')
   }
 
-  if (!res.ok) {
-    let code: string | undefined
-    let details: Record<string, unknown> | undefined
-    let message: string
-    try {
-      const json = await res.json() as { detail?: unknown }
-      const detail = json.detail
-      if (detail && typeof detail === 'object' && !Array.isArray(detail)) {
-        const d = detail as Record<string, unknown>
-        code = typeof d.code === 'string' ? d.code : undefined
-        details = typeof d.details === 'object' && d.details !== null
-          ? (d.details as Record<string, unknown>)
-          : undefined
-        message = code ?? JSON.stringify(detail)
-      } else {
-        message = typeof detail === 'string' ? detail : `HTTP ${res.status}`
-      }
-    } catch {
-      message = `HTTP ${res.status}`
-    }
-    throw new ApiError(res.status, message, code, details)
-  }
+  if (!res.ok) throw await parseApiError(res)
 
   if (res.status === 204) return undefined as T
   return res.json() as Promise<T>
@@ -359,10 +355,11 @@ export const api = {
       })
     },
     async login(email: string, password: string): Promise<TokenPair> {
+      // retryOn401 = false: a 401 here means wrong credentials, not an expired session.
       return apiFetch('/v1/auth/login', {
         method: 'POST',
         body: JSON.stringify({ email, password }),
-      })
+      }, false)
     },
     async logout(): Promise<void> {
       return apiFetch('/v1/auth/logout', { method: 'POST' })
@@ -371,7 +368,7 @@ export const api = {
       return apiFetch('/v1/auth/social/google', {
         method: 'POST',
         body: JSON.stringify({ id_token: idToken }),
-      })
+      }, false)
     },
     async me() {
       return apiFetch('/v1/auth/me')
