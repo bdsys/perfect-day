@@ -39,6 +39,28 @@ def scan_diary(self, diary_id: str, past_days: int | None = None, future_days: i
     run_sync(_scan_diary(diary_id, past_days=past_days, future_days=future_days))
 
 
+_CALENDAR_DISCONNECTED = {
+    "source": "google_calendar",
+    "error_class": "calendar_disconnected",
+    "message": "Google Calendar is disconnected. "
+    "Reconnect it to keep your diary up to date.",
+    "retried_count": 0,
+}
+_CALENDAR_UNAVAILABLE = {
+    "source": "google_calendar",
+    "error_class": "calendar_unavailable",
+    "message": "Couldn't reach Google Calendar. We'll try again at the next scan.",
+    "retried_count": 0,
+}
+
+
+def _calendar_connected(oauth_token) -> bool:
+    """True when the Google connection is live and includes calendar access."""
+    return oauth_token.revoked_at is None and "calendar.readonly" in (
+        oauth_token.scopes_granted or []
+    )
+
+
 async def _scan_diary(diary_id_str: str, past_days: int | None = None, future_days: int | None = None) -> None:
     import asyncio
 
@@ -112,12 +134,12 @@ async def _scan_diary(diary_id_str: str, past_days: int | None = None, future_da
         errors = []
         calendar_events_count = 0
 
-        # Calendar sync
-        if (
-            oauth_token
-            and oauth_token.revoked_at is None
-            and "calendar.readonly" in (oauth_token.scopes_granted or [])
-        ):
+        # Calendar sync. An owner who never connected Google has nothing to
+        # scan and is not warned; a connection that exists but cannot be read
+        # is always reported, never skipped silently (C-18).
+        if oauth_token is not None and not _calendar_connected(oauth_token):
+            errors.append(dict(_CALENDAR_DISCONNECTED))
+        elif oauth_token is not None:
             try:
                 async with db_session() as db:
                     token_result = await db.execute(
@@ -128,6 +150,7 @@ async def _scan_diary(diary_id_str: str, past_days: int | None = None, future_da
                     )
                     oauth_token_fresh = token_result.scalar_one()
                     access_token = await ensure_fresh_access_token(oauth_token_fresh, db)
+                    grant_gone = oauth_token_fresh.revoked_at is not None
 
                 if access_token:
                     kwargs = {}
@@ -141,13 +164,18 @@ async def _scan_diary(diary_id_str: str, past_days: int | None = None, future_da
                         diary_timezone=diary.timezone,
                         **kwargs,
                     )
+                elif grant_gone:
+                    errors.append(dict(_CALENDAR_DISCONNECTED))
+                else:
+                    errors.append(dict(_CALENDAR_UNAVAILABLE))
             except Exception as e:
                 log.error("calendar_sync_error", diary_id=diary_id_str, error=str(e))
                 errors.append(
                     {
                         "source": "google_calendar",
                         "error_class": type(e).__name__,
-                        "message": str(e),
+                        "message": "Couldn't read Google Calendar. We'll try again at the next scan.",
+                        "detail": str(e),
                         "retried_count": 0,
                     }
                 )
@@ -162,7 +190,9 @@ async def _scan_diary(diary_id_str: str, past_days: int | None = None, future_da
                 {
                     "source": "rules",
                     "error_class": type(e).__name__,
-                    "message": str(e),
+                    "message": "Couldn't check your rules against new events. "
+                    "We'll try again at the next scan.",
+                    "detail": str(e),
                     "retried_count": 0,
                 }
             )
@@ -205,7 +235,9 @@ async def _scan_diary(diary_id_str: str, past_days: int | None = None, future_da
                             {
                                 "source": "scan_diary",
                                 "error_class": type(e).__name__,
-                                "message": str(e),
+                                "message": "The scan stopped unexpectedly. "
+                                "It will run again later.",
+                                "detail": str(e),
                             }
                         ]
                 except Exception:

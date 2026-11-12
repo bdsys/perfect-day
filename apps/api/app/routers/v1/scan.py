@@ -24,6 +24,13 @@ class ScanRunRequest(BaseModel):
     future_days: int | None = Field(default=None, ge=1, le=3650)
 
 
+class ScanRunError(BaseModel):
+    """What the page shows for one scan problem. The raw `detail` stays in the database."""
+
+    source: str
+    message: str
+
+
 class ScanRunOut(BaseModel):
     id: uuid.UUID
     diary_id: uuid.UUID
@@ -33,6 +40,7 @@ class ScanRunOut(BaseModel):
     status: str
     events_calendar: int
     entries_created: int
+    errors: list[ScanRunError] | None = None
 
     model_config = {"from_attributes": True}
 
