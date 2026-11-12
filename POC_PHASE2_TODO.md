@@ -19,9 +19,9 @@ The six open questions were answered on 2026-11-11. The decided designs and thei
 
 | # | Follow-up | Status |
 |---|---|---|
-| 25.1 | Scan and rules: entries only for ended events, cancellations and reschedules applied, one entry per event | **built on `feat/25.1-ended-events`; awaiting Andrew's review of the six calls in the plan, then merge** |
-| 25.2 | Drafting model: `claude-opus-5-5` as a setting, call-site fixes, weekly model check | **built on `feat/25.2-drafting-model`, PR open** |
-| 25.3 | AI suggestion box (Regenerate never overwrites existing text) | **built on `feat/25.3-suggestion-box` (contains 25.1 and 25.2, so merges after them); not pushed** |
+| 25.1 | Scan and rules: entries only for ended events, cancellations and reschedules applied, one entry per event | **done** — PR #41, merged 2026-11-12 |
+| 25.2 | Drafting model: `claude-opus-5-5` as a setting, call-site fixes, weekly model check | **done** — PR #42, merged 2026-11-12 |
+| 25.3 | AI suggestion box (Regenerate never overwrites existing text) | **built on `feat/25.3-suggestion-box`; not pushed** |
 | 25.4 | Self-updating NUC: CI builds images, NUC pulls on a timer, SSH deploy removed | pending |
 | 25.5 | Delete test photos, remove old-format photo reading code | pending |
 | 26 | Automatic entries with no rule-writing — **needs its own design first** | backlog |
