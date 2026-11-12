@@ -111,6 +111,7 @@ def _db_context(entry: MagicMock, diary: MagicMock):
     entry_update.deleted_at = None
     entry_update.id = entry.id
     entry_update.entry_date = entry.entry_date
+    entry_update.title = entry.title
     entry_update.body_markdown = entry.body_markdown  # preserve initial value
     entry_update.body_source = entry.body_source
 
@@ -187,10 +188,11 @@ class TestModeDetection:
 
     @pytest.mark.asyncio
     async def test_mode_detection_body_only_picks_polish(self):
-        """entry with body_markdown, no events → build_prompt called with mode='polish'."""
+        """entry with the parent's text, no events → build_prompt called with mode='polish'."""
         entry_id, entry, diary = _make_entry(
             body_markdown="some typed text",
             events=[],
+            body_source="user",
         )
         anthropic_p = _make_provider(name="anthropic", result=_llm_result(_POLISH_OUTPUT))
         gemini_p = _make_provider(name="gemini", configured=False)
@@ -214,10 +216,11 @@ class TestModeDetection:
 
     @pytest.mark.asyncio
     async def test_mode_detection_both_picks_hybrid(self):
-        """entry with body AND events → build_prompt called with mode='hybrid'."""
+        """entry with the parent's text AND events → build_prompt called with mode='hybrid'."""
         entry_id, entry, diary = _make_entry(
             body_markdown="Alice went to soccer.",
             events=[_make_event()],
+            body_source="user",
         )
         anthropic_p = _make_provider(name="anthropic", result=_llm_result(_HYBRID_OUTPUT))
         gemini_p = _make_provider(name="gemini", configured=False)
@@ -330,6 +333,7 @@ class TestBodyPreservationOnFailure:
         entry_id, entry, diary = _make_entry(
             body_markdown=original_body,
             events=[_make_event()],
+            body_source="user",
         )
         garbage_result = _llm_result("not json at all !!!", model="claude-haiku-4-5-20251001")
         anthropic_p = _make_provider(name="anthropic", result=garbage_result)
@@ -401,12 +405,13 @@ class TestEventsFallback:
 
 class TestSuccessBodySource:
     @pytest.mark.asyncio
-    async def test_polish_success_sets_body_source_llm_polished_and_mode(self):
-        """Polish success: entry.body_source == 'llm_polished';
-        LLMGeneration mode='polish', status='success'."""
+    async def test_polish_success_is_a_suggestion_marked_llm_polished(self):
+        """Polish success: the text is left alone and the suggestion would become
+        'llm_polished'; LLMGeneration mode='polish', status='success'."""
         entry_id, entry, diary = _make_entry(
             body_markdown="Draft text.",
             events=[],
+            body_source="user",
         )
         anthropic_p = _make_provider(name="anthropic", result=_llm_result(_POLISH_OUTPUT))
         gemini_p = _make_provider(name="gemini", configured=False)
@@ -420,19 +425,23 @@ class TestSuccessBodySource:
             from app.workers.llm import generate_draft_for_entry
             await generate_draft_for_entry(entry_id)
 
-        assert entry_update.body_source == "llm_polished"
+        assert entry_update.body_markdown == "Draft text."
+        assert entry_update.body_source == "user"
+        assert entry_update.suggested_body_source == "llm_polished"
+        assert entry_update.suggested_body_markdown == "Polished text goes here."
         assert len(saved_gens) == 1
         gen = saved_gens[0]
         assert gen.mode == "polish"
         assert gen.status == "success"
 
     @pytest.mark.asyncio
-    async def test_hybrid_success_sets_body_source_llm_hybrid_and_mode(self):
-        """Hybrid success: entry.body_source == 'llm_hybrid';
-        LLMGeneration mode='hybrid', status='success'."""
+    async def test_hybrid_success_is_a_suggestion_marked_llm_hybrid(self):
+        """Hybrid success: the text is left alone and the suggestion would become
+        'llm_hybrid'; LLMGeneration mode='hybrid', status='success'."""
         entry_id, entry, diary = _make_entry(
             body_markdown="Alice went to soccer.",
             events=[_make_event("Soccer practice")],
+            body_source="user",
         )
         anthropic_p = _make_provider(name="anthropic", result=_llm_result(_HYBRID_OUTPUT))
         gemini_p = _make_provider(name="gemini", configured=False)
@@ -446,7 +455,9 @@ class TestSuccessBodySource:
             from app.workers.llm import generate_draft_for_entry
             await generate_draft_for_entry(entry_id)
 
-        assert entry_update.body_source == "llm_hybrid"
+        assert entry_update.body_markdown == "Alice went to soccer."
+        assert entry_update.suggested_body_source == "llm_hybrid"
+        assert entry_update.suggested_body_markdown == "Hybrid text combining draft and event."
         assert len(saved_gens) == 1
         gen = saved_gens[0]
         assert gen.mode == "hybrid"
@@ -467,6 +478,7 @@ class TestPolishTitlePreservation:
             body_markdown="Alice had fun.",
             events=[],
             title="My Title",
+            body_source="user",
         )
         anthropic_p = _make_provider(name="anthropic", result=_llm_result(_POLISH_OUTPUT))
         gemini_p = _make_provider(name="gemini", configured=False)
