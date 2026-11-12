@@ -98,8 +98,12 @@ export default function CalendarPickPage() {
       router.push(`/entries/${entry.id}?fromPick=1`)
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'Failed to create entry'
-      if (msg.includes('409') || msg.includes('event_already_attached')) {
-        setError('That event was just claimed. Refreshing the list…')
+      if (msg.includes('409') || msg.includes('event_already_attached') || msg.includes('event_not_ended')) {
+        setError(
+          msg.includes('event_not_ended')
+            ? "That event hasn't finished yet. Refreshing the list…"
+            : 'That event was just claimed. Refreshing the list…'
+        )
         const gridDays = buildMonthDays(cursorMonth)
         try {
           const refreshed = await api.calendarEvents.list(diaryId, {

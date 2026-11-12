@@ -306,3 +306,58 @@ async def test_get_entry_exposes_enrichments(client, db_session):
     # Verify nullable source serialises as null
     e2 = next(x for x in body["enrichments"] if x["source"] is None)
     assert e2["source"] is None
+
+
+class TestBodySourceRecordsEdits:
+    """body_source says whether a person has touched the text (follow-up 25.1)."""
+
+    async def _draft(self, client: AsyncClient, email: str, **fields) -> tuple[dict, dict]:
+        token, diary = await _setup(client, email)
+        auth = {"Authorization": f"Bearer {token}"}
+        r = await client.post(
+            f"/v1/diaries/{diary['id']}/entries",
+            json={"entry_date": "2025-06-01", **fields},
+            headers=auth,
+        )
+        assert r.status_code == 201, r.text
+        return auth, r.json()
+
+    async def test_changing_the_body_marks_the_entry_as_edited(self, client):
+        auth, entry = await self._draft(client, "bs1@example.com")
+        assert entry["body_source"] == "llm"
+
+        r = await client.patch(
+            f"/v1/entries/{entry['id']}", json={"body_markdown": "My own words."}, headers=auth
+        )
+
+        assert r.json()["body_source"] == "user"
+
+    async def test_changing_the_title_marks_the_entry_as_edited(self, client):
+        auth, entry = await self._draft(client, "bs2@example.com")
+
+        r = await client.patch(
+            f"/v1/entries/{entry['id']}", json={"title": "A better title"}, headers=auth
+        )
+
+        assert r.json()["body_source"] == "user"
+
+    async def test_changing_only_the_date_does_not(self, client):
+        auth, entry = await self._draft(client, "bs3@example.com")
+
+        r = await client.patch(
+            f"/v1/entries/{entry['id']}", json={"entry_date": "2025-06-02"}, headers=auth
+        )
+
+        assert r.json()["body_source"] == "llm"
+
+    async def test_saving_the_same_text_again_does_not(self, client):
+        auth, entry = await self._draft(client, "bs4@example.com", title="Day 1")
+
+        r = await client.patch(f"/v1/entries/{entry['id']}", json={"title": "Day 1"}, headers=auth)
+
+        assert r.json()["body_source"] == "llm"
+
+    async def test_an_entry_created_with_text_is_the_persons_own(self, client):
+        _, entry = await self._draft(client, "bs5@example.com", body_markdown="Written by hand.")
+
+        assert entry["body_source"] == "user"
