@@ -287,13 +287,36 @@ def _parse_json_reply(raw: str) -> dict | None:
     return None
 
 
+_CALENDAR_WORDS = frozenset({
+    "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
+})
+
+
+def _unsupported_words(output: dict, source_text: str) -> list[str]:
+    """Capitalised words in the reply's body and title that *source_text* does not contain."""
+    body = output.get("body_markdown") or ""
+    title = output.get("title") or ""
+    tokens = re.findall(r"\b[A-Z][a-z]{2,}\b", body + " " + title)
+    return [t for t in tokens if t not in source_text and t not in _CALENDAR_WORDS]
+
+
 def validate_citation(
     output: dict, events: list, mode: str = "events", body_seed: str = "",
     enrichments: list | None = None,
 ) -> tuple[bool, str, list[str]]:
-    # Mode B (polish): no events, no citation validation needed
+    """Check a reply's event citations and flag words no source supports.
+
+    *body_seed* is the parent's own text (title and body). In the blend
+    ("hybrid") and "polish" modes it counts as a source, so a word the parent
+    wrote is never flagged; a word found in no source is.
+    """
+    enrichment_text = " ".join(json.dumps(e.payload) for e in (enrichments or []))
+
+    # Polish: the parent's text with no events, so there are no citations to check.
     if mode == "polish":
-        return True, "", []
+        return True, "", _unsupported_words(output, body_seed + " " + enrichment_text)
 
     facts_used = output.get("facts_used", [])
     title_facts = output.get("title_facts_used", [])
@@ -303,34 +326,14 @@ def validate_citation(
         if not isinstance(idx, int) or idx < 1 or idx > max_idx:
             return False, f"facts_used contains invalid event index: {idx}", []
 
-    # Mode C (hybrid): validate index ranges only — skip token-flag scan
-    # (seed-aware token scan deferred to a future task)
-    if mode == "hybrid":
-        return True, "", []
-
-    # Mode A (events): full token-flag scan
-    body = output.get("body_markdown", "")
-    title = output.get("title", "")
-
-    cited_event_texts = " ".join(
+    cited_event_text = " ".join(
         json.dumps(events[i - 1].payload) for i in facts_used if 1 <= i <= max_idx
     )
-    enrichment_texts = " ".join(
-        json.dumps(e.payload) for e in (enrichments or [])
-    )
-    cited_text = cited_event_texts + " " + enrichment_texts
-    tokens = re.findall(r"\b[A-Z][a-z]{2,}\b", body + " " + title)
-    flagged = []
-    _CALENDAR_WORDS = {
-        "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
-        "January", "February", "March", "April", "May", "June",
-        "July", "August", "September", "October", "November", "December",
-    }
-    for token in tokens:
-        if token not in cited_text and token not in _CALENDAR_WORDS:
-            flagged.append(token)
+    source_text = cited_event_text + " " + enrichment_text
+    if mode == "hybrid":
+        source_text += " " + body_seed
 
-    return True, "", flagged
+    return True, "", _unsupported_words(output, source_text)
 
 
 # ---------------------------------------------------------------------------

@@ -114,20 +114,6 @@ class TestValidateCitation:
 
 
 class TestValidateCitationModes:
-    def test_polish_mode_skips_validator_returns_true(self):
-        """Mode 'polish': validate_citation returns (True, '', []) regardless of parsed content."""
-        parsed = {
-            "title": "Invented Title With FakeToken",
-            "body_markdown": "Made up FakeName went somewhere.",
-            # deliberately no facts_used key
-        }
-
-        ok, err, flagged = validate_citation(parsed, events=[], mode="polish")
-
-        assert ok is True
-        assert err == ""
-        assert flagged == []
-
     def test_polish_mode_skips_validator_even_with_events(self):
         """Mode 'polish' always short-circuits — even if events are passed in."""
         events = [_event({"summary": "Soccer"})]
@@ -166,19 +152,120 @@ class TestValidateCitationModes:
         assert ok is False
         assert "invalid event index" in err
 
-    def test_hybrid_token_in_seed_not_flagged(self):
-        """Mode 'hybrid': token scan is skipped — flagged_tokens is always []."""
+    def test_polish_mode_flags_nothing_when_every_word_is_the_parents(self):
+        parsed = {"title": "Park day", "body_markdown": "Sam had a lovely Park day."}
+
+        ok, err, flagged = validate_citation(
+            parsed, events=[], mode="polish", body_seed="Park day\nSam went to the park"
+        )
+
+        assert (ok, err, flagged) == (True, "", [])
+
+
+# ---------------------------------------------------------------------------
+# Word check for the blend and polish modes (follow-up 25.3)
+# ---------------------------------------------------------------------------
+
+
+class TestWordCheckWithParentsText:
+    def test_hybrid_does_not_flag_a_word_the_parent_wrote(self):
         events = [_event({"summary": "park visit"})]
         parsed = {
-            "title": "Day Out",
+            "title": "",
             "title_facts_used": [],
-            "body_markdown": "FakeInventedName went to the park.",
+            "body_markdown": "We saw Grandma at the park.",
             "facts_used": [1],
         }
 
-        ok, _, flagged = validate_citation(parsed, events=events, mode="hybrid")
+        _, _, flagged = validate_citation(
+            parsed, events=events, mode="hybrid", body_seed="We saw Grandma"
+        )
 
-        # Hybrid skips the token-flag scan; flagged must be empty even for invented tokens
+        assert flagged == []
+
+    def test_hybrid_flags_a_word_in_neither_the_events_nor_the_parents_text(self):
+        events = [_event({"summary": "park visit"})]
+        parsed = {
+            "title": "",
+            "title_facts_used": [],
+            "body_markdown": "We saw Grandma, then went to Disneyland.",
+            "facts_used": [1],
+        }
+
+        _, _, flagged = validate_citation(
+            parsed, events=events, mode="hybrid", body_seed="We saw Grandma"
+        )
+
+        assert flagged == ["Disneyland"]
+
+    def test_hybrid_does_not_flag_a_word_from_a_cited_event(self):
+        events = [_event({"summary": "Lunch with Priya"})]
+        parsed = {
+            "title": "",
+            "title_facts_used": [],
+            "body_markdown": "We had lunch with Priya.",
+            "facts_used": [1],
+        }
+
+        _, _, flagged = validate_citation(
+            parsed, events=events, mode="hybrid", body_seed="Lunch was nice"
+        )
+
+        assert flagged == []
+
+    def test_hybrid_flags_a_word_found_only_in_an_uncited_event(self):
+        events = [_event({"summary": "park visit"}), _event({"summary": "Dinner with Priya"})]
+        parsed = {
+            "title": "",
+            "title_facts_used": [],
+            "body_markdown": "We went to the park with Priya.",
+            "facts_used": [1],
+        }
+
+        _, _, flagged = validate_citation(
+            parsed, events=events, mode="hybrid", body_seed="A good day"
+        )
+
+        assert flagged == ["Priya"]
+
+    def test_hybrid_checks_the_title_too(self):
+        events = [_event({"summary": "park visit"})]
+        parsed = {
+            "title": "Lunch at Nandos",
+            "title_facts_used": [],
+            "body_markdown": "A day at the park.",
+            "facts_used": [1],
+        }
+
+        _, _, flagged = validate_citation(
+            parsed, events=events, mode="hybrid", body_seed="A day at the park"
+        )
+
+        assert flagged == ["Lunch", "Nandos"]
+
+    def test_polish_flags_a_word_not_in_the_parents_text(self):
+        parsed = {"title": "", "body_markdown": "Park day with Sam at the Zoo."}
+
+        _, _, flagged = validate_citation(
+            parsed, events=[], mode="polish", body_seed="Park day with Sam"
+        )
+
+        assert flagged == ["Zoo"]
+
+    def test_polish_does_not_flag_a_word_from_the_weather(self):
+        from types import SimpleNamespace
+
+        parsed = {"title": "", "body_markdown": "Park day with Sam. It was Sunny."}
+        enrichments = [SimpleNamespace(payload={"condition": "Sunny"})]
+
+        _, _, flagged = validate_citation(
+            parsed,
+            events=[],
+            mode="polish",
+            body_seed="Park day with Sam",
+            enrichments=enrichments,
+        )
+
         assert flagged == []
 
 
