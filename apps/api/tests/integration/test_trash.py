@@ -429,3 +429,53 @@ class TestRestoreTierLimits:
         r = await client.post(f"/v1/diaries/{diary_a['id']}/restore", headers=auth)
         assert r.status_code == 200
         assert r.json()["deleted_at"] is None
+
+
+class TestRestoreEntryPermissions:
+    """C-21: bringing an entry back from the trash is an editor's action."""
+
+    async def _deleted_entry_shared_as(
+        self, client: AsyncClient, db_session: AsyncSession, role: str, prefix: str
+    ) -> tuple[dict, dict]:
+        owner_token = await _register_and_login(client, f"{prefix}-owner@example.com")
+        owner_auth = {"Authorization": f"Bearer {owner_token}"}
+        other_email = f"{prefix}-{role}@example.com"
+        other_auth = {"Authorization": f"Bearer {await _register_and_login(client, other_email)}"}
+        diary = await _create_diary(client, owner_auth)
+        entry = await _create_entry(client, owner_auth, diary["id"])
+        await _delete_entry(client, owner_auth, entry["id"])
+        result = await db_session.execute(select(User).where(User.email == other_email))
+        other = result.scalar_one()
+        db_session.add(
+            DiaryPermission(diary_id=uuid.UUID(diary["id"]), user_id=other.id, role=role)
+        )
+        await db_session.commit()
+        return entry, other_auth
+
+    async def test_viewer_cannot_restore_a_deleted_entry(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        entry, viewer_auth = await self._deleted_entry_shared_as(
+            client, db_session, "viewer", "rep-v"
+        )
+
+        r = await client.post(f"/v1/entries/{entry['id']}/restore", headers=viewer_auth)
+
+        assert r.status_code == 403
+        db_session.expire_all()
+        stored = (
+            await db_session.execute(select(Entry).where(Entry.id == uuid.UUID(entry["id"])))
+        ).scalar_one()
+        assert stored.deleted_at is not None
+
+    async def test_editor_can_restore_a_deleted_entry(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        entry, editor_auth = await self._deleted_entry_shared_as(
+            client, db_session, "editor", "rep-e"
+        )
+
+        r = await client.post(f"/v1/entries/{entry['id']}/restore", headers=editor_auth)
+
+        assert r.status_code == 200
+        assert r.json()["deleted_at"] is None

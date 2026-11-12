@@ -139,7 +139,9 @@ async def google_authorize(
         scope_parts.append(SCOPE_PHOTOS)
 
     nonce = secrets.token_urlsafe(32)
-    payload = {"user_id": str(user.id), "nonce": nonce}
+    # The callback compares what was asked for with what Google granted.
+    asked_for = sorted(s for s in set(requested) if s in ("calendar", "photos"))
+    payload = {"user_id": str(user.id), "nonce": nonce, "scopes": asked_for}
     state = _sign_state(payload, settings.secret_key)
 
     # Store nonce in Redis (single-use, 10-min TTL)
@@ -172,8 +174,11 @@ async def google_callback(
 
     web_base = settings.cors_origins[0] if settings.cors_origins else "http://localhost:3000"
 
+    if error == "access_denied":
+        # The person pressed Cancel on Google's screen.
+        return RedirectResponse(f"{web_base}/diaries?google=cancelled")
     if error or not code or not state:
-        return RedirectResponse(f"{web_base}/diaries?google=denied")
+        return RedirectResponse(f"{web_base}/diaries?google=failed")
 
     payload = _verify_state(state, settings.secret_key)
     nonce = payload.get("nonce", "")
@@ -181,7 +186,7 @@ async def google_callback(
     # Single-use nonce check
     deleted = await r.delete(f"oauth_nonce:{nonce}")
     if not deleted:
-        return RedirectResponse(f"{web_base}/diaries?google=denied&reason=nonce_reuse")
+        return RedirectResponse(f"{web_base}/diaries?google=failed&reason=nonce_reuse")
 
     user_id = uuid.UUID(payload["user_id"])
 
@@ -199,7 +204,7 @@ async def google_callback(
         )
         if resp.status_code != 200:
             return RedirectResponse(
-                f"{web_base}/diaries?google=denied&reason=token_exchange_failed"
+                f"{web_base}/diaries?google=failed&reason=token_exchange_failed"
             )
         token_data = resp.json()
 
@@ -214,6 +219,17 @@ async def google_callback(
         granted_scopes.append("calendar.readonly")
     if SCOPE_PHOTOS in granted_scope_str:
         granted_scopes.append("photoslibrary.readonly")
+
+    # Google shows each permission with its own checkbox. Without calendar
+    # access the connection is no use, so nothing is saved: an existing
+    # connection, working or lost, is left exactly as it was (C-19).
+    asked_for = set(payload.get("scopes", ["calendar"]))
+    granted = {"calendar"} if "calendar.readonly" in granted_scopes else set()
+    if "photoslibrary.readonly" in granted_scopes:
+        granted.add("photos")
+    missing = asked_for - granted
+    if "calendar" in missing:
+        return RedirectResponse(f"{web_base}/diaries?google=partial&missing=calendar")
 
     expires_at = datetime.now(tz=UTC).replace(microsecond=0)
     from datetime import timedelta
@@ -252,19 +268,9 @@ async def google_callback(
         )
     await db.commit()
 
-    # Determine result query param
-    requested_calendar = "calendar.readonly" in granted_scopes
-    requested_photos = "photoslibrary.readonly" in granted_scopes
-
-    if granted_scopes:
-        if not requested_calendar and not requested_photos:
-            return RedirectResponse(f"{web_base}/diaries?google=partial&missing=all")
-        elif not requested_photos:
-            return RedirectResponse(f"{web_base}/diaries?google=partial&missing=photos")
-        elif not requested_calendar:
-            return RedirectResponse(f"{web_base}/diaries?google=partial&missing=calendar")
-        return RedirectResponse(f"{web_base}/diaries?google=connected")
-    return RedirectResponse(f"{web_base}/diaries?google=denied")
+    if "photos" in missing:
+        return RedirectResponse(f"{web_base}/diaries?google=partial&missing=photos")
+    return RedirectResponse(f"{web_base}/diaries?google=connected")
 
 
 @router.delete("/google", status_code=status.HTTP_204_NO_CONTENT)

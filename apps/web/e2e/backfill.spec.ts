@@ -62,6 +62,18 @@ async function loginAndNavigateToDiary(page: import('@playwright/test').Page) {
     }),
   )
 
+  // Backfill reads the owner's Google Calendar, so it is only offered once it is connected.
+  await page.route(`${API}/v1/diaries/${diaryId}/scan`, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        can_scan: true, calendar: 'connected', scan_enabled: true, scan_interval_minutes: 60,
+        last_scan_status: null, next_scan_after: null, consecutive_failures: 0,
+      }),
+    }),
+  )
+
   await page.goto(`/diaries/${diaryId}`)
   await page.waitForURL(`**/diaries/${diaryId}`, { timeout: 10_000 })
 }
