@@ -523,7 +523,11 @@ async def regenerate_entry(
     db: AsyncSession = Depends(get_db),
 ) -> EntryOut:
     entry, _, _ = await _get_entry_or_404(entry_id, user, db, require_editor=True)
+    if entry.status == "published":
+        # Published entries get no suggestions; unpublish first.
+        raise HTTPException(status_code=409, detail="entry_published")
     from app.workers.tasks import generate_entry_draft
 
-    generate_entry_draft.delay(str(entry.id))
+    # Nothing about the entry changes here, so there is no commit to wait for.
+    generate_entry_draft.delay(str(entry.id), trigger="regenerate")
     return _entry_out_from_orm(entry)

@@ -18,8 +18,10 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 import app.workers.llm as worker_llm
-from app.models import Entry, LLMGeneration
+import app.workers.tasks as worker_tasks
+from app.models import AutoCreationRule, Entry, Event, LLMGeneration
 from app.workers.llm_providers import LLMPermanentError, LLMResult
+from app.workers.rules import evaluate_event_against_rules
 from tests.fixtures.factories import make_diary, make_entry, make_event, make_user
 
 _PICNIC = {
@@ -59,8 +61,9 @@ def _provider(raw: str | None = None, *, fail: bool = False, before_reply=None) 
     return p
 
 
-async def _run_draft(db_url: str, entry_id: uuid.UUID, provider: MagicMock, **kwargs) -> None:
-    """Run the drafting worker against the test database with *provider* as the only model."""
+@asynccontextmanager
+async def _fake_model(db_url: str, provider: MagicMock):
+    """The drafting worker uses the test database, with *provider* as the only model."""
     engine = create_async_engine(db_url)
     factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
@@ -78,10 +81,18 @@ async def _run_draft(db_url: str, entry_id: uuid.UUID, provider: MagicMock, **kw
             patch.object(worker_llm, "db_session", session),
             patch.object(worker_llm, "AnthropicProvider", return_value=provider),
             patch.object(worker_llm, "GeminiProvider", return_value=gemini),
+            # Weather lookups are out of scope here and would call the network.
+            patch("app.workers.enrichments.enrich_entry_weather", new=AsyncMock()),
+            patch("app.workers.utils.db_session", session),
         ):
-            await worker_llm.generate_draft_for_entry(entry_id, **kwargs)
+            yield
     finally:
         await engine.dispose()
+
+
+async def _run_draft(db_url: str, entry_id: uuid.UUID, provider: MagicMock, **kwargs) -> None:
+    async with _fake_model(db_url, provider):
+        await worker_llm.generate_draft_for_entry(entry_id, **kwargs)
 
 
 async def _reload(db: AsyncSession, entry_id: uuid.UUID) -> Entry:
@@ -337,3 +348,111 @@ class TestWhenTheDraftGoesStraightIn:
             )
         ).scalar_one()
         assert (gen.status, gen.error) == ("failed", "no_inputs")
+
+
+class TestCallersSayWhy:
+    async def test_the_regenerate_button_queues_a_regenerate(self, client):
+        auth, diary = await _setup(client, "sg-queue@example.com")
+        entry = await _create_entry(client, diary["id"], auth, body_markdown="Mine.")
+
+        with patch.object(worker_tasks.generate_entry_draft, "delay", new=MagicMock()) as delay:
+            r = await client.post(f"/v1/entries/{entry['id']}/regenerate", headers=auth)
+
+        assert r.status_code == 200
+        delay.assert_called_once_with(entry["id"], trigger="regenerate")
+
+    async def test_regenerate_on_a_published_entry_is_refused(self, client):
+        auth, diary = await _setup(client, "sg-pub@example.com")
+        entry = await _create_entry(client, diary["id"], auth, body_markdown="Mine.")
+        await client.post(f"/v1/entries/{entry['id']}/publish", headers=auth)
+
+        with patch.object(worker_tasks.generate_entry_draft, "delay", new=MagicMock()) as delay:
+            r = await client.post(f"/v1/entries/{entry['id']}/regenerate", headers=auth)
+
+        assert r.status_code == 409
+        assert r.json()["error"] == {"code": "http_error", "message": "entry_published"}
+        delay.assert_not_called()
+
+    async def test_a_task_queued_before_this_change_runs_as_a_background_redraft(
+        self, db_session, db_url
+    ):
+        entry = await _entry_with_picnic(db_session, body="Old draft.")
+
+        async with _fake_model(db_url, _provider(_reply("New draft."))):
+            await worker_tasks._generate_entry_draft(str(entry.id))
+
+        after = await _reload(db_session, entry.id)
+        assert after.body_markdown == "New draft."
+        assert after.suggested_body_markdown is None
+
+    async def test_an_unknown_trigger_is_treated_as_background(self, db_session, db_url):
+        entry = await _entry_with_picnic(db_session, body="Old draft.")
+
+        async with _fake_model(db_url, _provider(_reply("New draft."))):
+            await worker_tasks._generate_entry_draft(str(entry.id), "sideways")
+
+        after = await _reload(db_session, entry.id)
+        assert after.body_markdown == "New draft."
+
+    async def test_a_regenerate_task_suggests_instead_of_replacing(self, db_session, db_url):
+        entry = await _entry_with_picnic(db_session, body="Old draft.")
+
+        async with _fake_model(db_url, _provider(_reply("New draft."))):
+            await worker_tasks._generate_entry_draft(str(entry.id), "regenerate")
+
+        after = await _reload(db_session, entry.id)
+        assert after.body_markdown == "Old draft."
+        assert after.suggested_body_markdown == "New draft."
+
+
+class TestSpanningRegroup:
+    async def test_an_event_joining_an_edited_trip_entry_leaves_the_text_alone(
+        self, db_session, db_url
+    ):
+        user = await make_user(db_session)
+        diary = await make_diary(db_session, user, timezone="UTC")
+        db_session.add(
+            AutoCreationRule(
+                diary_id=diary.id,
+                name="Trips",
+                enabled=True,
+                condition={
+                    "op": "AND",
+                    "children": [
+                        {"field": "title", "op": "contains", "value": "Trip",
+                         "case_sensitive": False}
+                    ],
+                },
+                options={"recurring": "per_instance", "multi_day": "spanning"},
+            )
+        )
+        await db_session.commit()
+
+        def trip(summary: str) -> dict:
+            return {"summary": summary, "start": {"date": "2026-06-01"},
+                    "end": {"date": "2026-06-04"}, "attendees": [], "description": "",
+                    "location": "", "status": ""}
+
+        first = await make_event(db_session, diary_id=diary.id, payload=trip("Trip flight out"))
+        second = await make_event(db_session, diary_id=diary.id, payload=trip("Trip dinner"))
+
+        with patch.object(worker_tasks.generate_entry_draft, "delay", new=MagicMock()):
+            await evaluate_event_against_rules(str(first.id), str(diary.id), db_session)
+        entry_id = (await db_session.get(Event, first.id)).entry_id
+        await _set_columns(
+            db_session, str(entry_id), body_markdown="Our trip so far", body_source="user"
+        )
+
+        with patch.object(worker_tasks.generate_entry_draft, "delay", new=MagicMock()) as delay:
+            await evaluate_event_against_rules(str(second.id), str(diary.id), db_session)
+        assert delay.call_count == 1
+        async with _fake_model(
+            db_url, _provider(_reply("Our trip: a flight out, then dinner.", facts=[1, 2]))
+        ):
+            queued = delay.call_args
+            await worker_tasks._generate_entry_draft(*queued.args, **queued.kwargs)
+
+        after = await _reload(db_session, entry_id)
+        assert after.body_markdown == "Our trip so far"
+        assert after.suggested_body_markdown == "Our trip: a flight out, then dinner."
+        assert after.suggested_body_source == "llm_hybrid"
