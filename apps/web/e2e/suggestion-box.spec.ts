@@ -123,6 +123,25 @@ test.describe('AI suggestion box', () => {
     await expect(page.getByRole('region', { name: 'The AI suggests a new version' })).toHaveCount(0)
   })
 
+  test('on a published entry, Regenerate looks switched off and says why', async ({ page }) => {
+    const ctx = await playwrightRequest.newContext()
+    const headers = { Authorization: `Bearer ${shared.token}` }
+    const r = await ctx.post(`${API}/v1/diaries/${shared.diaryId}/entries`, {
+      headers,
+      data: { entry_date: '2026-05-16', title: 'Published day', body_markdown: OWN_TEXT },
+    })
+    const { id } = (await r.json()) as { id: string }
+    await ctx.post(`${API}/v1/entries/${id}/publish`, { headers })
+    await ctx.dispose()
+    await openEntry(page, id)
+
+    const regenerate = page.getByRole('button', { name: /Regenerate|Polish|Generate/ })
+    await expect(regenerate).toBeDisabled()
+    await expect(regenerate).toHaveCSS('cursor', 'not-allowed')
+    expect(Number(await regenerate.evaluate((el) => getComputedStyle(el).opacity))).toBeLessThan(1)
+    await expect(page.getByText('Unpublish to ask the AI for a new version.')).toBeVisible()
+  })
+
   test('the box is hidden while editing', async ({ page }) => {
     const entryId = await entryWithSuggestion()
     await openEntry(page, entryId)

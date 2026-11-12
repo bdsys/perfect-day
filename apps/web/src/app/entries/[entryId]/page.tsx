@@ -626,6 +626,11 @@ function EntryDetailPageInner() {
                 {deleting ? 'Deleting…' : 'Delete'}
               </button>
             </div>
+            {entry.status === 'published' && (
+              <p style={{ marginTop: '0.5rem', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                Unpublish to ask the AI for a new version.
+              </p>
+            )}
           </>
         )}
       </div>
