@@ -1,6 +1,7 @@
 services:
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-perfectday}
       POSTGRES_USER: ${POSTGRES_USER:-perfectday}
@@ -15,6 +16,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -23,6 +25,7 @@ services:
 
   minio:
     image: minio/minio:latest
+    restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
@@ -54,6 +57,7 @@ services:
         condition: service_healthy
 
   api:
+    restart: unless-stopped
     build:
       context: ./apps/api
       dockerfile: Dockerfile
@@ -75,6 +79,7 @@ services:
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
 
   worker:
+    restart: unless-stopped
     build:
       context: ./apps/api
       dockerfile: Dockerfile
@@ -93,6 +98,7 @@ services:
     command: celery -A app.workers.celery_app worker --loglevel=info --concurrency=2
 
   beat:
+    restart: unless-stopped
     build:
       context: ./apps/api
       dockerfile: Dockerfile
