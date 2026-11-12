@@ -159,7 +159,8 @@ def _event_out_from_orm(event: Event) -> EventOut:
     )
 
 
-def _entry_out_from_orm(entry: Entry) -> EntryOut:
+def _entry_out_from_orm(entry: Entry, *, can_edit: bool = False) -> EntryOut:
+    """The API view of *entry*. A pending AI suggestion is shown only to editors."""
     from app.routers.v1.photos import _photo_out
 
     events_out = sorted(
@@ -196,7 +197,7 @@ def _entry_out_from_orm(entry: Entry) -> EntryOut:
     ]
     enrichments_out = [EnrichmentOut.model_validate(e) for e in entry.enrichments]
     suggestion_out: SuggestionOut | None = None
-    if entry.suggested_body_markdown is not None:
+    if can_edit and entry.suggested_body_markdown is not None:
         suggestion_out = SuggestionOut(
             title=entry.suggested_title,
             body_markdown=entry.suggested_body_markdown,
@@ -326,7 +327,7 @@ async def list_deleted_entries(
         .where(Entry.diary_id == diary_id, Entry.deleted_at.is_not(None))
         .order_by(Entry.deleted_at.desc())
     )
-    return [_entry_out_from_orm(e) for e in entry_result.scalars()]
+    return [_entry_out_from_orm(e, can_edit=True) for e in entry_result.scalars()]
 
 
 @router.get("/diaries/{diary_id}/entries", response_model=list[EntryOut])
@@ -382,7 +383,7 @@ async def list_entries(
     q = q.order_by(*ENTRY_TIMELINE_ORDER).limit(limit)
 
     result = await db.execute(q)
-    return [_entry_out_from_orm(e) for e in result.scalars()]
+    return [_entry_out_from_orm(e, can_edit=role != "viewer") for e in result.scalars()]
 
 
 @router.post(
@@ -420,7 +421,7 @@ async def create_entry(
     db.add(entry)
     await db.flush()
     await db.refresh(entry, ["events", "rule_matches", "llm_generations", "entry_photos", "enrichments"])
-    return _entry_out_from_orm(entry)
+    return _entry_out_from_orm(entry, can_edit=True)
 
 
 @router.get("/entries/{entry_id}", response_model=EntryOut)
@@ -429,8 +430,8 @@ async def get_entry(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> EntryOut:
-    entry, _, _ = await _get_entry_or_404(entry_id, user, db)
-    return _entry_out_from_orm(entry)
+    entry, _, role = await _get_entry_or_404(entry_id, user, db)
+    return _entry_out_from_orm(entry, can_edit=role != "viewer")
 
 
 @router.patch("/entries/{entry_id}", response_model=EntryOut)
@@ -458,7 +459,7 @@ async def patch_entry(
         entry.flagged_tokens = still_present(entry.flagged_tokens or [], _entry_text(entry))
     if entry.entry_end_date is not None and entry.entry_end_date < entry.entry_date:
         raise HTTPException(status_code=422, detail="entry_end_date_before_entry_date")
-    return _entry_out_from_orm(entry)
+    return _entry_out_from_orm(entry, can_edit=True)
 
 
 @router.post("/entries/{entry_id}/publish", response_model=EntryOut)
@@ -469,7 +470,7 @@ async def publish_entry(
 ) -> EntryOut:
     entry, diary, role = await _get_entry_or_404(entry_id, user, db, require_editor=True)
     if entry.status == "published":
-        return _entry_out_from_orm(entry)
+        return _entry_out_from_orm(entry, can_edit=True)
 
     # entry_edit_diffs (design/04-llm-integration.md) is not captured yet: the
     # original LLM body is not stored separately, so there is nothing to diff.
@@ -478,7 +479,7 @@ async def publish_entry(
     # Publishing is the parent's sign-off: warnings and any pending suggestion go.
     entry.flagged_tokens = []
     _clear_suggestion(entry)
-    return _entry_out_from_orm(entry)
+    return _entry_out_from_orm(entry, can_edit=True)
 
 
 @router.post("/entries/{entry_id}/suggestion/accept", response_model=EntryOut)
@@ -493,6 +494,7 @@ async def accept_suggestion(
         raise HTTPException(status_code=409, detail="no_suggestion")
 
     old_warnings = entry.flagged_tokens or []
+    published = entry.status == "published"
     if entry.suggested_title is not None:
         entry.title = entry.suggested_title
     entry.body_markdown = entry.suggested_body_markdown
@@ -501,9 +503,10 @@ async def accept_suggestion(
     # a blend treats the old text as the parent's, so it would not re-flag them.
     warnings = list(entry.suggested_flagged_tokens or [])
     warnings += [w for w in still_present(old_warnings, _entry_text(entry)) if w not in warnings]
-    entry.flagged_tokens = warnings
+    # Accepting into a published entry is the parent's sign-off, as publishing is.
+    entry.flagged_tokens = [] if published else warnings
     _clear_suggestion(entry)
-    return _entry_out_from_orm(entry)
+    return _entry_out_from_orm(entry, can_edit=True)
 
 
 @router.delete("/entries/{entry_id}/suggestion", response_model=EntryOut)
@@ -517,7 +520,7 @@ async def dismiss_suggestion(
     if entry.suggested_body_markdown is None:
         raise HTTPException(status_code=409, detail="no_suggestion")
     _clear_suggestion(entry)
-    return _entry_out_from_orm(entry)
+    return _entry_out_from_orm(entry, can_edit=True)
 
 
 @router.post("/entries/{entry_id}/unpublish", response_model=EntryOut)
@@ -529,7 +532,7 @@ async def unpublish_entry(
     entry, _, _ = await _get_entry_or_404(entry_id, user, db, require_editor=True)
     entry.status = "draft"
     entry.published_at = None
-    return _entry_out_from_orm(entry)
+    return _entry_out_from_orm(entry, can_edit=True)
 
 
 @router.delete("/entries/{entry_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -572,7 +575,7 @@ async def restore_entry(
         owner_subscription_tier=owner.subscription_tier,
     )
     entry.deleted_at = None
-    return _entry_out_from_orm(entry)
+    return _entry_out_from_orm(entry, can_edit=role != "viewer")
 
 
 @router.post("/entries/{entry_id}/regenerate", response_model=EntryOut)
@@ -582,11 +585,8 @@ async def regenerate_entry(
     db: AsyncSession = Depends(get_db),
 ) -> EntryOut:
     entry, _, _ = await _get_entry_or_404(entry_id, user, db, require_editor=True)
-    if entry.status == "published":
-        # Published entries get no suggestions; unpublish first.
-        raise HTTPException(status_code=409, detail="entry_published")
     from app.workers.tasks import generate_entry_draft
 
     # Nothing about the entry changes here, so there is no commit to wait for.
     generate_entry_draft.delay(str(entry.id), trigger="regenerate")
-    return _entry_out_from_orm(entry)
+    return _entry_out_from_orm(entry, can_edit=True)

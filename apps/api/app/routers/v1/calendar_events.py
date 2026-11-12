@@ -147,7 +147,7 @@ async def create_entry_from_event(
     event.entry_id = entry.id
     await db.flush()
     await db.refresh(entry, ["events", "rule_matches", "llm_generations", "entry_photos", "enrichments"])
-    out = _entry_out_from_orm(entry)
+    out = _entry_out_from_orm(entry, can_edit=True)
     # Commit before queuing so the worker can see the entry and its event.
     await db.commit()
 

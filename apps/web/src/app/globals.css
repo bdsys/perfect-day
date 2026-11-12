@@ -40,6 +40,12 @@ button {
   font-family: inherit;
 }
 
+/* A switched-off button must look switched off, not merely ignore clicks. */
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .container {
   max-width: 720px;
   margin: 0 auto;

@@ -465,7 +465,8 @@ async def generate_draft_for_entry(
             log.info("generate_draft_skipped_deleted", entry_id=str(entry_id))
             return
 
-        if entry.status == "published":
+        if entry.status == "published" and trigger == "background":
+            # Only a person's own Regenerate may suggest changes to published text.
             log.info("generate_draft_skipped_published", entry_id=str(entry_id))
             from sqlalchemy import update as sql_update
 
@@ -489,7 +490,9 @@ async def generate_draft_for_entry(
         parents_writing = has_body and entry.body_source not in MACHINE_ONLY_BODY_SOURCES
         # What the text looked like before the model call, to spot an edit made meanwhile.
         text_before = (entry.title, entry.body_markdown, entry.body_source)
-        write_in_place = not has_body or (trigger == "background" and not parents_writing)
+        write_in_place = entry.status != "published" and (
+            not has_body or (trigger == "background" and not parents_writing)
+        )
         # The parent's own words count as a source for the word check.
         parents_text = f"{entry.title or ''}\n{body}" if parents_writing else ""
 
@@ -671,15 +674,20 @@ async def generate_draft_for_entry(
         if entry_update is None:
             return
 
-        # The provider call above can take many seconds. If the entry was published
-        # or deleted meanwhile, the diarist's decision wins: record nothing over it.
-        if entry_update.status == "published" or entry_update.deleted_at is not None:
+        # The provider call above can take many seconds. If the entry was deleted
+        # meanwhile, or published under a background redraft, the diarist's decision
+        # wins: record nothing over it. Published text is never written over.
+        if entry_update.deleted_at is not None or (
+            entry_update.status == "published" and trigger == "background"
+        ):
             log.info("generate_draft_discarded_entry_changed", entry_id=str(entry_id))
             entry_update.updated_at = datetime.now(UTC)
             return
 
-        if (entry_update.title, entry_update.body_markdown, entry_update.body_source) != text_before:
-            # Someone changed the text while the model was working: never write over it.
+        if entry_update.status == "published" or (
+            (entry_update.title, entry_update.body_markdown, entry_update.body_source) != text_before
+        ):
+            # Published, or changed while the model was working: never write over it.
             write_in_place = False
 
         if not write_in_place:
