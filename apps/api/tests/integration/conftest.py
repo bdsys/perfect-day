@@ -19,6 +19,11 @@ from testcontainers.redis import RedisContainer
 # Session-scoped containers (start once, reused across all tests)
 # ---------------------------------------------------------------------------
 
+# minio/minio and minio/mc were removed from Docker Hub (MinIO stopped
+# distributing community images), so a machine without a cached copy cannot
+# pull them. Chainguard rebuilds the same server from source.
+MINIO_TEST_IMAGE = "cgr.dev/chainguard/minio:latest"
+
 
 @pytest.fixture(scope="session")
 def postgres_container():
@@ -34,7 +39,7 @@ def redis_container():
 
 @pytest.fixture(scope="session")
 def minio_container():
-    with MinioContainer(image="minio/minio:latest") as m:
+    with MinioContainer(image=MINIO_TEST_IMAGE) as m:
         yield m
 
 
