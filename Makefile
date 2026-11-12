@@ -1,11 +1,36 @@
 .PHONY: up down infra api worker beat web migrate lint typecheck \
         test test-fast test-all test-e2e test-live test-smoke test-coverage \
-        web-e2e-install seed-bucket bootstrap
+        web-e2e-install seed-bucket bootstrap lock lock-upgrade
 
 API_DIR  := apps/api
 WEB_DIR  := apps/web
 PYTEST   := $(API_DIR)/.venv/bin/pytest
 VENV_BIN := $(API_DIR)/.venv/bin
+
+# ---------------------------------------------------------------------------
+# Python dependency locks
+# ---------------------------------------------------------------------------
+# apps/api/requirements.lock (runtime) and requirements-dev.lock (runtime +
+# dev tools) pin every package, with hashes. Docker and CI install from them,
+# so a build never picks up a new library version on its own.
+# Resolved inside python:3.12-slim, the same Python as the API image and CI.
+#   make lock          after editing pyproject.toml; keeps every other pin
+#   make lock-upgrade  move everything to the newest allowed versions
+# Run `make test-all` before committing a changed lock.
+PIP_TOOLS := pip-tools==7.6.2
+LOCK_CMD = docker run --rm -v $(CURDIR)/$(API_DIR):/src -w /src python:3.12-slim sh -c '\
+	pip install -q --root-user-action=ignore $(PIP_TOOLS) && \
+	pip-compile -q --generate-hashes --allow-unsafe --strip-extras $(1) \
+	  -o requirements.lock pyproject.toml && \
+	pip-compile -q --generate-hashes --allow-unsafe --strip-extras $(1) \
+	  --extra dev -c requirements.lock -o requirements-dev.lock pyproject.toml && \
+	chown $(shell id -u):$(shell id -g) requirements.lock requirements-dev.lock'
+
+lock:
+	$(call LOCK_CMD,)
+
+lock-upgrade:
+	$(call LOCK_CMD,--upgrade)
 
 # ---------------------------------------------------------------------------
 # Stack lifecycle
