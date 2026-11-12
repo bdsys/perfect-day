@@ -19,7 +19,7 @@ The six open questions were answered on 2026-11-11. The decided designs and thei
 
 | # | Follow-up | Status |
 |---|---|---|
-| 25.1 | Scan and rules: entries only for ended events, cancellations and reschedules applied, one entry per event | pending |
+| 25.1 | Scan and rules: entries only for ended events, cancellations and reschedules applied, one entry per event | **built on `feat/25.1-ended-events`; awaiting Andrew's review of the six calls in the plan, then merge** |
 | 25.2 | Drafting model: `claude-opus-5-5` as a setting, call-site fixes, weekly model check | **built on `feat/25.2-drafting-model`, PR open** |
 | 25.3 | AI suggestion box (Regenerate never overwrites existing text) | pending |
 | 25.4 | Self-updating NUC: CI builds images, NUC pulls on a timer, SSH deploy removed | pending |

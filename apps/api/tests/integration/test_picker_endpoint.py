@@ -226,3 +226,46 @@ class TestCreateFromEvent:
         assert data["creation_source"] == "calendar_pick"
         await db_session.refresh(ev)
         assert ev.entry_id == uuid.UUID(data["id"])
+
+
+class TestPickerOffersEndedEventsOnly:
+    async def test_future_event_is_not_listed(self, client: AsyncClient, db_session: AsyncSession):
+        from datetime import timedelta
+
+        _, auth, diary = await _setup(client, "picker-future@example.com")
+        diary_id = uuid.UUID(diary["id"])
+        now = datetime.now(tz=UTC)
+        over = await make_event(db_session, diary_id=diary_id, ends_at=now - timedelta(hours=1))
+        await make_event(
+            db_session,
+            diary_id=diary_id,
+            occurred_at=now + timedelta(days=2),
+            ends_at=now + timedelta(days=2, hours=1),
+        )
+
+        r = await client.get(f"/v1/diaries/{diary['id']}/calendar-events", headers=auth)
+
+        assert [e["id"] for e in r.json()] == [str(over.id)]
+
+    async def test_entry_cannot_be_made_from_a_future_event(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
+        from datetime import timedelta
+
+        _, auth, diary = await _setup(client, "picker-future-create@example.com")
+        future = await make_event(
+            db_session,
+            diary_id=uuid.UUID(diary["id"]),
+            ends_at=datetime.now(tz=UTC) + timedelta(days=2),
+        )
+
+        with patch("app.routers.v1.calendar_events.generate_entry_draft") as draft:
+            r = await client.post(
+                f"/v1/diaries/{diary['id']}/entries/from-event",
+                json={"event_id": str(future.id)},
+                headers=auth,
+            )
+
+        assert r.status_code == 409
+        assert r.json()["error"]["message"] == "event_not_ended"
+        draft.delay.assert_not_called()

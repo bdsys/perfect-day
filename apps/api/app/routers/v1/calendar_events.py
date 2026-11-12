@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import uuid
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user
@@ -72,7 +72,12 @@ async def list_calendar_events(
 
     q = select(Event).where(Event.diary_id == diary_id)
     if not attached:
-        q = q.where(Event.entry_id.is_(None))
+        # The picker: an entry can only be written about something that has
+        # happened. An event with no known end counts as over.
+        q = q.where(
+            Event.entry_id.is_(None),
+            or_(Event.ends_at.is_(None), Event.ends_at <= func.now()),
+        )
     if from_date:
         q = q.where(Event.occurred_at >= datetime.combine(from_date, datetime.min.time()))
     if to_date:
@@ -110,6 +115,9 @@ async def create_entry_from_event(
 
     if event.entry_id is not None:
         raise HTTPException(status_code=409, detail="event_already_attached")
+
+    if event.ends_at is not None and event.ends_at > datetime.now(tz=UTC):
+        raise HTTPException(status_code=409, detail="event_not_ended")
 
     await enforce_entry_tier_limit(
         owner_user_id=user.id,

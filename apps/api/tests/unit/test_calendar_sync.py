@@ -435,3 +435,49 @@ def test_retry_after_accepts_http_date():
     numeric = httpx.Response(429, headers={"Retry-After": "120"}, request=request)
     assert _retry_after_seconds(dated, 4) == 4
     assert _retry_after_seconds(numeric, 4) == 16
+
+
+@pytest.mark.asyncio
+async def test_cancelled_event_without_a_start_is_sent_to_the_cancel_task():
+    """An incremental sync reports a deleted event as id + status only.
+
+    It has no start, so it must be routed before the scan-window filter, which
+    drops anything without one.
+    """
+    import uuid
+    from contextlib import asynccontextmanager
+
+    diary_id = uuid.uuid4()
+    cancelled = {"id": "evt-gone", "status": "cancelled"}
+
+    fake_session = MagicMock()
+    scan_job_result = MagicMock()
+    scan_job_result.scalar_one_or_none = MagicMock(return_value=None)
+    filter_result = MagicMock()
+    filter_result.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=[])))
+    fake_session.execute = AsyncMock(side_effect=[scan_job_result, filter_result])
+
+    @asynccontextmanager
+    async def _fake_db_session():
+        yield fake_session
+
+    async def _fake_fetch_events(*args, **kwargs):
+        return [cancelled], None
+
+    with (
+        patch("app.workers.calendar_sync.db_session", _fake_db_session),
+        patch("app.workers.calendar_sync._fetch_events", new=_fake_fetch_events),
+        patch("app.workers.tasks.ingest_calendar_event") as ingest_task,
+        patch("app.workers.tasks.cancel_calendar_event") as cancel_task,
+    ):
+        from app.workers.calendar_sync import sync_calendar
+
+        total = await sync_calendar(
+            diary_id=diary_id,
+            access_token="x",  # noqa: S106
+            diary_timezone="UTC",
+        )
+
+    cancel_task.delay.assert_called_once_with("evt-gone", str(diary_id))
+    ingest_task.delay.assert_not_called()
+    assert total == 0
