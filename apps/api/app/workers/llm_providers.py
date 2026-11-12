@@ -31,6 +31,14 @@ class LLMPermanentError(Exception):
     """4xx auth / bad request — caller should NOT retry (config bug)."""
 
 
+class LLMUnusableResponseError(Exception):
+    """The model answered, but not with a draft: it was cut off, or it declined.
+
+    Not retried and not sent to another provider. The caller records a failed
+    generation and leaves the entry as it was.
+    """
+
+
 # ---------------------------------------------------------------------------
 # Provider protocol
 # ---------------------------------------------------------------------------
@@ -54,7 +62,14 @@ class LLMProvider(Protocol):
 # Anthropic provider
 # ---------------------------------------------------------------------------
 
-_ANTHROPIC_PRIMARY_MODEL = "claude-haiku-4-5-20251001"
+# Thinking happens before the text and counts against max_tokens, so the cap
+# has to cover both. A draft itself is a few hundred tokens.
+_ANTHROPIC_MAX_TOKENS = 16000
+# If the model declines a request, the API re-runs it once on Anthropic's
+# recommended substitute inside the same call. The scalar "default" form is
+# sent through extra_body: the SDK types only the list form.
+_REFUSAL_FALLBACK_BETA = "server-side-fallback-2026-07-01"
+_UNUSABLE_STOP_REASONS = frozenset({"max_tokens", "refusal"})
 
 
 class AnthropicProvider:
@@ -67,27 +82,35 @@ class AnthropicProvider:
         import anthropic
 
         settings = get_settings()
-        client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+        model = settings.anthropic_model
 
         try:
-            response = client.messages.create(
-                model=_ANTHROPIC_PRIMARY_MODEL,
-                max_tokens=1024,
-                system=system,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": diary_context,
-                                "cache_control": {"type": "ephemeral"},
-                            },
-                            {"type": "text", "text": entry_data},
-                        ],
-                    }
-                ],  # type: ignore[list-item]  # SDK types don't model cache_control blocks
-            )
+            async with anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key) as client:
+                response = await client.beta.messages.create(
+                    model=model,
+                    max_tokens=_ANTHROPIC_MAX_TOKENS,
+                    # The model's own default, stated so a change of default
+                    # upstream cannot change drafts unnoticed.
+                    output_config={"effort": "medium"},
+                    betas=[_REFUSAL_FALLBACK_BETA],
+                    extra_body={"fallbacks": "default"},
+                    system=system,
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": diary_context,
+                                    # Has no effect today: this block is below the
+                                    # minimum cacheable size (review finding L-2).
+                                    "cache_control": {"type": "ephemeral"},
+                                },
+                                {"type": "text", "text": entry_data},
+                            ],
+                        }
+                    ],
+                )
         except anthropic.AuthenticationError as e:
             raise LLMPermanentError(str(e)) from e
         except anthropic.BadRequestError as e:
@@ -95,12 +118,19 @@ class AnthropicProvider:
         except anthropic.APIError as e:
             raise LLMTransientError(str(e)) from e
 
-        raw = response.content[0].text  # type: ignore[union-attr]
+        if response.stop_reason in _UNUSABLE_STOP_REASONS:
+            raise LLMUnusableResponseError(f"stop_reason={response.stop_reason}")
+        # The reply opens with a thinking block; the draft is the first text block.
+        raw = next((block.text for block in response.content if block.type == "text"), None)
+        if raw is None:
+            raise LLMUnusableResponseError("no text block in response")
+
         return LLMResult(
             raw_text=raw,
             input_tokens=response.usage.input_tokens if response.usage else None,
             output_tokens=response.usage.output_tokens if response.usage else None,
-            model=_ANTHROPIC_PRIMARY_MODEL,
+            # The model that answered, which is the substitute after a refusal fallback.
+            model=response.model or model,
         )
 
 

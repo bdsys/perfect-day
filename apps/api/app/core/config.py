@@ -47,6 +47,11 @@ class Settings(BaseSettings):
 
     # Anthropic
     anthropic_api_key: str = ""
+    # Model that writes drafts. No date suffix. A weekly task warns when this
+    # id disappears from the API or a newer Opus exists; changing it is a
+    # manual step followed by `make test-live`. The request sets effort and a
+    # refusal fallback, which models before Opus 5 may reject.
+    anthropic_model: str = "claude-opus-5-5"
 
     # Gemini (optional — used as LLM fallback when Anthropic fails)
     gemini_api_key: str = ""

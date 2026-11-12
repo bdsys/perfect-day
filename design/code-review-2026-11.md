@@ -71,10 +71,10 @@ Every finding was confirmed by reading the code. Three were also reproduced with
 
 | ID | Finding | Where | Status |
 |---|---|---|---|
-| L-1 | The model is hard-coded to `claude-haiku-4-5-20251001`. The design doc and `CLAUDE.md` call for Sonnet or Opus. Make it a setting and choose deliberately. | `workers/llm_providers.py` | Open |
+| L-1 | The model is hard-coded to `claude-haiku-4-5-20251001`. The design doc and `CLAUDE.md` call for Sonnet or Opus. Make it a setting and choose deliberately. | `workers/llm_providers.py` | Fixed, tested (25.2) |
 | L-2 | Prompt caching is configured on a ~30-token block, far below the minimum cacheable size, so nothing is cached. The cost estimate in `04-llm-integration.md` assumes a 70% hit rate. | `workers/llm_providers.py` | Open |
-| L-3 | The synchronous Anthropic client is called inside an `async` function. `max_tokens=1024` with no `stop_reason` check means a long multi-event entry is cut mid-JSON and falls to the fallback list. Invalid JSON skips straight to the next provider instead of the one retry the design specifies. | `workers/llm_providers.py`, `workers/llm.py` | Open |
-| L-4 | The system prompt says "use only facts in EVENTS" and "do not invent weather", then supplies weather under "ENRICHMENTS (use if helpful)". The model has no way to cite an enrichment. | `workers/llm.py` | Open |
+| L-3 | The synchronous Anthropic client is called inside an `async` function. `max_tokens=1024` with no `stop_reason` check means a long multi-event entry is cut mid-JSON and falls to the fallback list. Invalid JSON skips straight to the next provider instead of the one retry the design specifies. | `workers/llm_providers.py`, `workers/llm.py` | Fixed, tested (25.2) |
+| L-4 | The system prompt says "use only facts in EVENTS" and "do not invent weather", then supplies weather under "ENRICHMENTS (use if helpful)". The model has no way to cite an enrichment. | `workers/llm.py` | Prompt reworded (25.2); checked with two live drafts, no automated test |
 | L-5 | Attendee email addresses are sent to the model when no display name exists. | `workers/llm.py` `_format_event_line` | Open |
 | L-6 | Regenerate has no rate limit and no tier check; item 18's "5 AI drafts per month" is not enforced anywhere. | `routers/v1/entries.py` | Open (item 18) |
 

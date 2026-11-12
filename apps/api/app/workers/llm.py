@@ -18,6 +18,7 @@ from app.workers.llm_providers import (
     LLMPermanentError,
     LLMProvider,
     LLMTransientError,
+    LLMUnusableResponseError,
 )
 from app.workers.utils import db_session
 
@@ -28,12 +29,15 @@ You are a warm, observational diary writer. Your job is to turn a list of calend
 into a short, factual diary entry in the voice specified in the diary context.
 
 CRITICAL RULES (override everything else):
-1. Use ONLY facts present in the EVENTS section. Never infer, guess, or fabricate.
+1. Use ONLY facts present in the EVENTS section, and in the ENRICHMENTS section when \
+one is given. Never infer, guess, or fabricate.
 2. Do not describe emotions, feelings, or moods unless explicitly stated as a fact in an event.
-3. Do not invent dialogue, names, weather, or sensory details.
+3. Do not invent dialogue, names, weather, or sensory details. Weather may be mentioned \
+only as it is stated in ENRICHMENTS.
 4. Sparse events → SHORT entry. No padding, no filler.
-5. Every concrete fact in your output must be traceable to a numbered event. \
-   Output a facts_used array listing the event index numbers you drew from.
+5. Every concrete fact in your output must be traceable to a numbered event or to ENRICHMENTS. \
+   Output a facts_used array listing the event index numbers you drew from; \
+ENRICHMENTS have no index and are not listed.
 6. Output ONLY valid JSON matching this schema exactly:
    {"title": string, "title_facts_used": [int, ...], "body_markdown": string, "facts_used": [int, ...]}
 
@@ -63,7 +67,7 @@ You are a warm, observational diary writer. Your job is to write a diary entry t
 CRITICAL RULES (override everything else):
 1. DRAFT_BODY captures the diarist's intent and voice. Keep its substantive facts and emotional framing. You may rephrase.
 2. EVENTS are external facts. You may use them to add concrete time/place/people details that the diarist hinted at, OR to anchor sequencing.
-3. You may NOT invent facts that are absent from BOTH the DRAFT_BODY and the EVENTS. No new names, locations, weather, dialogue, or feelings.
+3. You may NOT invent facts that are absent from the DRAFT_BODY, the EVENTS, and the ENRICHMENTS section when one is given. No new names, locations, weather, dialogue, or feelings. Weather may be mentioned only as it is stated in DRAFT_BODY or ENRICHMENTS.
 4. Every concrete factual claim that comes from EVENTS (and is NOT also in DRAFT_BODY) must be traceable to a numbered event. Output a facts_used array listing the event index numbers you drew from. facts_used MAY be empty if you only polished the draft and did not pull from any event.
 5. If DRAFT_BODY and EVENTS conflict on a fact, prefer DRAFT_BODY (the diarist's lived experience). Do not fabricate a reconciliation.
 6. If CURRENT_TITLE is non-empty, prefer keeping it; only change it if it clearly misrepresents the polished body.
@@ -269,6 +273,18 @@ def build_prompt(
 # ---------------------------------------------------------------------------
 # Citation validator
 # ---------------------------------------------------------------------------
+
+
+def _parse_json_reply(raw: str) -> dict | None:
+    """The JSON object in a model reply, tolerating text around it; None if there is none."""
+    for candidate in (raw, *(m.group() for m in [re.search(r"\{.*\}", raw, re.DOTALL)] if m)):
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return None
 
 
 def validate_citation(
@@ -496,6 +512,7 @@ async def generate_draft_for_entry(entry_id: uuid.UUID) -> None:
     _all_providers: list[LLMProvider] = [AnthropicProvider(), GeminiProvider()]
     providers: list[LLMProvider] = [p for p in _all_providers if p.is_configured()]
     citation_exhausted = False  # True when all retries failed on citation validation — don't failover
+    leave_entry_unchanged = False  # True when the model's reply was cut off or declined
 
     for provider in providers:
         if citation_exhausted:
@@ -516,24 +533,27 @@ async def generate_draft_for_entry(entry_id: uuid.UUID) -> None:
                 output_tokens = result.output_tokens
 
                 raw = result.raw_text
-                try:
-                    parsed = json.loads(raw)
-                except json.JSONDecodeError:
-                    match = re.search(r"\{.*\}", raw, re.DOTALL)
-                    if match:
-                        parsed = json.loads(match.group())
-                    else:
-                        log.warning(
-                            "llm_response_no_json",
-                            entry_id=str(entry_id),
-                            provider=provider.name,
-                            model=model_used,
-                            raw_len=len(raw),
-                            raw_preview=raw[:500],
-                            input_tokens=input_tokens,
-                            output_tokens=output_tokens,
+                parsed = _parse_json_reply(raw)
+                if parsed is None:
+                    log.warning(
+                        "llm_response_no_json",
+                        entry_id=str(entry_id),
+                        provider=provider.name,
+                        model=model_used,
+                        raw_len=len(raw),
+                        raw_preview=raw[:500],
+                        input_tokens=input_tokens,
+                        output_tokens=output_tokens,
+                    )
+                    error_msg = "no JSON in response"
+                    if attempt == 0:
+                        # One more try with the same provider before moving on.
+                        user_message_extra = (
+                            "\n\nPREVIOUS RESPONSE WAS NOT VALID JSON. Reply again with ONLY "
+                            "the JSON object described in the rules, and nothing else."
                         )
-                        raise ValueError("no JSON in response")
+                        continue
+                    break
 
                 valid, err, flagged_tokens = validate_citation(parsed, events, mode=mode, body_seed=body, enrichments=enrichments)
                 if not valid:
@@ -572,6 +592,20 @@ async def generate_draft_for_entry(entry_id: uuid.UUID) -> None:
                 else:
                     error_msg = str(e)
 
+            except LLMUnusableResponseError as e:
+                # Cut off or declined. Not a provider outage, so no retry and no
+                # second provider; the entry is left as it was.
+                log.error(
+                    "llm_unusable_response",
+                    entry_id=str(entry_id),
+                    provider=provider.name,
+                    error=str(e),
+                )
+                error_msg = str(e)
+                llm_result = None
+                leave_entry_unchanged = True
+                break
+
             except LLMPermanentError as e:
                 log.error(
                     "llm_permanent_error",
@@ -587,8 +621,8 @@ async def generate_draft_for_entry(entry_id: uuid.UUID) -> None:
                 llm_result = None
                 break
 
-        if llm_result is not None:
-            break  # provider succeeded — skip remaining providers
+        if llm_result is not None or leave_entry_unchanged:
+            break  # provider succeeded, or answered with something unusable
 
     latency_ms = int(time.time() * 1000) - start_ms
 
@@ -637,8 +671,9 @@ async def generate_draft_for_entry(entry_id: uuid.UUID) -> None:
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
             )
-        elif mode in ("polish", "hybrid"):
+        elif mode in ("polish", "hybrid") or leave_entry_unchanged:
             # Safety guard: NEVER overwrite user-typed body_markdown on failure.
+            # A cut-off or declined reply also changes nothing, in any mode.
             # Just write a failed generation row and bump updated_at so FE polling
             # resolves.
             gen_error = error_msg or (
