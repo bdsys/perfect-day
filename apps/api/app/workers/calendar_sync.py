@@ -46,7 +46,7 @@ async def sync_calendar(
     from sqlalchemy import select
 
     from app.models import DiaryCalendarFilter, ScanJob
-    from app.workers.tasks import ingest_calendar_event
+    from app.workers.tasks import cancel_calendar_event, ingest_calendar_event
 
     async with db_session() as db:
         job_result = await db.execute(select(ScanJob).where(ScanJob.diary_id == diary_id))
@@ -76,6 +76,12 @@ async def sync_calendar(
         # paths where timeMin/timeMax cannot be used).
         filtered_events = []
         for ev in raw_events:
+            if ev.get("status") == "cancelled":
+                # Routed before the window filter: an incremental sync reports a
+                # deleted event as id + status only, with no start to filter on.
+                if ev.get("id"):
+                    cancel_calendar_event.delay(ev["id"], str(diary_id))
+                continue
             start = ev.get("start", {})
             dt_str = start.get("dateTime") or start.get("date")
             if dt_str is None:
@@ -92,8 +98,6 @@ async def sync_calendar(
                 filtered_events.append(ev)
 
         for event in filtered_events:
-            if event.get("status") == "cancelled":
-                continue
             total_events += 1
             ingest_calendar_event.delay(event, str(diary_id), diary_timezone)
 

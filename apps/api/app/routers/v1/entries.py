@@ -377,6 +377,9 @@ async def create_entry(
         entry_end_date=body.entry_end_date,
         title=body.title,
         body_markdown=body.body_markdown,
+        # Text supplied at creation is the person's own; an empty entry has
+        # nothing a person wrote yet.
+        body_source="user" if (body.body_markdown or "").strip() else "llm",
         status="draft",
         created_by="manual",
     )
@@ -405,7 +408,15 @@ async def patch_entry(
 ) -> EntryOut:
     entry, _, _ = await _get_entry_or_404(entry_id, user, db, require_editor=True)
 
-    for field, value in body.model_dump(exclude_unset=True).items():
+    updates = body.model_dump(exclude_unset=True)
+    # Record that a person has changed the words. Automatic clean-up (a
+    # cancelled or moved event) only ever removes text nobody has touched.
+    if any(
+        field in updates and updates[field] != getattr(entry, field)
+        for field in ("title", "body_markdown")
+    ):
+        entry.body_source = "user"
+    for field, value in updates.items():
         setattr(entry, field, value)
     if entry.entry_end_date is not None and entry.entry_end_date < entry.entry_date:
         raise HTTPException(status_code=422, detail="entry_end_date_before_entry_date")

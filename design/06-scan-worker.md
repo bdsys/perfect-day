@@ -51,42 +51,46 @@ scan_diary(diary_id):
   9. Release lock.
 ```
 
-## Event-to-Entry grouping (Model 3)
+## From calendar event to entry
 
-> **Superseded in part (2026-11-11).** See [`docs/superpowers/specs/2026-11-11-code-review-decisions-design.md`](../docs/superpowers/specs/2026-11-11-code-review-decisions-design.md) section 1: entries now come from rules, the event picker and manual creation; rules run only for events that have ended; one entry per event. This section is rewritten when that work is built.
+Built 2026-11-11 as follow-up 25.1; the decisions are in [`docs/superpowers/specs/2026-11-11-code-review-decisions-design.md`](../docs/superpowers/specs/2026-11-11-code-review-decisions-design.md) section 1 and the build notes in [`docs/superpowers/plans/2026-11-11-scan-and-rules-ended-events.md`](../docs/superpowers/plans/2026-11-11-scan-and-rules-ended-events.md).
 
-```
-group_events_into_entries(diary_id, scan_run_id):
-  For each calendar event from this scan, not yet attached to an entry:
-    if event spans > 1 day:
-      entry = upsert_entry(diary_id,
-                           entry_date=event.start_date,
-                           entry_end_date=event.end_date,
-                           source_external_id=event.external_id)
-    else:
-      entry = upsert_entry(diary_id, entry_date=event.date)
-    attach event to entry
+Entries come from three places: auto-creation rules, the event picker, and manual creation. The scan itself never creates an entry.
 
-  For each photo in this scan, not yet attached:
-    candidates = entries where photo.taken_at within entry_date..entry_end_date
-                 OR within ±3 days of entry_date
-    chosen = pick_narrowest(candidates, photo)   # narrower date range wins
-    if chosen is None:
-      chosen = upsert_entry(diary_id, entry_date=photo.taken_at::date)
-    attach photo to chosen (entry_photos.position from taken_at)
+**Stored for every event** (`events` table): `occurred_at` (start), `ends_at`, and `rules_evaluated_at`. An all-day event runs from local midnight to local midnight in the diary's timezone. An event with no `ends_at` (non-calendar sources) counts as over.
 
-  Manual events: already attached at API time.
+**An entry is only created once the event has ended.**
 
-  Return entries_to_regenerate (those that gained content this scan).
-```
+1. Ingest (`_ingest_calendar_event`) stores or updates the event. A new event that is already over is sent to the rules straight away. A future event is stored and nothing else happens.
+2. Each scan then calls `queue_due_rule_evaluations`, which sends to the rules every stored event that is unattached, not yet evaluated, and now over. With hourly scans an entry appears up to one scan interval after the event ends.
+3. Rules run once per event. `rules_evaluated_at` is set whether or not anything matched, so a rule created later does not sweep up old events. "Apply to past N days" on the rules page is the explicit way to do that, and it also skips events that have not ended.
 
-`upsert_entry` reuses an existing **draft** entry for the diary on that date (or matching multi-day `external_id`) before creating new. Three cases:
+**One entry per event** (`evaluate_event_against_rules`). All enabled rules are checked, oldest first (`created_at`, then `id`). Every matching rule is recorded against the entry (`entry_rule_matches`). When they disagree about grouping, the oldest matching rule decides:
 
-1. **No existing entry for this date:** create a new draft.
-2. **Existing draft for this date:** reuse it — attach the new event/photo, mark the entry for regeneration.
-3. **Existing published entry for this date:** do NOT modify the published entry. Attach new events to a new sibling draft entry. The user can review and manually merge if desired.
+| Rule options | Grouping |
+|---|---|
+| `recurring: per_series`, event is part of a series | one entry for the whole series, tracked by a `rule_series_claims` row |
+| `multi_day: spanning` | joins an existing rule-created entry with exactly the same date range, else a new entry with that range |
+| otherwise | a new single-day entry |
 
-Photo grouping uses a total ordering to avoid non-deterministic tie-breaking: `entry_date ASC, created_at ASC, id ASC`. Given two entries both equally close to a photo, the earlier-dated one wins; ties on date break on `created_at`; ties on `created_at` break on `id`.
+A rule that matches but does not decide creates no series claim. There is no ordering control in the UI.
+
+**Cancellations** (`cancel_calendar_event`). Google reports a deleted event as `status: cancelled`, in an incremental sync with only its id. The event row is always deleted. What happens to its entry:
+
+| Entry | Result |
+|---|---|
+| none | nothing else |
+| untouched AI draft made by a rule, no other events | moved to trash; its series claim is deleted |
+| untouched AI draft made by a rule, other events remain | kept and redrafted |
+| edited by a person, published, or made from the picker | left exactly as it is |
+
+"Untouched AI draft" means `status = 'draft'` and `body_source` is `llm` or `fallback`. Editing the title or body in the app sets `body_source = 'user'`.
+
+**Reschedules.** Re-ingesting an event updates its stored times. If it now ends in the future, the same table applies except the event row is kept, and it is evaluated again after its new end.
+
+**The event picker** lists only unattached events that have ended; `POST .../entries/from-event` refuses a future event with `409 event_not_ended`.
+
+**Photos** (item 14, not built): the earlier plan grouped photos into entries by `taken_at` within the entry's date range or within 3 days of it, narrowest range first, ties broken by `entry_date`, `created_at`, `id`. Item 14 needs a redesign around the Photos Picker API before any of that is built.
 
 ## Idempotency
 

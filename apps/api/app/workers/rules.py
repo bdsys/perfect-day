@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 from datetime import date as _date
 
 import structlog
@@ -90,16 +91,13 @@ def _match_any(values: list[str], op: str, value: str, case_sensitive: bool) -> 
 async def evaluate_event_against_rules(
     event_id: str, diary_id: str, db: AsyncSession
 ) -> None:
-    """Evaluate all enabled auto-creation rules for the diary against *event_id*.
+    """Run the diary's enabled auto-creation rules against *event_id*.
 
-    For each matching rule:
-    - ``per_series`` with a ``recurringEventId``: look up or create a
-      ``RuleSeriesClaim`` and attach to its entry.
-    - Everything else (``per_instance``, ``multi_day``, no recurring ID):
-      create a new Entry for this event.
+    An event gets at most one entry. Every matching rule is recorded against
+    that entry; when they disagree about grouping, the oldest rule decides.
+    An event that has not ended yet is left alone, to be evaluated later.
 
-    Queues ``generate_entry_draft`` only for freshly created entries.
-    Commits once at the end.
+    Queues ``generate_entry_draft`` after commit, once per entry that needs it.
     """
     # Import here to avoid circular imports (tasks → rules → tasks)
     from app.workers.tasks import generate_entry_draft  # noqa: PLC0415
@@ -107,7 +105,7 @@ async def evaluate_event_against_rules(
     event_uuid = uuid.UUID(event_id)
     diary_uuid = uuid.UUID(diary_id)
 
-    # 1. Load the event with a row-level lock to prevent concurrent races.
+    # Row lock: two evaluations of one event must not both create an entry.
     result = await db.execute(
         select(Event).where(Event.id == event_uuid).with_for_update()
     )
@@ -116,219 +114,170 @@ async def evaluate_event_against_rules(
         log.warning("evaluate_rules_event_not_found", event_id=event_id)
         return
 
-    # Skip events that are already attached to an entry.
     if event.entry_id is not None:
         return
 
-    # 2. Load enabled rules for this diary.
+    now = datetime.now(tz=UTC)
+    if event.ends_at is not None and event.ends_at > now:
+        # Not over yet. The scan after it ends picks it up.
+        return
+
+    # From here on the event counts as evaluated, whatever the outcome.
+    event.rules_evaluated_at = now
+
     rules_result = await db.execute(
         select(AutoCreationRule)
         .where(AutoCreationRule.diary_id == diary_uuid)
         .where(AutoCreationRule.enabled.is_(True))
+        # Oldest first: the first matching rule decides how the event is grouped.
+        .order_by(AutoCreationRule.created_at.asc(), AutoCreationRule.id.asc())
     )
-    rules = list(rules_result.scalars())
-    if not rules:
-        return
+    payload = event.payload or {}
+    matching = [rule for rule in rules_result.scalars() if match_event(rule.condition, payload)]
 
-    # 3. Load diary (needed for timezone + user_id).
-    diary_result = await db.execute(select(Diary).where(Diary.id == diary_uuid))
-    diary = diary_result.scalar_one_or_none()
+    entry_id: uuid.UUID | None = None
+    needs_draft = False
+    if matching:
+        entry_id, needs_draft = await _entry_for_event(db, event, diary_uuid, matching[0])
+
+    if entry_id is not None:
+        event.entry_id = entry_id
+        for rule in matching:
+            # Several events can share an entry, so the pair may already be recorded.
+            already = await db.execute(
+                select(EntryRuleMatch).where(
+                    EntryRuleMatch.entry_id == entry_id,
+                    EntryRuleMatch.rule_id == rule.id,
+                )
+            )
+            if already.scalar_one_or_none() is None:
+                db.add(EntryRuleMatch(entry_id=entry_id, rule_id=rule.id))
+
+    # Commit first: a worker that picks the draft task up before this
+    # transaction commits cannot see the entry and gives up.
+    await db.commit()
+
+    if entry_id is not None and needs_draft:
+        try:
+            generate_entry_draft.delay(str(entry_id))
+        except Exception:
+            log.exception("evaluate_rules_llm_queue_failed", entry_id=str(entry_id))
+
+
+async def _entry_for_event(
+    db: AsyncSession, event: Event, diary_id: uuid.UUID, rule: AutoCreationRule
+) -> tuple[uuid.UUID | None, bool]:
+    """Find or create the entry *event* belongs to, grouped as *rule* says.
+
+    Returns ``(entry_id, needs_draft)``. ``entry_id`` is None when a new entry
+    was needed but the owner's tier limit does not allow one.
+    """
+    diary = (await db.execute(select(Diary).where(Diary.id == diary_id))).scalar_one_or_none()
     if diary is None:
-        return
-
-    user_result = await db.execute(select(User).where(User.id == diary.owner_user_id))
-    user = user_result.scalar_one_or_none()
+        return None, False
+    user = (
+        await db.execute(select(User).where(User.id == diary.owner_user_id))
+    ).scalar_one_or_none()
     if user is None:
-        return
+        return None, False
 
-    # Build date info once — reused across rules.
-    p = event.payload or {}
-    raw_event = {"start": p.get("start", {}), "end": p.get("end", {})}
+    payload = event.payload or {}
+    raw_event = {"start": payload.get("start", {}), "end": payload.get("end", {})}
     entry_date, entry_end_date = google_event_to_entry_date(raw_event, diary.timezone)
     if entry_date is None:
         entry_date = event.occurred_at.date() if event.occurred_at else _date.today()
 
-    recurring_event_id: str | None = p.get("recurringEventId")
+    options = rule.options or {}
+    recurring_event_id: str | None = payload.get("recurringEventId")
+    per_series = (
+        options.get("recurring", "per_instance") == "per_series"
+        and recurring_event_id is not None
+    )
+    spanning = options.get("multi_day") == "spanning"
 
-    # Track the first entry attached to the event across all rules so that
-    # event.entry_id is set exactly once.
-    first_attached_entry_id: uuid.UUID | None = None
-    # Entries needing a draft. Queued only after commit: a worker that picks the
-    # task up before this transaction commits cannot see the entry and gives up.
-    entries_to_draft: list[uuid.UUID] = []
-
-    for rule in rules:
-        if not match_event(rule.condition, p):
-            continue
-
-        options = rule.options or {}
-        is_per_series = (
-            options.get("recurring", "per_instance") == "per_series"
-            and recurring_event_id is not None
+    async def _new_entry(end_date: _date | None) -> uuid.UUID | None:
+        ok, reason = await try_enforce_entry_tier_limit(
+            owner_user_id=user.id,
+            source="auto",
+            db=db,
+            owner_subscription_tier=user.subscription_tier,
         )
+        if not ok:
+            log.warning("evaluate_rules_tier_limit", rule_id=str(rule.id), reason=reason)
+            return None
+        entry = Entry(
+            diary_id=diary_id,
+            entry_date=entry_date,
+            entry_end_date=end_date,
+            status="draft",
+            created_by="auto",
+            creation_source="rule",
+        )
+        db.add(entry)
+        await db.flush()
+        return entry.id
 
-        new_entry: Entry | None = None
-        entry_id_to_use: uuid.UUID | None = None
-
-        if is_per_series:
-            # ----------------------------------------------------------------
-            # per_series path: look up or create a RuleSeriesClaim.
-            # ----------------------------------------------------------------
-            claim_result = await db.execute(
+    if per_series:
+        # One entry for the whole recurring series, tracked by a claim.
+        claim = (
+            await db.execute(
                 select(RuleSeriesClaim)
                 .where(RuleSeriesClaim.rule_id == rule.id)
                 .where(RuleSeriesClaim.recurring_event_id == recurring_event_id)
                 .with_for_update()
             )
-            claim = claim_result.scalar_one_or_none()
+        ).scalar_one_or_none()
+        if claim is not None:
+            return claim.entry_id, False
 
-            if claim is not None:
-                # Existing series entry — reuse it.
-                entry_id_to_use = claim.entry_id
-            else:
-                # First instance — check tier limit, create entry + claim.
-                ok, reason = await try_enforce_entry_tier_limit(
-                    owner_user_id=user.id,
-                    source="auto",
-                    db=db,
-                    owner_subscription_tier=user.subscription_tier,
-                )
-                if not ok:
-                    log.warning(
-                        "evaluate_rules_tier_limit",
-                        rule_id=str(rule.id),
-                        reason=reason,
-                    )
-                    continue
-
-                new_entry = Entry(
-                    diary_id=diary_uuid,
-                    entry_date=entry_date,
-                    entry_end_date=None,  # series entries don't span
-                    status="draft",
-                    created_by="auto",
-                    creation_source="rule",
-                )
-                db.add(new_entry)
-                await db.flush()
-                entry_id_to_use = new_entry.id
-
-                claim = RuleSeriesClaim(
-                    rule_id=rule.id,
-                    recurring_event_id=recurring_event_id,
-                    entry_id=entry_id_to_use,
-                )
-                db.add(claim)
-        else:
-            # ----------------------------------------------------------------
-            # per_instance / multi_day path. For multi_day == "spanning",
-            # group into an existing rule-created entry that has the EXACT
-            # same (entry_date, entry_end_date) range — including NULL == NULL.
-            # Manual entries are never grouped into.
-            # ----------------------------------------------------------------
-            use_end_date = (
-                entry_end_date if options.get("multi_day") == "spanning" else None
+        new_id = await _new_entry(None)  # series entries don't span
+        if new_id is None:
+            return None, False
+        db.add(
+            RuleSeriesClaim(
+                rule_id=rule.id, recurring_event_id=recurring_event_id, entry_id=new_id
             )
+        )
+        return new_id, True
 
-            existing_entry: Entry | None = None
-            if options.get("multi_day") == "spanning":
-                # NULL-safe equality on entry_end_date:
-                #   - if use_end_date is None: match rows where entry_end_date IS NULL
-                #   - else: match rows where entry_end_date == use_end_date
-                if use_end_date is None:
-                    end_predicate: ColumnElement[bool] = Entry.entry_end_date.is_(None)
-                else:
-                    end_predicate = Entry.entry_end_date == use_end_date
-
-                existing_result = await db.execute(
-                    select(Entry)
-                    .where(
-                        and_(
-                            Entry.diary_id == diary_uuid,
-                            Entry.entry_date == entry_date,
-                            end_predicate,
-                            Entry.creation_source == "rule",
-                            Entry.deleted_at.is_(None),
-                        )
+    if spanning:
+        # Join an existing rule-created entry with exactly the same date range
+        # (NULL end matches NULL end). Manual entries are never grouped into.
+        end_predicate: ColumnElement[bool] = (
+            Entry.entry_end_date.is_(None)
+            if entry_end_date is None
+            else Entry.entry_end_date == entry_end_date
+        )
+        existing = (
+            await db.execute(
+                select(Entry)
+                .where(
+                    and_(
+                        Entry.diary_id == diary_id,
+                        Entry.entry_date == entry_date,
+                        end_predicate,
+                        Entry.creation_source == "rule",
+                        Entry.deleted_at.is_(None),
                     )
-                    .order_by(Entry.created_at.asc())
-                    .limit(1)
-                    .with_for_update()
                 )
-                existing_entry = existing_result.scalar_one_or_none()
-
-            if existing_entry is not None:
-                # Reuse — skip tier check (no new entry being created).
-                entry_id_to_use = existing_entry.id
-                log.info(
-                    "rules_event_grouped",
-                    entry_id=str(entry_id_to_use),
-                    event_id=event_id,
-                    diary_id=diary_id,
-                    rule_id=str(rule.id),
-                    entry_date=str(entry_date),
-                    entry_end_date=str(use_end_date) if use_end_date else None,
-                )
-                # Re-queue draft regeneration so the LLM produces a coherent
-                # multi-event entry. Known follow-up: dedupe these calls at
-                # the LLM-task layer so a scan window with N grouped events
-                # does not produce N regenerations.
-                entries_to_draft.append(entry_id_to_use)
-            else:
-                ok, reason = await try_enforce_entry_tier_limit(
-                    owner_user_id=user.id,
-                    source="auto",
-                    db=db,
-                    owner_subscription_tier=user.subscription_tier,
-                )
-                if not ok:
-                    log.warning(
-                        "evaluate_rules_tier_limit",
-                        rule_id=str(rule.id),
-                        reason=reason,
-                    )
-                    continue
-
-                new_entry = Entry(
-                    diary_id=diary_uuid,
-                    entry_date=entry_date,
-                    entry_end_date=use_end_date,
-                    status="draft",
-                    created_by="auto",
-                    creation_source="rule",
-                )
-                db.add(new_entry)
-                await db.flush()
-                entry_id_to_use = new_entry.id
-
-        # 4. Attach event to entry (only the first time across all rules).
-        if entry_id_to_use is not None:
-            if first_attached_entry_id is None:
-                event.entry_id = entry_id_to_use
-                first_attached_entry_id = entry_id_to_use
-
-            # 5. Record the rule match — but only if one doesn't already exist
-            # (per_series: multiple events share an entry, so the (entry_id, rule_id)
-            # pair may already have been inserted by an earlier instance).
-            existing_match_result = await db.execute(
-                select(EntryRuleMatch).where(
-                    EntryRuleMatch.entry_id == entry_id_to_use,
-                    EntryRuleMatch.rule_id == rule.id,
-                )
+                .order_by(Entry.created_at.asc())
+                .limit(1)
+                .with_for_update()
             )
-            if existing_match_result.scalar_one_or_none() is None:
-                match_row = EntryRuleMatch(entry_id=entry_id_to_use, rule_id=rule.id)
-                db.add(match_row)
+        ).scalar_one_or_none()
+        if existing is not None:
+            log.info(
+                "rules_event_grouped",
+                entry_id=str(existing.id),
+                event_id=str(event.id),
+                diary_id=str(diary_id),
+                rule_id=str(rule.id),
+                entry_date=str(entry_date),
+                entry_end_date=str(entry_end_date) if entry_end_date else None,
+            )
+            # Redraft so the text covers the event that just joined. Known
+            # follow-up: N grouped events in one scan mean N regenerations.
+            return existing.id, True
 
-            # 6. Queue LLM generation only for newly created entries.
-            if new_entry is not None:
-                entries_to_draft.append(new_entry.id)
-
-    # 7. Commit all changes in a single transaction, then queue the drafts.
-    await db.commit()
-
-    for entry_id in entries_to_draft:
-        try:
-            generate_entry_draft.delay(str(entry_id))
-        except Exception:
-            log.exception("evaluate_rules_llm_queue_failed", entry_id=str(entry_id))
+    new_id = await _new_entry(entry_end_date if spanning else None)
+    return new_id, new_id is not None

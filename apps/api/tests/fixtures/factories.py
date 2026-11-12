@@ -84,6 +84,8 @@ async def make_event(
     external_id: str | None = None,
     payload: dict | None = None,
     occurred_at: datetime | None = None,
+    ends_at: datetime | None = None,
+    rules_evaluated_at: datetime | None = None,
 ) -> Event:
     ev = Event(
         diary_id=diary_id if diary_id is not None else getattr(entry, "diary_id", None),
@@ -101,6 +103,8 @@ async def make_event(
                 "attendees": [],
             },
         occurred_at=occurred_at or datetime.now(tz=UTC),
+        ends_at=ends_at,
+        rules_evaluated_at=rules_evaluated_at,
     )
     db.add(ev)
     await db.commit()
