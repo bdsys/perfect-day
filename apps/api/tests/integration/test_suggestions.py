@@ -277,6 +277,25 @@ class TestRegenerateSuggests:
         assert last.status == "failed"
 
 
+    async def test_a_reply_with_a_title_but_no_text_is_not_offered(self, db_session, db_url):
+        # Accepting it would wipe the parent's text.
+        entry = await _entry_with_picnic(db_session, body="Our own words.", body_source="user")
+
+        await _run_draft(
+            db_url, entry.id, _provider(_reply("", title="A title only")), trigger="regenerate"
+        )
+
+        after = await _reload(db_session, entry.id)
+        assert after.body_markdown == "Our own words."
+        assert after.suggested_body_markdown is None
+        last = (
+            await db_session.execute(
+                select(LLMGeneration).where(LLMGeneration.entry_id == entry.id)
+            )
+        ).scalar_one()
+        assert last.status == "failed"
+
+
 class TestWhenTheDraftGoesStraightIn:
     async def test_an_empty_entry_gets_its_first_draft_in_place(self, db_session, db_url):
         entry = await _entry_with_picnic(db_session, body=None, title=None)

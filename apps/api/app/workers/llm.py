@@ -684,10 +684,12 @@ async def generate_draft_for_entry(
 
         if not write_in_place:
             gen_error = None
+            # A suggestion must carry text: accepting one without would wipe the entry's.
+            llm_usable = bool(llm_result and llm_result.get("body_markdown"))
             if llm_usable:
                 assert llm_result is not None
                 entry_update.suggested_title = llm_result.get("title") or None
-                entry_update.suggested_body_markdown = llm_result.get("body_markdown") or ""
+                entry_update.suggested_body_markdown = llm_result["body_markdown"]
                 entry_update.suggested_flagged_tokens = flagged_tokens or []
                 entry_update.suggested_body_source = _SUGGESTED_BODY_SOURCE[mode]
                 entry_update.suggested_at = datetime.now(UTC)
