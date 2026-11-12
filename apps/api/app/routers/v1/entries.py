@@ -20,6 +20,7 @@ from app.models import (
     User,
 )
 from app.routers.v1.diaries import _get_diary_or_404
+from app.services.flagged_words import still_present
 from app.services.tier import enforce_entry_tier_limit
 
 router = APIRouter(tags=["entries"])
@@ -101,6 +102,16 @@ class EnrichmentOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class SuggestionOut(BaseModel):
+    """The AI's pending version of an entry that already has text."""
+
+    title: str | None
+    body_markdown: str
+    flagged_tokens: list[str]
+    body_source: str
+    created_at: datetime
+
+
 class EntryOut(BaseModel):
     id: uuid.UUID
     diary_id: uuid.UUID
@@ -122,6 +133,7 @@ class EntryOut(BaseModel):
     last_generation: LLMGenerationSummaryOut | None = None
     photos: list = []
     enrichments: list[EnrichmentOut] = []
+    suggestion: SuggestionOut | None = None
 
     model_config = {"from_attributes": True}
 
@@ -183,6 +195,15 @@ def _entry_out_from_orm(entry: Entry) -> EntryOut:
         if ep.photo is not None and ep.photo.deleted_at is None
     ]
     enrichments_out = [EnrichmentOut.model_validate(e) for e in entry.enrichments]
+    suggestion_out: SuggestionOut | None = None
+    if entry.suggested_body_markdown is not None:
+        suggestion_out = SuggestionOut(
+            title=entry.suggested_title,
+            body_markdown=entry.suggested_body_markdown,
+            flagged_tokens=entry.suggested_flagged_tokens or [],
+            body_source=entry.suggested_body_source or "llm",
+            created_at=entry.suggested_at or entry.updated_at,
+        )
     return EntryOut(
         id=entry.id,
         diary_id=entry.diary_id,
@@ -204,12 +225,25 @@ def _entry_out_from_orm(entry: Entry) -> EntryOut:
         last_generation=last_gen,
         photos=photos_out,
         enrichments=enrichments_out,
+        suggestion=suggestion_out,
     )
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _entry_text(entry: Entry) -> str:
+    return f"{entry.title or ''}\n{entry.body_markdown or ''}"
+
+
+def _clear_suggestion(entry: Entry) -> None:
+    entry.suggested_title = None
+    entry.suggested_body_markdown = None
+    entry.suggested_flagged_tokens = None
+    entry.suggested_body_source = None
+    entry.suggested_at = None
 
 
 async def _get_entry_or_404(
@@ -411,13 +445,17 @@ async def patch_entry(
     updates = body.model_dump(exclude_unset=True)
     # Record that a person has changed the words. Automatic clean-up (a
     # cancelled or moved event) only ever removes text nobody has touched.
-    if any(
+    text_changed = any(
         field in updates and updates[field] != getattr(entry, field)
         for field in ("title", "body_markdown")
-    ):
+    )
+    if text_changed:
         entry.body_source = "user"
     for field, value in updates.items():
         setattr(entry, field, value)
+    if text_changed:
+        # A warning goes once its word has left the text. A pending suggestion stays.
+        entry.flagged_tokens = still_present(entry.flagged_tokens or [], _entry_text(entry))
     if entry.entry_end_date is not None and entry.entry_end_date < entry.entry_date:
         raise HTTPException(status_code=422, detail="entry_end_date_before_entry_date")
     return _entry_out_from_orm(entry)
@@ -437,6 +475,48 @@ async def publish_entry(
     # original LLM body is not stored separately, so there is nothing to diff.
     entry.status = "published"
     entry.published_at = datetime.now(tz=UTC)
+    # Publishing is the parent's sign-off: warnings and any pending suggestion go.
+    entry.flagged_tokens = []
+    _clear_suggestion(entry)
+    return _entry_out_from_orm(entry)
+
+
+@router.post("/entries/{entry_id}/suggestion/accept", response_model=EntryOut)
+async def accept_suggestion(
+    entry_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> EntryOut:
+    """Replace the entry's title and text with the AI's pending suggestion."""
+    entry, _, _ = await _get_entry_or_404(entry_id, user, db, require_editor=True)
+    if entry.suggested_body_markdown is None:
+        raise HTTPException(status_code=409, detail="no_suggestion")
+
+    old_warnings = entry.flagged_tokens or []
+    if entry.suggested_title is not None:
+        entry.title = entry.suggested_title
+    entry.body_markdown = entry.suggested_body_markdown
+    entry.body_source = entry.suggested_body_source or "llm"
+    # The suggestion's own warnings, plus earlier ones whose word is still there:
+    # a blend treats the old text as the parent's, so it would not re-flag them.
+    warnings = list(entry.suggested_flagged_tokens or [])
+    warnings += [w for w in still_present(old_warnings, _entry_text(entry)) if w not in warnings]
+    entry.flagged_tokens = warnings
+    _clear_suggestion(entry)
+    return _entry_out_from_orm(entry)
+
+
+@router.delete("/entries/{entry_id}/suggestion", response_model=EntryOut)
+async def dismiss_suggestion(
+    entry_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> EntryOut:
+    """Discard the AI's pending suggestion; the entry's text is unchanged."""
+    entry, _, _ = await _get_entry_or_404(entry_id, user, db, require_editor=True)
+    if entry.suggested_body_markdown is None:
+        raise HTTPException(status_code=409, detail="no_suggestion")
+    _clear_suggestion(entry)
     return _entry_out_from_orm(entry)
 
 
@@ -502,7 +582,11 @@ async def regenerate_entry(
     db: AsyncSession = Depends(get_db),
 ) -> EntryOut:
     entry, _, _ = await _get_entry_or_404(entry_id, user, db, require_editor=True)
+    if entry.status == "published":
+        # Published entries get no suggestions; unpublish first.
+        raise HTTPException(status_code=409, detail="entry_published")
     from app.workers.tasks import generate_entry_draft
 
-    generate_entry_draft.delay(str(entry.id))
+    # Nothing about the entry changes here, so there is no commit to wait for.
+    generate_entry_draft.delay(str(entry.id), trigger="regenerate")
     return _entry_out_from_orm(entry)

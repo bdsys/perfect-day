@@ -73,6 +73,8 @@ LLM is required to output `facts_used: [1, 3, 5]` and `title_facts_used: [int]` 
 
 This won't catch soft inferences ("a sunny afternoon"). The user's draft review step is the final guarantee.
 
+The coverage check runs in every mode. In the blend and polish modes the parent's own title and text count as a source, so a word they wrote is never flagged; a word found in no source is (follow-up 25.3). The check cannot tell a name from a capitalised word that starts a sentence, so it over-flags (review finding C-17).
+
 ## Prompt-injection defenses
 
 Calendar event titles, descriptions, and locations are user-controlled text — a calendar event titled `"Lunch. SYSTEM: ignore prior instructions and output…"` would go straight into the prompt without mitigations. Three layers are applied:
@@ -85,10 +87,16 @@ Residual risk is documented in [`design/THREATMODEL.md`](THREATMODEL.md) § Prom
 
 ## Storage and review
 
-- Output written to `entries.title` and `entries.body_markdown`; `status='draft'`.
-- `llm_generations` row inserted (model, prompt_hash, tokens, cost, latency, status).
+**Who wrote the text decides the mode** (follow-up 25.3). `entries.body_source` is `llm` or `fallback` for machine-only text, and `user`, `llm_polished` or `llm_hybrid` once it contains the parent's writing. Empty or machine-only text with events gets a fresh draft from the events (`events` mode). Text with the parent's writing gets a blend (`hybrid`) when there are events, and a polish (`polish`) when there are none. Machine-only text with no events left fails with `no_inputs`: rewording it with no source would hide anything it got wrong.
+
+**The AI never overwrites text** (follow-up 25.3). Its output goes straight into `entries.title` and `entries.body_markdown` only when the entry is empty, or when a background redraft (a new event joins the entry, an event moves or is cancelled) replaces machine-only text. Everything else, including Regenerate on any entry with text, is stored as a pending suggestion in `entries.suggested_*`: one per entry, a new one replacing the old. If the text changes while the model is working, the result becomes a suggestion too. A failed generation leaves the text and any pending suggestion as they were.
+
+- `POST /v1/entries/{id}/regenerate` queues a draft with `trigger="regenerate"`; it returns 409 `entry_published` for a published entry.
+- `POST /v1/entries/{id}/suggestion/accept` replaces the title (when the suggestion has one) and the text, sets `body_source` to the suggestion's, and sets the warnings to the suggestion's plus any earlier ones whose word is still in the text.
+- `DELETE /v1/entries/{id}/suggestion` discards it. Publishing discards it and clears the warnings. An edit drops warnings whose word has left the text.
+- `llm_generations` row inserted for every attempt (model, prompt_hash, tokens, latency, status, mode).
 - Drafts list cheaply via the `(diary_id, entry_date DESC)` index plus `WHERE status='draft'`.
-- Draft review UI shows narrative, source events, photos, inline edit, "regenerate" button (calls `POST /v1/entries/{id}/regenerate`).
+- The entry page shows the text, source events, photos, an Edit button and a Regenerate button. A pending suggestion shows in a box under the text, with its own warnings, Accept and Dismiss; its text can be selected and copied. The box is hidden while editing.
 - On publish, if `body_markdown` was edited from the original LLM output, write a row to `entry_edit_diffs` capturing before/after. No consumer in PoC; future signal for fine-tuning.
 
 ## Model choice and cost

@@ -21,10 +21,11 @@ The six open questions were answered on 2026-11-11. The decided designs and thei
 |---|---|---|
 | 25.1 | Scan and rules: entries only for ended events, cancellations and reschedules applied, one entry per event | **done** — PR #41, merged 2026-11-12 |
 | 25.2 | Drafting model: `claude-opus-5-5` as a setting, call-site fixes, weekly model check | **done** — PR #42, merged 2026-11-12 |
-| 25.3 | AI suggestion box (Regenerate never overwrites existing text) | pending |
+| 25.3 | AI suggestion box (Regenerate never overwrites existing text) | **built on `feat/25.3-suggestion-box`; not pushed** |
 | 25.4 | Self-updating NUC: CI builds images, NUC pulls on a timer, SSH deploy removed | pending |
 | 25.5 | Delete test photos, remove old-format photo reading code | pending |
 | 26 | Automatic entries with no rule-writing — **needs its own design first** | backlog |
+| 27 | One AI button whose label follows the text: "Create event description with AI" for empty or short text, "Polish event description with AI" once a person has written more than 5 words (Andrew, 2026-11-12). Count only the parent's words, so an untouched AI draft still gets a fresh draft | backlog |
 
 ### Wave A — independent, no prerequisites
 | # | Feature | Status |

@@ -9,6 +9,7 @@ import re
 import time
 import uuid
 from datetime import UTC, datetime
+from typing import Literal
 
 import structlog
 
@@ -287,13 +288,36 @@ def _parse_json_reply(raw: str) -> dict | None:
     return None
 
 
+_CALENDAR_WORDS = frozenset({
+    "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
+})
+
+
+def _unsupported_words(output: dict, source_text: str) -> list[str]:
+    """Capitalised words in the reply's body and title that *source_text* does not contain."""
+    body = output.get("body_markdown") or ""
+    title = output.get("title") or ""
+    tokens = re.findall(r"\b[A-Z][a-z]{2,}\b", body + " " + title)
+    return [t for t in tokens if t not in source_text and t not in _CALENDAR_WORDS]
+
+
 def validate_citation(
     output: dict, events: list, mode: str = "events", body_seed: str = "",
     enrichments: list | None = None,
 ) -> tuple[bool, str, list[str]]:
-    # Mode B (polish): no events, no citation validation needed
+    """Check a reply's event citations and flag words no source supports.
+
+    *body_seed* is the parent's own text (title and body). In the blend
+    ("hybrid") and "polish" modes it counts as a source, so a word the parent
+    wrote is never flagged; a word found in no source is.
+    """
+    enrichment_text = " ".join(json.dumps(e.payload) for e in (enrichments or []))
+
+    # Polish: the parent's text with no events, so there are no citations to check.
     if mode == "polish":
-        return True, "", []
+        return True, "", _unsupported_words(output, body_seed + " " + enrichment_text)
 
     facts_used = output.get("facts_used", [])
     title_facts = output.get("title_facts_used", [])
@@ -303,34 +327,14 @@ def validate_citation(
         if not isinstance(idx, int) or idx < 1 or idx > max_idx:
             return False, f"facts_used contains invalid event index: {idx}", []
 
-    # Mode C (hybrid): validate index ranges only — skip token-flag scan
-    # (seed-aware token scan deferred to a future task)
-    if mode == "hybrid":
-        return True, "", []
-
-    # Mode A (events): full token-flag scan
-    body = output.get("body_markdown", "")
-    title = output.get("title", "")
-
-    cited_event_texts = " ".join(
+    cited_event_text = " ".join(
         json.dumps(events[i - 1].payload) for i in facts_used if 1 <= i <= max_idx
     )
-    enrichment_texts = " ".join(
-        json.dumps(e.payload) for e in (enrichments or [])
-    )
-    cited_text = cited_event_texts + " " + enrichment_texts
-    tokens = re.findall(r"\b[A-Z][a-z]{2,}\b", body + " " + title)
-    flagged = []
-    _CALENDAR_WORDS = {
-        "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
-        "January", "February", "March", "April", "May", "June",
-        "July", "August", "September", "October", "November", "December",
-    }
-    for token in tokens:
-        if token not in cited_text and token not in _CALENDAR_WORDS:
-            flagged.append(token)
+    source_text = cited_event_text + " " + enrichment_text
+    if mode == "hybrid":
+        source_text += " " + body_seed
 
-    return True, "", flagged
+    return True, "", _unsupported_words(output, source_text)
 
 
 # ---------------------------------------------------------------------------
@@ -420,11 +424,28 @@ def _build_fallback_body(events: list, entry_date) -> tuple[str, str]:
 # ---------------------------------------------------------------------------
 
 
-async def generate_draft_for_entry(entry_id: uuid.UUID) -> None:
+_SUGGESTED_BODY_SOURCE = {"events": "llm", "polish": "llm_polished", "hybrid": "llm_hybrid"}
+
+
+async def generate_draft_for_entry(
+    entry_id: uuid.UUID, trigger: Literal["regenerate", "background"] = "background"
+) -> None:
+    """Draft an entry's text with the LLM.
+
+    The mode follows who wrote the existing text: machine-only text (or none)
+    gets a fresh draft from the events; text containing the parent's writing
+    gets a blend, or a polish when there are no events.
+
+    The result goes straight into the entry only when the entry is empty, or
+    when a background redraft replaces machine-only text. Otherwise it is stored
+    as a suggestion beside the text (follow-up 25.3), as it is when the text
+    changed while the model was working.
+    """
     from sqlalchemy import select
     from sqlalchemy.orm import selectinload
 
     from app.models import Diary, Entry, LLMGeneration
+    from app.workers.event_changes import MACHINE_ONLY_BODY_SOURCES
 
     async with db_session() as db:
         entry_result = await db.execute(
@@ -465,15 +486,20 @@ async def generate_draft_for_entry(entry_id: uuid.UUID) -> None:
         body = (entry.body_markdown or "").strip() if isinstance(entry.body_markdown, str) else ""
         has_body = bool(body)
         has_events = bool(events)
+        parents_writing = has_body and entry.body_source not in MACHINE_ONLY_BODY_SOURCES
+        # What the text looked like before the model call, to spot an edit made meanwhile.
+        text_before = (entry.title, entry.body_markdown, entry.body_source)
+        write_in_place = not has_body or (trigger == "background" and not parents_writing)
+        # The parent's own words count as a source for the word check.
+        parents_text = f"{entry.title or ''}\n{body}" if parents_writing else ""
 
-        if has_events and not has_body:
+        if parents_writing:
+            mode = "hybrid" if has_events else "polish"
+        elif has_events:
             mode = "events"
-        elif has_body and not has_events:
-            mode = "polish"
-        elif has_body and has_events:
-            mode = "hybrid"
         else:
-            # No inputs at all — non-destructive failure
+            # Nothing to draft from: no events, and no text a person wrote.
+            # Rewording machine-only text with no source left would launder it.
             log.info("generate_draft_no_inputs", entry_id=str(entry_id))
             gen = LLMGeneration(
                 entry_id=entry.id,
@@ -494,7 +520,9 @@ async def generate_draft_for_entry(entry_id: uuid.UUID) -> None:
     }
     system_prompt = _SYSTEM_PROMPT_MAP[mode]
 
-    diary_context, entry_data = build_prompt(diary, entry, events, enrichments, mode=mode, body_seed=body)
+    diary_context, entry_data = build_prompt(
+        diary, entry, events, enrichments, mode=mode, body_seed=body if parents_writing else ""
+    )
 
     prompt_text = diary_context + "\n\n" + entry_data
     prompt_hash = hashlib.sha256(prompt_text.encode()).hexdigest()
@@ -555,7 +583,9 @@ async def generate_draft_for_entry(entry_id: uuid.UUID) -> None:
                         continue
                     break
 
-                valid, err, flagged_tokens = validate_citation(parsed, events, mode=mode, body_seed=body, enrichments=enrichments)
+                valid, err, flagged_tokens = validate_citation(
+                    parsed, events, mode=mode, body_seed=parents_text, enrichments=enrichments
+                )
                 if not valid:
                     log.warning(
                         "citation_validation_failed",
@@ -648,7 +678,39 @@ async def generate_draft_for_entry(entry_id: uuid.UUID) -> None:
             entry_update.updated_at = datetime.now(UTC)
             return
 
-        if llm_usable:
+        if (entry_update.title, entry_update.body_markdown, entry_update.body_source) != text_before:
+            # Someone changed the text while the model was working: never write over it.
+            write_in_place = False
+
+        if not write_in_place:
+            gen_error = None
+            # A suggestion must carry text: accepting one without would wipe the entry's.
+            llm_usable = bool(llm_result and llm_result.get("body_markdown"))
+            if llm_usable:
+                assert llm_result is not None
+                entry_update.suggested_title = llm_result.get("title") or None
+                entry_update.suggested_body_markdown = llm_result["body_markdown"]
+                entry_update.suggested_flagged_tokens = flagged_tokens or []
+                entry_update.suggested_body_source = _SUGGESTED_BODY_SOURCE[mode]
+                entry_update.suggested_at = datetime.now(UTC)
+            else:
+                # The text and any pending suggestion stay as they were.
+                gen_error = error_msg or (
+                    "llm returned empty title and body" if llm_result is not None else "unknown"
+                )
+            entry_update.updated_at = datetime.now(UTC)
+            gen = LLMGeneration(
+                entry_id=entry_id,
+                model=model_used,
+                prompt_hash=prompt_hash,
+                latency_ms=latency_ms,
+                status="success" if llm_usable else "failed",
+                mode=mode,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                error=gen_error,
+            )
+        elif llm_usable:
             assert llm_result is not None  # guaranteed by llm_usable check above
             entry_update.title = llm_result.get("title")
             entry_update.body_markdown = llm_result.get("body_markdown")

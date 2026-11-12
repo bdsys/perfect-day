@@ -92,6 +92,10 @@ def _make_entry_and_diary():
     entry.deleted_at = None
     entry.entry_date = date(2026, 5, 19)
     entry.entry_end_date = None
+    # A new, empty entry, as a real row would be.
+    entry.title = None
+    entry.body_markdown = None
+    entry.body_source = "llm"
     entry.events = [_make_event()]
     entry.enrichments = []
 
@@ -110,6 +114,10 @@ def _db_context(entry, diary):
     entry_update.deleted_at = None
     entry_update.id = entry.id
     entry_update.entry_date = entry.entry_date
+    # Same row as the first read: nobody edited it while the model worked.
+    entry_update.title = entry.title
+    entry_update.body_markdown = entry.body_markdown
+    entry_update.body_source = entry.body_source
 
     call_count = {"n": 0}
 

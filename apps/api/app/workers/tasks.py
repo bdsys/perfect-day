@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import uuid
 from datetime import UTC, datetime
+from typing import Literal
 
 import structlog
 
@@ -590,15 +591,24 @@ async def _apply_rule_backfill(rule_id_str: str, days: int) -> None:
     max_retries=3,
     default_retry_delay=5,
 )
-def generate_entry_draft(self, entry_id: str) -> None:
-    run_sync(_generate_entry_draft(entry_id))
+def generate_entry_draft(self, entry_id: str, trigger: str = "background") -> None:
+    """Draft an entry. *trigger* is "regenerate" when a person asked for it.
+
+    Tasks queued before 25.3 carry no trigger and run as background redrafts.
+    """
+    run_sync(_generate_entry_draft(entry_id, trigger))
 
 
-async def _generate_entry_draft(entry_id_str: str) -> None:
+async def _generate_entry_draft(entry_id_str: str, trigger: str = "background") -> None:
     from app.workers.enrichments import enrich_entry_weather
     from app.workers.llm import generate_draft_for_entry
     from app.workers.utils import db_session
 
+    if trigger not in ("regenerate", "background"):
+        log.warning("generate_entry_draft_unknown_trigger", entry_id=entry_id_str, trigger=trigger)
+    why: Literal["regenerate", "background"] = (
+        "regenerate" if trigger == "regenerate" else "background"
+    )
     entry_uuid = uuid.UUID(entry_id_str)
     try:
         async with db_session() as db:
@@ -609,7 +619,7 @@ async def _generate_entry_draft(entry_id_str: str) -> None:
             entry_id=entry_id_str,
             error=str(exc),
         )
-    await generate_draft_for_entry(entry_uuid)
+    await generate_draft_for_entry(entry_uuid, trigger=why)
 
 
 # ---------------------------------------------------------------------------
