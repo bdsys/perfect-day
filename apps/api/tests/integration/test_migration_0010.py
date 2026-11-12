@@ -66,9 +66,8 @@ def test_upgrade_backfills_times_and_trashes_untouched_drafts_for_future_events(
     command.upgrade(_alembic(scratch_db_url), "0009")
     engine = sa.create_engine(scratch_db_url)
     tomorrow = (datetime.now(tz=UTC) + timedelta(days=1)).date()
-    all_day_future = (
-        f'{{"start": {{"date": "{tomorrow}"}}, "end": {{"date": "{tomorrow + timedelta(days=1)}"}}}}'
-    )
+    day_after = tomorrow + timedelta(days=1)
+    all_day_future = f'{{"start": {{"date": "{tomorrow}"}}, "end": {{"date": "{day_after}"}}}}'
     timed_past = (
         '{"start": {"dateTime": "2026-01-10T10:00:00-06:00"},'
         ' "end": {"dateTime": "2026-01-10T11:30:00-06:00"}}'

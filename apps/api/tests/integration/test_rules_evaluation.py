@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -66,6 +67,29 @@ _STANDUP_CONDITION = {
     ],
 }
 
+_PRACTICE_CONDITION = {
+    "op": "AND",
+    "children": [
+        {
+            "field": "title",
+            "op": "contains",
+            "value": "practice",
+            "case_sensitive": False,
+        }
+    ],
+}
+
+_STANDUP_PAYLOAD = {
+    "summary": "Weekly standup",
+    "recurringEventId": "recurring_abc",
+    "start": {"dateTime": "2026-06-01T09:00:00Z"},
+    "end": {},
+    "attendees": [],
+    "description": "",
+    "location": "",
+    "status": "",
+}
+
 _SOCCER_PAYLOAD = {
     "summary": "Soccer practice",
     "start": {"dateTime": "2026-06-01T10:00:00Z"},
@@ -84,6 +108,7 @@ async def _make_rule(
     condition: dict,
     options: dict,
     enabled: bool = True,
+    created_at: datetime | None = None,
 ) -> AutoCreationRule:
     rule = AutoCreationRule(
         diary_id=diary.id,
@@ -92,6 +117,8 @@ async def _make_rule(
         condition=condition,
         options=options,
     )
+    if created_at is not None:
+        rule.created_at = created_at
     db.add(rule)
     await db.commit()
     await db.refresh(rule)
@@ -365,77 +392,164 @@ class TestEvaluateEventAgainstRules:
         mock_task.delay.assert_not_called()
 
     async def test_two_rules_matching_same_event(self, db_session: AsyncSession):
-        """Two matching rules create two separate entries; event attaches to the first."""
+        """Two matching rules share one entry; both are recorded against it."""
         user = await make_user(db_session)
         diary = await make_diary(db_session, owner=user, timezone="UTC")
-
-        rule1 = AutoCreationRule(
-            diary_id=diary.id,
-            name="rule 1",
-            condition=_SOCCER_CONDITION,
-            options={"recurring": "per_instance", "multi_day": "per_day"},
-            enabled=True,
+        per_instance = {"recurring": "per_instance", "multi_day": "per_day"}
+        rule1 = await _make_rule(
+            db_session, diary, condition=_SOCCER_CONDITION, options=per_instance
         )
-        rule2 = AutoCreationRule(
-            diary_id=diary.id,
-            name="rule 2",
-            condition={
-                "op": "AND",
-                "children": [
-                    {
-                        "field": "title",
-                        "op": "contains",
-                        "value": "practice",
-                        "case_sensitive": False,
-                    }
-                ],
-            },
-            options={"recurring": "per_instance", "multi_day": "per_day"},
-            enabled=True,
+        rule2 = await _make_rule(
+            db_session, diary, condition=_PRACTICE_CONDITION, options=per_instance
         )
-        db_session.add(rule1)
-        db_session.add(rule2)
-        await db_session.flush()
-
-        event = await make_event(
-            db_session,
-            diary_id=diary.id,
-            payload=_SOCCER_PAYLOAD,  # summary "Soccer practice" matches both rules
-        )
-        await db_session.commit()
+        # summary "Soccer practice" matches both rules
+        event = await make_event(db_session, diary_id=diary.id, payload=_SOCCER_PAYLOAD)
 
         with patch("app.workers.tasks.generate_entry_draft") as mock_task:
             mock_task.delay = MagicMock()
             await evaluate_event_against_rules(str(event.id), str(diary.id), db_session)
 
+        entry_ids = (
+            await db_session.execute(select(Entry.id).where(Entry.diary_id == diary.id))
+        ).scalars().all()
+        assert len(entry_ids) == 1, "one event must produce one entry"
         await db_session.refresh(event)
-        # Event is attached to some entry
-        assert event.entry_id is not None
+        assert event.entry_id == entry_ids[0]
 
-        # Two entries were created (one per matching rule)
-        result = await db_session.execute(
-            select(Entry)
-            .where(Entry.diary_id == diary.id)
-            .where(Entry.creation_source == "rule")
-        )
-        entries = result.scalars().all()
-        assert len(entries) == 2
-
-        # Event is attached to exactly one of those entries
-        entry_ids = {e.id for e in entries}
-        assert event.entry_id in entry_ids
-
-        # One EntryRuleMatch per rule (two total)
-        match_result = await db_session.execute(
-            select(EntryRuleMatch).where(
-                EntryRuleMatch.entry_id.in_(entry_ids)
+        matched_rule_ids = (
+            await db_session.execute(
+                select(EntryRuleMatch.rule_id).where(EntryRuleMatch.entry_id == entry_ids[0])
             )
-        )
-        matches = match_result.scalars().all()
-        assert len(matches) == 2
+        ).scalars().all()
+        assert set(matched_rule_ids) == {rule1.id, rule2.id}
+        mock_task.delay.assert_called_once_with(str(entry_ids[0]))
 
-        # LLM generation queued for both entries
-        assert mock_task.delay.call_count == 2
+    async def test_older_per_series_rule_decides_grouping(self, db_session: AsyncSession):
+        """Oldest matching rule is per-series: the event joins a series entry."""
+        user = await make_user(db_session)
+        diary = await make_diary(db_session, owner=user, timezone="UTC")
+        older = await _make_rule(
+            db_session,
+            diary,
+            condition=_STANDUP_CONDITION,
+            options={"recurring": "per_series", "multi_day": "per_day"},
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        newer = await _make_rule(
+            db_session,
+            diary,
+            condition=_STANDUP_CONDITION,
+            options={"recurring": "per_instance", "multi_day": "per_day"},
+            created_at=datetime(2026, 2, 1, tzinfo=UTC),
+        )
+        first = await make_event(db_session, diary_id=diary.id, payload=_STANDUP_PAYLOAD)
+        second = await make_event(
+            db_session,
+            diary_id=diary.id,
+            payload={**_STANDUP_PAYLOAD, "start": {"dateTime": "2026-06-08T09:00:00Z"}},
+        )
+
+        with patch("app.workers.tasks.generate_entry_draft") as mock_task:
+            mock_task.delay = MagicMock()
+            await evaluate_event_against_rules(str(first.id), str(diary.id), db_session)
+            await evaluate_event_against_rules(str(second.id), str(diary.id), db_session)
+
+        entry_ids = (
+            await db_session.execute(select(Entry.id).where(Entry.diary_id == diary.id))
+        ).scalars().all()
+        assert len(entry_ids) == 1, "both instances belong to the one series entry"
+        claim_rule_ids = (
+            await db_session.execute(select(RuleSeriesClaim.rule_id))
+        ).scalars().all()
+        assert claim_rule_ids == [older.id]
+        matched_rule_ids = (
+            await db_session.execute(
+                select(EntryRuleMatch.rule_id).where(EntryRuleMatch.entry_id == entry_ids[0])
+            )
+        ).scalars().all()
+        assert set(matched_rule_ids) == {older.id, newer.id}
+
+    async def test_older_per_instance_rule_decides_grouping(self, db_session: AsyncSession):
+        """Oldest matching rule is per-instance: no series claim is made by the loser."""
+        user = await make_user(db_session)
+        diary = await make_diary(db_session, owner=user, timezone="UTC")
+        await _make_rule(
+            db_session,
+            diary,
+            condition=_STANDUP_CONDITION,
+            options={"recurring": "per_instance", "multi_day": "per_day"},
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        await _make_rule(
+            db_session,
+            diary,
+            condition=_STANDUP_CONDITION,
+            options={"recurring": "per_series", "multi_day": "per_day"},
+            created_at=datetime(2026, 2, 1, tzinfo=UTC),
+        )
+        first = await make_event(db_session, diary_id=diary.id, payload=_STANDUP_PAYLOAD)
+        second = await make_event(
+            db_session,
+            diary_id=diary.id,
+            payload={**_STANDUP_PAYLOAD, "start": {"dateTime": "2026-06-08T09:00:00Z"}},
+        )
+
+        with patch("app.workers.tasks.generate_entry_draft") as mock_task:
+            mock_task.delay = MagicMock()
+            await evaluate_event_against_rules(str(first.id), str(diary.id), db_session)
+            await evaluate_event_against_rules(str(second.id), str(diary.id), db_session)
+
+        entry_count = len(
+            (await db_session.execute(select(Entry.id).where(Entry.diary_id == diary.id)))
+            .scalars()
+            .all()
+        )
+        assert entry_count == 2, "per-instance grouping: one entry per occurrence"
+        claims = (await db_session.execute(select(RuleSeriesClaim.rule_id))).scalars().all()
+        assert claims == []
+
+    async def test_event_that_has_not_ended_creates_nothing(self, db_session: AsyncSession):
+        user = await make_user(db_session)
+        diary = await make_diary(db_session, owner=user, timezone="UTC")
+        await _make_rule(
+            db_session,
+            diary,
+            condition=_SOCCER_CONDITION,
+            options={"recurring": "per_instance", "multi_day": "per_day"},
+        )
+        event = await make_event(
+            db_session,
+            diary_id=diary.id,
+            payload=_SOCCER_PAYLOAD,
+            ends_at=datetime.now(tz=UTC) + timedelta(hours=2),
+        )
+
+        with patch("app.workers.tasks.generate_entry_draft") as mock_task:
+            mock_task.delay = MagicMock()
+            await evaluate_event_against_rules(str(event.id), str(diary.id), db_session)
+
+        entries = (await db_session.execute(select(Entry.id))).scalars().all()
+        assert entries == []
+        await db_session.refresh(event)
+        assert event.rules_evaluated_at is None, "it must still be evaluated once it ends"
+        mock_task.delay.assert_not_called()
+
+    async def test_ended_event_is_marked_evaluated_even_when_nothing_matches(
+        self, db_session: AsyncSession
+    ):
+        user = await make_user(db_session)
+        diary = await make_diary(db_session, owner=user, timezone="UTC")
+        event = await make_event(
+            db_session,
+            diary_id=diary.id,
+            payload=_SOCCER_PAYLOAD,
+            ends_at=datetime.now(tz=UTC) - timedelta(hours=2),
+        )
+
+        await evaluate_event_against_rules(str(event.id), str(diary.id), db_session)
+
+        await db_session.refresh(event)
+        assert event.rules_evaluated_at is not None
 
 
 # ---------------------------------------------------------------------------
