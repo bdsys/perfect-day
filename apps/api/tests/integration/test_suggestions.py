@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 import app.workers.llm as worker_llm
 import app.workers.tasks as worker_tasks
-from app.models import AutoCreationRule, Entry, Event, LLMGeneration
+from app.models import AutoCreationRule, DiaryPermission, Entry, Event, LLMGeneration
 from app.workers.llm_providers import LLMPermanentError, LLMResult
 from app.workers.rules import evaluate_event_against_rules
 from tests.fixtures.factories import make_diary, make_entry, make_event, make_user
@@ -456,3 +456,187 @@ class TestSpanningRegroup:
         assert after.body_markdown == "Our trip so far"
         assert after.suggested_body_markdown == "Our trip: a flight out, then dinner."
         assert after.suggested_body_source == "llm_hybrid"
+
+
+_PENDING = {
+    "suggested_title": "Picnic day",
+    "suggested_body_markdown": "A sunny picnic with Sam at the Zoo.",
+    "suggested_flagged_tokens": ["Zoo"],
+    "suggested_body_source": "llm",
+    "suggested_at": datetime(2026, 11, 12, 9, 0, tzinfo=UTC),
+}
+
+
+async def _entry_with_suggestion(
+    client: AsyncClient, db: AsyncSession, email: str, **overrides
+) -> tuple[dict, dict]:
+    """An entry with text "We went to Disneyland." (flagged) and a pending suggestion."""
+    auth, diary = await _setup(client, email)
+    entry = await _create_entry(
+        client, diary["id"], auth, title="Old title", body_markdown="We went to Disneyland."
+    )
+    columns = {**_PENDING, "flagged_tokens": ["Disneyland"], "body_source": "llm", **overrides}
+    await _set_columns(db, entry["id"], **columns)
+    return auth, entry
+
+
+class TestAccept:
+    async def test_accept_replaces_the_title_and_text(self, client, db_session):
+        auth, entry = await _entry_with_suggestion(client, db_session, "acc1@example.com")
+
+        r = await client.post(f"/v1/entries/{entry['id']}/suggestion/accept", headers=auth)
+
+        assert r.status_code == 200
+        body = r.json()
+        assert body["title"] == "Picnic day"
+        assert body["body_markdown"] == "A sunny picnic with Sam at the Zoo."
+        assert body["body_source"] == "llm"
+        assert body["flagged_tokens"] == ["Zoo"]
+        assert body["suggestion"] is None
+
+    async def test_accepting_a_blend_marks_the_text_as_a_blend(self, client, db_session):
+        auth, entry = await _entry_with_suggestion(
+            client, db_session, "acc2@example.com", suggested_body_source="llm_hybrid"
+        )
+
+        r = await client.post(f"/v1/entries/{entry['id']}/suggestion/accept", headers=auth)
+
+        assert r.json()["body_source"] == "llm_hybrid"
+
+    async def test_a_suggestion_without_a_title_keeps_the_existing_one(self, client, db_session):
+        auth, entry = await _entry_with_suggestion(
+            client, db_session, "acc3@example.com", suggested_title=None
+        )
+
+        r = await client.post(f"/v1/entries/{entry['id']}/suggestion/accept", headers=auth)
+
+        assert r.json()["title"] == "Old title"
+
+    async def test_an_old_warning_still_in_the_text_is_kept(self, client, db_session):
+        auth, entry = await _entry_with_suggestion(
+            client,
+            db_session,
+            "acc4@example.com",
+            suggested_body_markdown="We went to Disneyland, then the Zoo.",
+            flagged_tokens=["Disneyland", "Paris"],
+        )
+
+        r = await client.post(f"/v1/entries/{entry['id']}/suggestion/accept", headers=auth)
+
+        assert r.json()["flagged_tokens"] == ["Zoo", "Disneyland"]
+
+    async def test_accept_after_the_parent_edited_still_replaces_the_text(
+        self, client, db_session
+    ):
+        auth, entry = await _entry_with_suggestion(
+            client, db_session, "acc5@example.com", body_source="user",
+            body_markdown="Typed after the suggestion arrived.",
+        )
+
+        r = await client.post(f"/v1/entries/{entry['id']}/suggestion/accept", headers=auth)
+
+        assert r.json()["body_markdown"] == "A sunny picnic with Sam at the Zoo."
+        assert r.json()["body_source"] == "llm"
+
+    async def test_accept_with_nothing_pending_is_refused(self, client):
+        auth, diary = await _setup(client, "acc6@example.com")
+        entry = await _create_entry(client, diary["id"], auth, body_markdown="Mine.")
+
+        r = await client.post(f"/v1/entries/{entry['id']}/suggestion/accept", headers=auth)
+
+        assert r.status_code == 409
+        assert r.json()["error"]["message"] == "no_suggestion"
+
+
+class TestDismiss:
+    async def test_dismiss_clears_the_suggestion_and_keeps_the_text(self, client, db_session):
+        auth, entry = await _entry_with_suggestion(client, db_session, "dis1@example.com")
+
+        r = await client.delete(f"/v1/entries/{entry['id']}/suggestion", headers=auth)
+
+        assert r.status_code == 200
+        assert r.json()["suggestion"] is None
+        assert r.json()["body_markdown"] == "We went to Disneyland."
+        assert r.json()["flagged_tokens"] == ["Disneyland"]
+        after = await _reload(db_session, uuid.UUID(entry["id"]))
+        assert (after.suggested_body_markdown, after.suggested_title) == (None, None)
+        assert (after.suggested_flagged_tokens, after.suggested_body_source) == (None, None)
+        assert after.suggested_at is None
+
+    async def test_dismiss_with_nothing_pending_is_refused(self, client):
+        auth, diary = await _setup(client, "dis2@example.com")
+        entry = await _create_entry(client, diary["id"], auth, body_markdown="Mine.")
+
+        r = await client.delete(f"/v1/entries/{entry['id']}/suggestion", headers=auth)
+
+        assert r.status_code == 409
+        assert r.json()["error"]["message"] == "no_suggestion"
+
+
+class TestViewers:
+    async def test_a_viewer_can_neither_accept_nor_dismiss(self, client, db_session):
+        auth, entry = await _entry_with_suggestion(client, db_session, "view-owner@example.com")
+        r = await client.post(
+            "/v1/auth/register", json={"email": "viewer@example.com", "password": "Password1!"}
+        )
+        viewer_auth = {"Authorization": f"Bearer {r.json()['access_token']}"}
+        viewer_id = (await client.get("/v1/auth/me", headers=viewer_auth)).json()["id"]
+        db_session.add(
+            DiaryPermission(
+                diary_id=uuid.UUID(entry["diary_id"]), user_id=uuid.UUID(viewer_id), role="viewer"
+            )
+        )
+        await db_session.commit()
+
+        accept = await client.post(
+            f"/v1/entries/{entry['id']}/suggestion/accept", headers=viewer_auth
+        )
+        dismiss = await client.delete(f"/v1/entries/{entry['id']}/suggestion", headers=viewer_auth)
+
+        assert (accept.status_code, dismiss.status_code) == (403, 403)
+        after = await _reload(db_session, uuid.UUID(entry["id"]))
+        assert after.suggested_body_markdown is not None
+
+
+class TestPublishAndEdits:
+    async def test_publish_clears_the_suggestion_and_the_warnings(self, client, db_session):
+        auth, entry = await _entry_with_suggestion(client, db_session, "pub1@example.com")
+
+        r = await client.post(f"/v1/entries/{entry['id']}/publish", headers=auth)
+
+        assert r.json()["suggestion"] is None
+        assert r.json()["flagged_tokens"] == []
+
+    async def test_removing_a_flagged_word_removes_its_warning(self, client, db_session):
+        auth, entry = await _entry_with_suggestion(client, db_session, "edit1@example.com")
+
+        r = await client.patch(
+            f"/v1/entries/{entry['id']}",
+            json={"body_markdown": "We went to the park."},
+            headers=auth,
+        )
+
+        assert r.json()["flagged_tokens"] == []
+        assert r.json()["suggestion"] is not None
+
+    async def test_a_word_left_in_the_title_keeps_its_warning(self, client, db_session):
+        auth, entry = await _entry_with_suggestion(client, db_session, "edit2@example.com")
+
+        r = await client.patch(
+            f"/v1/entries/{entry['id']}",
+            json={"title": "Disneyland!", "body_markdown": "We went to the park."},
+            headers=auth,
+        )
+
+        assert r.json()["flagged_tokens"] == ["Disneyland"]
+
+    async def test_changing_only_the_date_leaves_the_warnings(self, client, db_session):
+        auth, entry = await _entry_with_suggestion(
+            client, db_session, "edit3@example.com", flagged_tokens=["Paris"]
+        )
+
+        r = await client.patch(
+            f"/v1/entries/{entry['id']}", json={"entry_date": "2026-05-20"}, headers=auth
+        )
+
+        assert r.json()["flagged_tokens"] == ["Paris"]
