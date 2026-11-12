@@ -151,6 +151,21 @@ async def _scan_diary(diary_id_str: str, past_days: int | None = None, future_da
                     }
                 )
 
+        # Events stored while still in the future get their rules run once
+        # they are over. Independent of the calendar sync succeeding.
+        try:
+            await queue_due_rule_evaluations(diary_id)
+        except Exception as e:
+            log.error("queue_due_rule_evaluations_error", diary_id=diary_id_str, error=str(e))
+            errors.append(
+                {
+                    "source": "rules",
+                    "error_class": type(e).__name__,
+                    "message": str(e),
+                    "retried_count": 0,
+                }
+            )
+
         # Close scan run
         async with db_session() as db:
             run_result = await db.execute(select(ScanRun).where(ScanRun.id == scan_run_id))
@@ -240,7 +255,7 @@ async def _ingest_calendar_event(
     from sqlalchemy import select
 
     from app.models import Event
-    from app.workers.tz_utils import google_event_to_entry_date
+    from app.workers.tz_utils import google_event_times, google_event_to_entry_date
     from app.workers.utils import db_session
 
     external_id = event_data.get("id", "")
@@ -266,13 +281,9 @@ async def _ingest_calendar_event(
         "attendees": _build_attendees(event_data.get("attendees")),
     }
 
-    occurred_at = None
-    start = event_data.get("start", {})
-    if "dateTime" in start:
-        try:
-            occurred_at = datetime.fromisoformat(start["dateTime"].replace("Z", "+00:00"))
-        except ValueError:
-            pass
+    # All-day events get times too (local midnight to local midnight): without
+    # them "has it ended" cannot be answered.
+    occurred_at, ends_at = google_event_times(event_data, diary_timezone)
 
     async with db_session() as db:
         existing_result = await db.execute(
@@ -282,30 +293,152 @@ async def _ingest_calendar_event(
                 Event.external_id == external_id,
             )
         )
-        existing = existing_result.scalar_one_or_none()
-        if existing is not None:
-            existing.payload = payload
-            return str(existing.id)
-
-        event = Event(
-            diary_id=diary_id,
-            entry_id=None,
-            source=source,
-            external_id=external_id,
-            occurred_at=occurred_at,
-            payload=payload,
-        )
-        db.add(event)
-        await db.flush()
+        event = existing_result.scalar_one_or_none()
+        is_new = event is None
+        entry_to_redraft: uuid.UUID | None = None
+        if event is not None:
+            event.payload = payload
+            event.occurred_at = occurred_at
+            event.ends_at = ends_at
+            if not _has_ended(ends_at):
+                # Moved to a time that has not passed. A draft only the AI has
+                # written was about something that has not happened yet, so it
+                # goes; anything a person edited or published stays as it is.
+                entry_to_redraft = await _release_from_untouched_draft(db, event)
+                if event.entry_id is None:
+                    event.rules_evaluated_at = None  # evaluate after the new end
+        else:
+            event = Event(
+                diary_id=diary_id,
+                entry_id=None,
+                source=source,
+                external_id=external_id,
+                occurred_at=occurred_at,
+                ends_at=ends_at,
+                payload=payload,
+            )
+            db.add(event)
+            await db.flush()
         event_id = event.id
+        # Rules run once, and only after the event is over. A new event that
+        # is already over is evaluated now; anything else waits for the sweep
+        # in the scan that follows its end (queue_due_rule_evaluations).
+        due = is_new and _has_ended(ends_at)
 
-    # Queue rule evaluation (best-effort: don't roll back a successful ingest
-    # just because the broker is briefly down)
-    try:
-        evaluate_rules_for_event.delay(str(event_id), str(diary_id))
-    except Exception:
-        log.exception("failed_to_queue_rule_evaluation", event_id=str(event_id), diary_id=str(diary_id))
+    if entry_to_redraft is not None:
+        try:
+            generate_entry_draft.delay(str(entry_to_redraft))
+        except Exception:
+            log.exception("reschedule_redraft_queue_failed", entry_id=str(entry_to_redraft))
+
+    if due:
+        # Best-effort: a broker hiccup must not undo a successful ingest. The
+        # next scan's sweep queues it again.
+        try:
+            evaluate_rules_for_event.delay(str(event_id), str(diary_id))
+        except Exception:
+            log.exception(
+                "failed_to_queue_rule_evaluation", event_id=str(event_id), diary_id=str(diary_id)
+            )
     return str(event_id)
+
+
+# ---------------------------------------------------------------------------
+# cancel_calendar_event
+# ---------------------------------------------------------------------------
+
+
+@celery_app.task(name="app.workers.tasks.cancel_calendar_event", bind=True, max_retries=3)
+def cancel_calendar_event(self, external_id: str, diary_id: str) -> None:
+    """Apply a cancellation reported by Google Calendar."""
+    try:
+        run_sync(_cancel_calendar_event(external_id, diary_id))
+    except Exception as exc:
+        raise self.retry(exc=exc)
+
+
+async def _cancel_calendar_event(external_id: str, diary_id: str) -> None:
+    """Remove a cancelled event; its entry follows only if nobody has touched it."""
+    from sqlalchemy import select
+
+    from app.models import Event
+    from app.workers.event_changes import release_event_from_entry
+    from app.workers.utils import db_session
+
+    async with db_session() as db:
+        event = (
+            await db.execute(
+                select(Event)
+                .where(
+                    Event.diary_id == uuid.UUID(diary_id),
+                    Event.source == "google_calendar",
+                    Event.external_id == external_id,
+                )
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if event is None:
+            return  # never stored, or already removed
+        entry_to_redraft = await release_event_from_entry(db, event)
+        await db.delete(event)
+
+    # The session has committed; only now can a worker see the change.
+    if entry_to_redraft is not None:
+        try:
+            generate_entry_draft.delay(str(entry_to_redraft))
+        except Exception:
+            log.exception("cancel_event_redraft_queue_failed", entry_id=str(entry_to_redraft))
+
+
+async def _release_from_untouched_draft(db, event) -> uuid.UUID | None:
+    """Detach *event* from its entry if that entry is an untouched rule-created draft.
+
+    Returns the id of an entry that needs redrafting, as release_event_from_entry does.
+    """
+    from sqlalchemy import select
+
+    from app.models import Entry
+    from app.workers.event_changes import is_untouched_rule_draft, release_event_from_entry
+
+    if event.entry_id is None:
+        return None
+    entry = (
+        await db.execute(select(Entry).where(Entry.id == event.entry_id))
+    ).scalar_one_or_none()
+    if entry is None or not is_untouched_rule_draft(entry):
+        return None
+    return await release_event_from_entry(db, event)
+
+
+def _has_ended(ends_at: datetime | None) -> bool:
+    """An event with no known end counts as over."""
+    return ends_at is None or ends_at <= datetime.now(tz=UTC)
+
+
+async def queue_due_rule_evaluations(diary_id: uuid.UUID) -> int:
+    """Queue rule evaluation for stored events that have ended since they were ingested.
+
+    Returns how many were queued.
+    """
+    from sqlalchemy import func, or_, select
+
+    from app.models import Event
+    from app.workers.utils import db_session
+
+    async with db_session() as db:
+        result = await db.execute(
+            select(Event.id).where(
+                Event.diary_id == diary_id,
+                Event.entry_id.is_(None),
+                Event.rules_evaluated_at.is_(None),
+                or_(Event.ends_at.is_(None), Event.ends_at <= func.now()),
+            )
+        )
+        event_ids = [row[0] for row in result.fetchall()]
+
+    for event_id in event_ids:
+        evaluate_rules_for_event.delay(str(event_id), str(diary_id))
+    return len(event_ids)
 
 
 def _build_attendees(raw: list | None) -> list[dict]:

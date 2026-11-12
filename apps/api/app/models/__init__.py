@@ -319,7 +319,10 @@ class Entry(TimestampMixin, SoftDeleteMixin, Base):
         Index("ix_entries_diary_entry_date", "diary_id", "entry_date"),
         CheckConstraint("status IN ('draft','published')", name="ck_entries_status"),
         CheckConstraint("created_by IN ('auto','manual')", name="ck_entries_created_by"),
-        CheckConstraint("body_source IN ('llm','fallback','llm_polished','llm_hybrid')", name="ck_entries_body_source"),
+        CheckConstraint(
+            "body_source IN ('llm','fallback','llm_polished','llm_hybrid','user')",
+            name="ck_entries_body_source",
+        ),
         CheckConstraint(
             "creation_source IN ('manual','calendar_pick','rule')",
             name="ck_entries_creation_source",
@@ -340,6 +343,10 @@ class Event(TimestampMixin, Base):
     source: Mapped[str] = mapped_column(String(30), nullable=False)
     external_id: Mapped[str | None] = mapped_column(Text)
     occurred_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # When the event is over. Rules only create an entry once this has passed.
+    ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Set the one time the auto-creation rules have been run for this event.
+    rules_evaluated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
 
     entry: Mapped[Entry | None] = relationship(back_populates="events", foreign_keys=[entry_id])
@@ -359,6 +366,12 @@ class Event(TimestampMixin, Base):
             postgresql_where=text("entry_id IS NULL"),
         ),
         Index("ix_events_diary_id", "diary_id"),
+        Index(
+            "ix_events_due_for_rules",
+            "diary_id",
+            "ends_at",
+            postgresql_where=text("entry_id IS NULL AND rules_evaluated_at IS NULL"),
+        ),
         CheckConstraint(
             "source IN ('google_calendar','google_photos','manual','spotify')",
             name="ck_events_source",

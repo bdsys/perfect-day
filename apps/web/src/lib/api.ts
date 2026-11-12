@@ -249,7 +249,7 @@ export interface Entry {
   entry_end_date: string | null
   title: string | null
   body_markdown: string | null
-  body_source: 'llm' | 'fallback' | 'llm_polished' | 'llm_hybrid'
+  body_source: 'llm' | 'fallback' | 'llm_polished' | 'llm_hybrid' | 'user'
   flagged_tokens: string[] | null
   status: 'draft' | 'published'
   created_by: 'auto' | 'manual'

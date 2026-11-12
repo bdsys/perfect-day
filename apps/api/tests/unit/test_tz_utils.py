@@ -79,3 +79,81 @@ class TestFloatingTimeEvents:
         start, end = google_event_to_entry_date({}, "UTC")
         assert start is None
         assert end is None
+
+
+class TestGoogleEventTimes:
+    """google_event_times: when an event starts and ends, as instants."""
+
+    def test_all_day_event_runs_midnight_to_midnight_in_the_diary_timezone(self):
+        from datetime import UTC, datetime
+
+        from app.workers.tz_utils import google_event_times
+
+        event = {"start": {"date": "2026-06-01"}, "end": {"date": "2026-06-02"}}
+        starts_at, ends_at = google_event_times(event, "America/Chicago")
+        # Chicago is UTC-5 in June: the day is over at 05:00 UTC, not 00:00 UTC.
+        assert starts_at == datetime(2026, 6, 1, 5, 0, tzinfo=UTC)
+        assert ends_at == datetime(2026, 6, 2, 5, 0, tzinfo=UTC)
+
+    def test_multi_day_all_day_event_ends_after_its_last_day(self):
+        from datetime import UTC, datetime
+
+        from app.workers.tz_utils import google_event_times
+
+        # Google's all-day end is exclusive: 1 June to 4 June covers the 1st to 3rd.
+        event = {"start": {"date": "2026-06-01"}, "end": {"date": "2026-06-04"}}
+        starts_at, ends_at = google_event_times(event, "UTC")
+        assert starts_at == datetime(2026, 6, 1, tzinfo=UTC)
+        assert ends_at == datetime(2026, 6, 4, tzinfo=UTC)
+
+    def test_all_day_event_without_an_end_lasts_one_day(self):
+        from datetime import UTC, datetime
+
+        from app.workers.tz_utils import google_event_times
+
+        starts_at, ends_at = google_event_times({"start": {"date": "2026-06-01"}}, "UTC")
+        assert starts_at == datetime(2026, 6, 1, tzinfo=UTC)
+        assert ends_at == datetime(2026, 6, 2, tzinfo=UTC)
+
+    def test_timed_event_keeps_its_own_offset(self):
+        from datetime import UTC, datetime
+
+        from app.workers.tz_utils import google_event_times
+
+        event = {
+            "start": {"dateTime": "2026-06-01T10:00:00-05:00"},
+            "end": {"dateTime": "2026-06-01T11:30:00-05:00"},
+        }
+        starts_at, ends_at = google_event_times(event, "Europe/London")
+        assert starts_at == datetime(2026, 6, 1, 15, 0, tzinfo=UTC)
+        assert ends_at == datetime(2026, 6, 1, 16, 30, tzinfo=UTC)
+
+    def test_timed_event_without_an_end_ends_when_it_starts(self):
+        from datetime import UTC, datetime
+
+        from app.workers.tz_utils import google_event_times
+
+        event = {"start": {"dateTime": "2026-06-01T10:00:00Z"}, "end": {}}
+        starts_at, ends_at = google_event_times(event, "UTC")
+        assert starts_at == datetime(2026, 6, 1, 10, 0, tzinfo=UTC)
+        assert ends_at == datetime(2026, 6, 1, 10, 0, tzinfo=UTC)
+
+    def test_floating_time_is_read_in_the_diary_timezone(self):
+        from datetime import UTC, datetime
+
+        from app.workers.tz_utils import google_event_times
+
+        event = {
+            "start": {"dateTime": "2026-06-01T10:00:00"},
+            "end": {"dateTime": "2026-06-01T11:00:00"},
+        }
+        starts_at, ends_at = google_event_times(event, "America/Chicago")
+        assert starts_at == datetime(2026, 6, 1, 15, 0, tzinfo=UTC)
+        assert ends_at == datetime(2026, 6, 1, 16, 0, tzinfo=UTC)
+
+    def test_unparseable_or_missing_start_gives_no_times(self):
+        from app.workers.tz_utils import google_event_times
+
+        assert google_event_times({"start": {"dateTime": "not a date"}}, "UTC") == (None, None)
+        assert google_event_times({"start": {"date": "2026-13-45"}}, "UTC") == (None, None)
+        assert google_event_times({}, "UTC") == (None, None)
