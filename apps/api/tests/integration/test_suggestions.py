@@ -380,7 +380,7 @@ class TestCallersSayWhy:
         assert r.status_code == 200
         delay.assert_called_once_with(entry["id"], trigger="regenerate")
 
-    async def test_regenerate_on_a_published_entry_is_refused(self, client):
+    async def test_regenerate_works_on_a_published_entry(self, client):
         auth, diary = await _setup(client, "sg-pub@example.com")
         entry = await _create_entry(client, diary["id"], auth, body_markdown="Mine.")
         await client.post(f"/v1/entries/{entry['id']}/publish", headers=auth)
@@ -388,9 +388,8 @@ class TestCallersSayWhy:
         with patch.object(worker_tasks.generate_entry_draft, "delay", new=MagicMock()) as delay:
             r = await client.post(f"/v1/entries/{entry['id']}/regenerate", headers=auth)
 
-        assert r.status_code == 409
-        assert r.json()["error"] == {"code": "http_error", "message": "entry_published"}
-        delay.assert_not_called()
+        assert r.status_code == 200
+        delay.assert_called_once_with(entry["id"], trigger="regenerate")
 
     async def test_a_task_queued_before_this_change_runs_as_a_background_redraft(
         self, db_session, db_url
@@ -659,3 +658,102 @@ class TestPublishAndEdits:
         )
 
         assert r.json()["flagged_tokens"] == ["Paris"]
+
+
+class TestPublishedEntries:
+    """Regenerate on a published entry (Andrew, 2026-11-12): Edit works there, so does this."""
+
+    async def _published(self, db: AsyncSession, **kw) -> Entry:
+        entry = await _entry_with_picnic(db, **kw)
+        entry.status = "published"
+        entry.published_at = datetime.now(UTC)
+        await db.commit()
+        return entry
+
+    async def test_regenerate_suggests_and_leaves_the_published_text(self, db_session, db_url):
+        entry = await self._published(db_session, body="Our day.", body_source="user")
+
+        await _run_draft(db_url, entry.id, _provider(_reply("A new take.")), trigger="regenerate")
+
+        after = await _reload(db_session, entry.id)
+        assert (after.status, after.body_markdown) == ("published", "Our day.")
+        assert after.suggested_body_markdown == "A new take."
+
+    async def test_an_empty_published_entry_still_gets_a_suggestion_not_new_text(
+        self, db_session, db_url
+    ):
+        entry = await self._published(db_session, body=None, title=None)
+
+        await _run_draft(db_url, entry.id, _provider(_reply("A new take.")), trigger="regenerate")
+
+        after = await _reload(db_session, entry.id)
+        assert after.body_markdown is None
+        assert after.suggested_body_markdown == "A new take."
+
+    async def test_a_background_redraft_never_touches_a_published_entry(self, db_session, db_url):
+        entry = await self._published(db_session, body="Our day.")
+        provider = _provider(_reply("A new take."))
+
+        await _run_draft(db_url, entry.id, provider)
+
+        after = await _reload(db_session, entry.id)
+        assert after.body_markdown == "Our day."
+        assert after.suggested_body_markdown is None
+        assert provider.generate.call_count == 0
+
+    async def test_a_draft_published_while_the_ai_works_still_gets_its_suggestion(
+        self, db_session, db_url
+    ):
+        entry = await _entry_with_picnic(db_session, body="Our day.", body_source="user")
+
+        async def parent_publishes_meanwhile():
+            await _set_columns(db_session, str(entry.id), status="published",
+                               published_at=datetime.now(UTC))
+
+        await _run_draft(
+            db_url, entry.id,
+            _provider(_reply("A new take."), before_reply=parent_publishes_meanwhile),
+            trigger="regenerate",
+        )
+
+        after = await _reload(db_session, entry.id)
+        assert (after.status, after.body_markdown) == ("published", "Our day.")
+        assert after.suggested_body_markdown == "A new take."
+
+    async def test_accepting_on_a_published_entry_adds_no_warnings(self, client, db_session):
+        auth, entry = await _entry_with_suggestion(
+            client, db_session, "pubacc@example.com", status="published",
+            published_at=datetime.now(UTC), flagged_tokens=[],
+        )
+
+        r = await client.post(f"/v1/entries/{entry['id']}/suggestion/accept", headers=auth)
+
+        assert r.json()["status"] == "published"
+        assert r.json()["body_markdown"] == "A sunny picnic with Sam at the Zoo."
+        assert r.json()["flagged_tokens"] == []
+
+    async def test_a_viewer_never_sees_a_pending_suggestion(self, client, db_session):
+        auth, entry = await _entry_with_suggestion(
+            client, db_session, "pubview-owner@example.com", status="published",
+            published_at=datetime.now(UTC),
+        )
+        r = await client.post(
+            "/v1/auth/register", json={"email": "pubview@example.com", "password": "Password1!"}
+        )
+        viewer_auth = {"Authorization": f"Bearer {r.json()['access_token']}"}
+        viewer_id = (await client.get("/v1/auth/me", headers=viewer_auth)).json()["id"]
+        db_session.add(
+            DiaryPermission(
+                diary_id=uuid.UUID(entry["diary_id"]), user_id=uuid.UUID(viewer_id), role="viewer"
+            )
+        )
+        await db_session.commit()
+
+        one = await client.get(f"/v1/entries/{entry['id']}", headers=viewer_auth)
+        listed = await client.get(f"/v1/diaries/{entry['diary_id']}/entries", headers=viewer_auth)
+        owners = await client.get(f"/v1/entries/{entry['id']}", headers=auth)
+
+        assert one.status_code == 200
+        assert one.json()["suggestion"] is None
+        assert [e["suggestion"] for e in listed.json()] == [None]
+        assert owners.json()["suggestion"] is not None

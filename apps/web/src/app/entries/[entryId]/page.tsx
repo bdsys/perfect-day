@@ -437,7 +437,7 @@ function EntryDetailPageInner() {
               </div>
             )}
 
-            {entry.status === 'draft' && entry.suggestion && (
+            {entry.suggestion && (
               <SuggestionBox
                 suggestion={entry.suggestion}
                 busy={answeringSuggestion}
@@ -605,12 +605,8 @@ function EntryDetailPageInner() {
               <button
                 className="btn btn-secondary"
                 onClick={handleRegenerate}
-                disabled={pollingRegen || entry.status === 'published' || (!entry.events.length && !entry.body_markdown)}
-                title={
-                  entry.status === 'published'
-                    ? 'Unpublish first to ask the AI for a new version'
-                    : (!entry.events.length && !entry.body_markdown) ? 'Add events or write something first' : undefined
-                }
+                disabled={pollingRegen || (!entry.events.length && !entry.body_markdown)}
+                title={(!entry.events.length && !entry.body_markdown) ? 'Add events or write something first' : undefined}
               >
                 {pollingRegen
                   ? (entry.body_markdown ? 'Regenerating…' : 'Generating…')
@@ -626,11 +622,6 @@ function EntryDetailPageInner() {
                 {deleting ? 'Deleting…' : 'Delete'}
               </button>
             </div>
-            {entry.status === 'published' && (
-              <p style={{ marginTop: '0.5rem', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                Unpublish to ask the AI for a new version.
-              </p>
-            )}
           </>
         )}
       </div>

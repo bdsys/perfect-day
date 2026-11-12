@@ -50,7 +50,12 @@ async function entryWithSuggestion(): Promise<string> {
   if (!r.ok()) throw new Error(`Create entry failed: ${r.status()} ${await r.text()}`)
   const { id } = (await r.json()) as { id: string }
   await ctx.dispose()
+  seedSuggestion(id)
+  return id
+}
 
+/** Store a pending suggestion on *id* directly in the test database. */
+function seedSuggestion(id: string) {
   const sql =
     `UPDATE entries SET suggested_title = '${SUGGESTED_TITLE}', ` +
     `suggested_body_markdown = '${SUGGESTED_BODY}', ` +
@@ -63,7 +68,6 @@ async function entryWithSuggestion(): Promise<string> {
       '-c', sql],
     { cwd: REPO_ROOT, stdio: 'pipe' },
   )
-  return id
 }
 
 async function openEntry(page: Page, entryId: string) {
@@ -123,23 +127,36 @@ test.describe('AI suggestion box', () => {
     await expect(page.getByRole('region', { name: 'The AI suggests a new version' })).toHaveCount(0)
   })
 
-  test('on a published entry, Regenerate looks switched off and says why', async ({ page }) => {
+  test('a published entry offers Regenerate and shows a waiting suggestion', async ({ page }) => {
+    const entryId = await entryWithSuggestion()
     const ctx = await playwrightRequest.newContext()
-    const headers = { Authorization: `Bearer ${shared.token}` }
+    await ctx.post(`${API}/v1/entries/${entryId}/publish`, {
+      headers: { Authorization: `Bearer ${shared.token}` },
+    })
+    await ctx.dispose()
+    // Publishing discards a pending suggestion; put one back as a Regenerate would.
+    seedSuggestion(entryId)
+    await openEntry(page, entryId)
+
+    await expect(page.getByRole('button', { name: /Regenerate|Polish|Generate/ })).toBeEnabled()
+    await expect(page.getByRole('region', { name: 'The AI suggests a new version' })).toBeVisible()
+  })
+
+  test('a switched-off Regenerate looks switched off', async ({ page }) => {
+    const ctx = await playwrightRequest.newContext()
     const r = await ctx.post(`${API}/v1/diaries/${shared.diaryId}/entries`, {
-      headers,
-      data: { entry_date: '2026-05-16', title: 'Published day', body_markdown: OWN_TEXT },
+      headers: { Authorization: `Bearer ${shared.token}` },
+      data: { entry_date: '2026-05-16' },
     })
     const { id } = (await r.json()) as { id: string }
-    await ctx.post(`${API}/v1/entries/${id}/publish`, { headers })
     await ctx.dispose()
     await openEntry(page, id)
 
+    // No text and no events: nothing for the AI to work from.
     const regenerate = page.getByRole('button', { name: /Regenerate|Polish|Generate/ })
     await expect(regenerate).toBeDisabled()
     await expect(regenerate).toHaveCSS('cursor', 'not-allowed')
     expect(Number(await regenerate.evaluate((el) => getComputedStyle(el).opacity))).toBeLessThan(1)
-    await expect(page.getByText('Unpublish to ask the AI for a new version.')).toBeVisible()
   })
 
   test('the box is hidden while editing', async ({ page }) => {
