@@ -242,6 +242,15 @@ export interface Enrichment {
   fetched_at: string
 }
 
+/** The AI's pending version of an entry that already has text (follow-up 25.3). */
+export interface Suggestion {
+  title: string | null
+  body_markdown: string
+  flagged_tokens: string[]
+  body_source: 'llm' | 'llm_polished' | 'llm_hybrid'
+  created_at: string
+}
+
 export interface Entry {
   id: string
   diary_id: string
@@ -263,6 +272,7 @@ export interface Entry {
   last_generation: LLMGenerationSummary | null
   photos: Photo[]
   enrichments: Enrichment[]
+  suggestion: Suggestion | null
 }
 
 export interface ScanRun {
@@ -502,6 +512,12 @@ export const api = {
     },
     async regenerate(id: string): Promise<Entry> {
       return apiFetch(`/v1/entries/${id}/regenerate`, { method: 'POST' })
+    },
+    async acceptSuggestion(id: string): Promise<Entry> {
+      return apiFetch(`/v1/entries/${id}/suggestion/accept`, { method: 'POST' })
+    },
+    async dismissSuggestion(id: string): Promise<Entry> {
+      return apiFetch(`/v1/entries/${id}/suggestion`, { method: 'DELETE' })
     },
   },
 

@@ -12,6 +12,7 @@ import { StatusPanel } from '@/components/StatusPanel'
 import { usePolling } from '@/lib/usePolling'
 import { formatDateRange } from '@/lib/date'
 import { WeatherBadge } from '@/components/WeatherBadge'
+import { SuggestionBox } from '@/components/SuggestionBox'
 
 function formatEventTime(event: EventItem): string {
   const start = event.start?.dateTime ?? event.start?.date ?? ''
@@ -70,6 +71,7 @@ function EntryDetailPageInner() {
   const [regenSlow, setRegenSlow] = useState(false)
   const [regenErrorMessage, setRegenErrorMessage] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const [answeringSuggestion, setAnsweringSuggestion] = useState(false)
 
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null)
   const [showAttachPicker, setShowAttachPicker] = useState(false)
@@ -241,6 +243,23 @@ function EntryDetailPageInner() {
     return () => clearTimeout(timer)
   }, [regenResult])
 
+  async function answerSuggestion(answer: 'accept' | 'dismiss') {
+    if (!entry) return
+    setAnsweringSuggestion(true)
+    try {
+      const updated = answer === 'accept'
+        ? await api.entries.acceptSuggestion(entry.id)
+        : await api.entries.dismissSuggestion(entry.id)
+      setEntry(updated)
+      setRegenResult(null)
+      setRegenStartTime(null)
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Could not update the suggestion')
+    } finally {
+      setAnsweringSuggestion(false)
+    }
+  }
+
   async function handleDelete() {
     if (!entry) return
     if (!confirm('Delete this entry? You can restore it within 30 days.')) return
@@ -407,6 +426,7 @@ function EntryDetailPageInner() {
             {entry.body_markdown ? (
               <div
                 className="card"
+                data-testid="entry-body"
                 style={{ whiteSpace: 'pre-wrap', lineHeight: 1.7, fontSize: '0.95rem' }}
               >
                 {entry.body_markdown}
@@ -415,6 +435,15 @@ function EntryDetailPageInner() {
               <div className="empty-state">
                 <p>No content yet. Trigger a scan or regenerate to generate a draft.</p>
               </div>
+            )}
+
+            {entry.status === 'draft' && entry.suggestion && (
+              <SuggestionBox
+                suggestion={entry.suggestion}
+                busy={answeringSuggestion}
+                onAccept={() => answerSuggestion('accept')}
+                onDismiss={() => answerSuggestion('dismiss')}
+              />
             )}
 
             {/* Photo strip */}
@@ -553,7 +582,7 @@ function EntryDetailPageInner() {
                         ? 'Still working — this is taking longer than expected…'
                         : (entry.body_markdown ? 'Regenerating draft…' : 'Generating draft…'))
                     : regenResult === 'success'
-                      ? (entry.body_markdown ? 'Draft regenerated' : 'Draft generated')
+                      ? (entry.suggestion ? 'Suggestion ready below your text' : 'Draft generated')
                       : 'Generation is taking longer than expected — refresh the page to check'
                 }
                 startedAt={regenStartTime ?? undefined}
@@ -576,8 +605,12 @@ function EntryDetailPageInner() {
               <button
                 className="btn btn-secondary"
                 onClick={handleRegenerate}
-                disabled={pollingRegen || (!entry.events.length && !entry.body_markdown)}
-                title={(!entry.events.length && !entry.body_markdown) ? 'Add events or write something first' : undefined}
+                disabled={pollingRegen || entry.status === 'published' || (!entry.events.length && !entry.body_markdown)}
+                title={
+                  entry.status === 'published'
+                    ? 'Unpublish first to ask the AI for a new version'
+                    : (!entry.events.length && !entry.body_markdown) ? 'Add events or write something first' : undefined
+                }
               >
                 {pollingRegen
                   ? (entry.body_markdown ? 'Regenerating…' : 'Generating…')
