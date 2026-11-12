@@ -65,7 +65,7 @@ async def list_calendar_events(
     to_date: date | None = Query(None, alias="to"),
     limit: int = Query(50, ge=1, le=200),
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> list[CalendarEventSummary]:
     """List events synced to this diary. By default returns only unattached events."""
     await _get_diary_or_404(diary_id, user, db)
@@ -97,7 +97,7 @@ async def create_entry_from_event(
     diary_id: uuid.UUID,
     body: CreateFromEventBody,
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> EntryOut:
     from app.workers.tz_utils import google_event_to_entry_date
 

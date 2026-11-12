@@ -106,7 +106,7 @@ def _verify_state(state: str, secret: str) -> dict:
 @router.get("", response_model=list[IntegrationOut])
 async def list_integrations(
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> list[IntegrationOut]:
     result = await db.execute(select(OAuthToken).where(OAuthToken.user_id == user.id))
     tokens = result.scalars().all()
@@ -165,7 +165,7 @@ async def google_callback(
     state: str | None = Query(None),
     error: str | None = Query(None),
     scope: str | None = Query(None),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> RedirectResponse:
     settings = get_settings()
     r = get_redis()
@@ -270,7 +270,7 @@ async def google_callback(
 @router.delete("/google", status_code=status.HTTP_204_NO_CONTENT)
 async def revoke_google(
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> None:
     result = await db.execute(
         select(OAuthToken).where(OAuthToken.user_id == user.id, OAuthToken.provider == "google")

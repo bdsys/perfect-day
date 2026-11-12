@@ -115,7 +115,7 @@ async def register(
     request: Request,
     body: RegisterRequest,
     response: Response,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> TokenResponse:
     existing = await db.execute(select(User).where(User.email == body.email))
     if existing.scalar_one_or_none() is not None:
@@ -148,7 +148,7 @@ async def login(
     request: Request,
     body: LoginRequest,
     response: Response,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> TokenResponse:
     result = await db.execute(select(User).where(User.email == body.email.lower()))
     user = result.scalar_one_or_none()
@@ -178,7 +178,7 @@ async def social_google(
     body: GoogleLoginRequest,
     response: Response,
     request: Request,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> TokenResponse:
     settings = get_settings()
     try:
@@ -257,7 +257,7 @@ async def refresh(
     request: Request,
     response: Response,
     refresh_token: str | None = Cookie(default=None, alias=REFRESH_COOKIE),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> TokenResponse:
     # Origin check for CSRF defence-in-depth
     origin = request.headers.get("origin", "")
@@ -351,7 +351,7 @@ async def refresh(
 async def logout(
     response: Response,
     refresh_token: str | None = Cookie(default=None, alias=REFRESH_COOKIE),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> None:
     if refresh_token:
         token_hash = hash_token(refresh_token)
@@ -366,7 +366,7 @@ async def logout(
 async def logout_all(
     response: Response,
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> None:
     await db.execute(
         update(RefreshToken)
@@ -406,7 +406,7 @@ async def me(user: User = Depends(get_current_user)) -> User:
 async def delete_account(
     response: Response,
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> None:
     now = datetime.now(tz=UTC)
     user.deleted_at = now
@@ -431,7 +431,7 @@ async def delete_account(
 @router.post("/account/restore", status_code=status.HTTP_204_NO_CONTENT)
 async def restore_account(
     user: User = Depends(get_current_user_within_grace),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> None:
     # Re-check: get fresh user since the middleware already blocked deleted users,
     # so if they're here they must still be within grace (hard_delete_after not yet passed)

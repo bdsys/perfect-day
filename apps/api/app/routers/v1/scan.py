@@ -41,7 +41,7 @@ class ScanRunOut(BaseModel):
 async def get_scan_config(
     diary_id: uuid.UUID,
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> dict:
     diary, _ = await _get_diary_or_404(diary_id, user, db)
     result = await db.execute(select(ScanJob).where(ScanJob.diary_id == diary_id))
@@ -60,7 +60,7 @@ async def trigger_scan(
     diary_id: uuid.UUID,
     body: ScanRunRequest | None = None,
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> dict:
     diary, _ = await _get_diary_or_404(diary_id, user, db, require_owner=True)
 
@@ -90,7 +90,7 @@ async def trigger_scan(
 async def list_scan_runs(
     diary_id: uuid.UUID,
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> list[ScanRun]:
     await _get_diary_or_404(diary_id, user, db)
     result = await db.execute(
@@ -152,7 +152,7 @@ async def trigger_backfill(
     diary_id: uuid.UUID,
     body: BackfillRequest,
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> BackfillRun:
     await _get_diary_or_404(diary_id, user, db, require_owner=True)
 
@@ -193,7 +193,7 @@ async def get_backfill_run(
     diary_id: uuid.UUID,
     run_id: uuid.UUID,
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> BackfillRun:
     await _get_diary_or_404(diary_id, user, db)
     result = await db.execute(
@@ -219,7 +219,7 @@ async def cancel_backfill_run(
     diary_id: uuid.UUID,
     run_id: uuid.UUID,
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> BackfillRun:
     await _get_diary_or_404(diary_id, user, db, require_owner=True)
     result = await db.execute(
