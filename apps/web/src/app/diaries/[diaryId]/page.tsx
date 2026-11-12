@@ -494,12 +494,15 @@ export default function DiaryDetailPage() {
                 </div>
               )}
             </div>
-            <button
-              className="btn btn-secondary"
-              onClick={() => router.push(`/diaries/${diaryId}/calendar-pick`)}
-            >
-              New entry from Google Calendar
-            </button>
+            {/* The synced events are the owner's own calendar (S-11, decision 2026-11-12). */}
+            {isOwner && (
+              <button
+                className="btn btn-secondary"
+                onClick={() => router.push(`/diaries/${diaryId}/calendar-pick`)}
+              >
+                New entry from Google Calendar
+              </button>
+            )}
             <button
               className="btn btn-secondary"
               onClick={() => router.push(`/diaries/${diaryId}/rules`)}

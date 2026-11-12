@@ -93,6 +93,7 @@ test.describe('Owner without a working Google Calendar', () => {
 
     await expect(page.getByRole('button', { name: 'Scan now' })).toBeEnabled()
     await expect(page.getByRole('button', { name: 'Backfill' })).toBeEnabled()
+    await expect(page.getByRole('button', { name: 'New entry from Google Calendar' })).toBeVisible()
     await expect(page.getByText(HINT)).toHaveCount(0)
     await expect(page.getByText(BANNER)).toHaveCount(0)
   })
@@ -107,6 +108,8 @@ test.describe('Co-parent (scanning is owner-only, decision 2026-11-12)', () => {
     await expect(page.getByText(OWNER_ONLY)).toBeVisible()
     await expect(page.getByRole('button', { name: 'Scan now' })).toHaveAccessibleDescription(OWNER_ONLY)
     await expect(page.getByRole('button', { name: /Connect Google Calendar/ })).toHaveCount(0)
+    // The synced events are the owner's own calendar (S-11).
+    await expect(page.getByRole('button', { name: 'New entry from Google Calendar' })).toHaveCount(0)
   })
 
   test("the owner's lost connection: a banner asks them to tell the owner, with no Reconnect button", async ({ page }) => {

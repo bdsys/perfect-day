@@ -424,3 +424,91 @@ class TestScanConfigReportsTheOwnersCalendar:
 
         assert config["calendar"] == "lost"
         assert config["can_scan"] is False
+
+
+# ---------------------------------------------------------------------------
+# S-11 — the owner's synced calendar is the owner's alone (decision 2026-11-12)
+# ---------------------------------------------------------------------------
+
+
+class TestSyncedCalendarIsOwnerOnly:
+    async def _diary_shared_with(
+        self, client: AsyncClient, db_session: AsyncSession, role: str, prefix: str
+    ):
+        from app.models import DiaryPermission, User
+        from tests.fixtures.factories import make_event
+
+        owner_auth, diary = await _owner_and_diary(client, f"{prefix}-owner@example.com")
+        other_auth = await _register(client, f"{prefix}-{role}@example.com")
+        other_id = (
+            await db_session.execute(
+                select(User.id).where(User.email == f"{prefix}-{role}@example.com")
+            )
+        ).scalar_one()
+        db_session.add(
+            DiaryPermission(diary_id=uuid.UUID(diary["id"]), user_id=other_id, role=role)
+        )
+        ended = datetime.now(tz=UTC) - timedelta(days=1)
+        event = await make_event(
+            db_session, diary_id=uuid.UUID(diary["id"]), occurred_at=ended, ends_at=ended
+        )
+        await db_session.commit()
+        return owner_auth, other_auth, diary, event
+
+    async def test_owner_sees_the_synced_events(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
+        owner_auth, _, diary, event = await self._diary_shared_with(
+            client, db_session, "editor", "s11-own"
+        )
+
+        r = await client.get(f"/v1/diaries/{diary['id']}/calendar-events", headers=owner_auth)
+
+        assert r.status_code == 200
+        assert [e["id"] for e in r.json()] == [str(event.id)]
+
+    async def test_editor_cannot_list_the_synced_events(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
+        _, editor_auth, diary, _ = await self._diary_shared_with(
+            client, db_session, "editor", "s11-ed"
+        )
+
+        for attached in ("false", "true"):
+            r = await client.get(
+                f"/v1/diaries/{diary['id']}/calendar-events?attached={attached}",
+                headers=editor_auth,
+            )
+            assert r.status_code == 403
+
+    async def test_viewer_cannot_list_the_synced_events(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
+        _, viewer_auth, diary, _ = await self._diary_shared_with(
+            client, db_session, "viewer", "s11-vw"
+        )
+
+        r = await client.get(f"/v1/diaries/{diary['id']}/calendar-events", headers=viewer_auth)
+
+        assert r.status_code == 403
+
+    async def test_editor_cannot_make_an_entry_from_a_synced_event(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
+        from app.models import Event
+
+        _, editor_auth, diary, event = await self._diary_shared_with(
+            client, db_session, "editor", "s11-mk"
+        )
+
+        r = await client.post(
+            f"/v1/diaries/{diary['id']}/entries/from-event",
+            json={"event_id": str(event.id)},
+            headers=editor_auth,
+        )
+
+        assert r.status_code == 403
+        event_id = event.id
+        db_session.expire_all()
+        stored = (await db_session.execute(select(Event).where(Event.id == event_id))).scalar_one()
+        assert stored.entry_id is None
