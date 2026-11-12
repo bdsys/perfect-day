@@ -363,3 +363,93 @@ class TestCancellation:
         await _cancel_calendar_event("evt-1", str(diary.id))
 
         assert await _external_ids(db_session) == ["evt-1"]
+
+
+class TestReschedule:
+    async def _move(self, diary: Diary, external_id: str, start: datetime) -> str:
+        from app.workers.tasks import _ingest_calendar_event
+
+        with patch("app.workers.tasks.evaluate_rules_for_event"):
+            return await _ingest_calendar_event(
+                _timed_event(external_id, start, start + timedelta(hours=1)), diary.id, "UTC"
+            )
+
+    async def test_new_time_replaces_the_stored_time(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
+        diary = await _diary_with_rule(db_session)
+        await make_event(db_session, diary_id=diary.id, external_id="evt-1")
+        new_start = datetime(2026, 3, 1, 9, 0, tzinfo=UTC)
+
+        event_id = await self._move(diary, "evt-1", new_start)
+
+        event = await _event(db_session, event_id)
+        assert event.occurred_at == new_start
+        assert event.ends_at == datetime(2026, 3, 1, 10, 0, tzinfo=UTC)
+
+    async def test_untouched_draft_is_removed_when_its_event_moves_to_the_future(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
+        diary = await _diary_with_rule(db_session)
+        entry, _ = await _attached(db_session, diary)
+
+        with patch("app.workers.tasks.generate_entry_draft"):
+            event_id = await self._move(diary, "evt-1", datetime.now(tz=UTC) + timedelta(days=5))
+
+        assert (await _entry_row(db_session, entry.id)).deleted_at is not None
+        event = await _event(db_session, event_id)
+        assert event.entry_id is None
+        assert event.rules_evaluated_at is None, "it must be evaluated again after its new end"
+
+    async def test_edited_draft_survives_its_event_moving_to_the_future(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
+        diary = await _diary_with_rule(db_session)
+        entry, _ = await _attached(db_session, diary, body_source="user")
+
+        event_id = await self._move(diary, "evt-1", datetime.now(tz=UTC) + timedelta(days=5))
+
+        row = await _entry_row(db_session, entry.id)
+        assert row.deleted_at is None
+        assert row.body_markdown == "Practice ran from ten until eleven."
+        assert (await _event(db_session, event_id)).entry_id == entry.id
+
+    async def test_untouched_draft_stays_when_its_event_moves_but_is_still_over(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
+        diary = await _diary_with_rule(db_session)
+        entry, _ = await _attached(db_session, diary)
+
+        event_id = await self._move(diary, "evt-1", datetime.now(tz=UTC) - timedelta(days=3))
+
+        assert (await _entry_row(db_session, entry.id)).deleted_at is None
+        assert (await _event(db_session, event_id)).entry_id == entry.id
+
+    async def test_evaluated_event_moved_to_the_future_waits_to_be_evaluated_again(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
+        diary = await _diary_with_rule(db_session)
+        await make_event(
+            db_session,
+            diary_id=diary.id,
+            external_id="evt-1",
+            ends_at=datetime.now(tz=UTC) - timedelta(days=1),
+            rules_evaluated_at=datetime.now(tz=UTC) - timedelta(hours=1),
+        )
+
+        event_id = await self._move(diary, "evt-1", datetime.now(tz=UTC) + timedelta(days=5))
+
+        assert (await _event(db_session, event_id)).rules_evaluated_at is None
+
+    async def test_untouched_draft_with_other_events_is_redrafted_when_one_moves_away(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
+        diary = await _diary_with_rule(db_session)
+        entry, _ = await _attached(db_session, diary)
+        await make_event(db_session, diary_id=diary.id, entry=entry, external_id="evt-2")
+
+        with patch("app.workers.tasks.generate_entry_draft") as draft:
+            await self._move(diary, "evt-1", datetime.now(tz=UTC) + timedelta(days=5))
+
+        assert (await _entry_row(db_session, entry.id)).deleted_at is None
+        draft.delay.assert_called_once_with(str(entry.id))

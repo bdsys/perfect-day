@@ -295,10 +295,18 @@ async def _ingest_calendar_event(
         )
         event = existing_result.scalar_one_or_none()
         is_new = event is None
+        entry_to_redraft: uuid.UUID | None = None
         if event is not None:
             event.payload = payload
             event.occurred_at = occurred_at
             event.ends_at = ends_at
+            if not _has_ended(ends_at):
+                # Moved to a time that has not passed. A draft only the AI has
+                # written was about something that has not happened yet, so it
+                # goes; anything a person edited or published stays as it is.
+                entry_to_redraft = await _release_from_untouched_draft(db, event)
+                if event.entry_id is None:
+                    event.rules_evaluated_at = None  # evaluate after the new end
         else:
             event = Event(
                 diary_id=diary_id,
@@ -316,6 +324,12 @@ async def _ingest_calendar_event(
         # is already over is evaluated now; anything else waits for the sweep
         # in the scan that follows its end (queue_due_rule_evaluations).
         due = is_new and _has_ended(ends_at)
+
+    if entry_to_redraft is not None:
+        try:
+            generate_entry_draft.delay(str(entry_to_redraft))
+        except Exception:
+            log.exception("reschedule_redraft_queue_failed", entry_id=str(entry_to_redraft))
 
     if due:
         # Best-effort: a broker hiccup must not undo a successful ingest. The
@@ -374,6 +388,26 @@ async def _cancel_calendar_event(external_id: str, diary_id: str) -> None:
             generate_entry_draft.delay(str(entry_to_redraft))
         except Exception:
             log.exception("cancel_event_redraft_queue_failed", entry_id=str(entry_to_redraft))
+
+
+async def _release_from_untouched_draft(db, event) -> uuid.UUID | None:
+    """Detach *event* from its entry if that entry is an untouched rule-created draft.
+
+    Returns the id of an entry that needs redrafting, as release_event_from_entry does.
+    """
+    from sqlalchemy import select
+
+    from app.models import Entry
+    from app.workers.event_changes import is_untouched_rule_draft, release_event_from_entry
+
+    if event.entry_id is None:
+        return None
+    entry = (
+        await db.execute(select(Entry).where(Entry.id == event.entry_id))
+    ).scalar_one_or_none()
+    if entry is None or not is_untouched_rule_draft(entry):
+        return None
+    return await release_event_from_entry(db, event)
 
 
 def _has_ended(ends_at: datetime | None) -> bool:
