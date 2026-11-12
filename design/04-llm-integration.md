@@ -93,12 +93,16 @@ Residual risk is documented in [`design/THREATMODEL.md`](THREATMODEL.md) § Prom
 
 ## Model choice and cost
 
-> **Superseded in part (2026-11-11).** See [`docs/superpowers/specs/2026-11-11-code-review-decisions-design.md`](../docs/superpowers/specs/2026-11-11-code-review-decisions-design.md) section 2: the primary model is `claude-opus-5-5`, set by `ANTHROPIC_MODEL`; the caching and cost assumptions below do not hold. This section is rewritten when that work is built.
+Built 2026-11-11 as follow-up 25.2; decisions in [`docs/superpowers/specs/2026-11-11-code-review-decisions-design.md`](../docs/superpowers/specs/2026-11-11-code-review-decisions-design.md) section 2.
 
-- **Primary:** Claude Sonnet 4.6.
-- **Fallback:** Gemini 2.x Pro. Triggered only on Anthropic 5xx or hard rate-limit after retries. Backend abstracts both behind a single `LLMClient` interface.
-- **Caching:** Anthropic prompt caching enabled on Parts 1 + 2. First call in a scan misses; subsequent entries in same scan hit on cached prefix.
-- **Rough cost per entry:** $0.005–$0.015 on Sonnet. Hourly scans, 1–3 entries each = ~$0.05–$0.30/diary/day. **These estimates assume ~500 input tokens/entry and ~70% prompt-cache hit rate after the first entry in a scan.** Verify with real prompt sizes and actual cache-hit rates before relying on these numbers for tier pricing. Run `make test-live` with a realistic calendar dataset and check `llm_generations.input_tokens` + `output_tokens` to calibrate.
+- **Primary:** `claude-opus-5-5`, set by `ANTHROPIC_MODEL` (no date suffix). Changing it is a manual step followed by `make test-live`.
+- **Request settings:** `max_tokens` 16,000 (thinking is always on for this model and counts against the cap), effort `medium` stated explicitly, and the API's server-side refusal fallback (`fallbacks: "default"`, beta `server-side-fallback-2026-07-01`). The async client is used.
+- **Reading the reply:** the first text block is the draft (a thinking block comes first). A reply with `stop_reason` `max_tokens` or `refusal`, or with no text block, is a failed generation: no retry, no second provider, and the entry is left exactly as it was. Opus 5.5 sometimes wraps its JSON in a code fence; the parser accepts that. A reply with no JSON gets one retry from the same provider before the next provider is tried.
+- **Staying current:** a weekly task (`app.workers.model_check.check_anthropic_model`, Mondays 06:00 UTC) lists the API's models and logs `anthropic_model_missing` or `anthropic_newer_opus_available`. It only warns. No model id follows new releases automatically, and drafts about a child should not change model untested.
+- **Fallback:** Gemini (`GEMINI_MODEL`), tried when Anthropic fails with an API error. Unchanged.
+- **Caching:** the `cache_control` marker on the diary-context block has no effect, because the block is far below the minimum cacheable size (review finding L-2). At this prompt size caching would save almost nothing. Left as it is.
+- **Measured cost:** about **$0.006 per draft** for a single-event entry at $4 / $20 per million tokens. Three live calls on 2026-11-11 used 509 to 611 input tokens and 183 to 208 output tokens (thinking included). Entries with many events will cost more; that has not been measured.
+- **Not decided:** which model fabricates least on this prompt. Nobody has measured it. Before moving to a cheaper model, run the same 20 to 30 real calendar days through each candidate and count flagged words.
 
 ## Failure handling
 

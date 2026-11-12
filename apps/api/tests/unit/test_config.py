@@ -77,3 +77,17 @@ def test_settings_have_open_meteo_defaults():
     assert s.open_meteo_forecast_url == "https://api.open-meteo.com/v1/forecast"
     assert s.open_meteo_archive_url == "https://archive-api.open-meteo.com/v1/archive"
     assert s.open_meteo_timeout_seconds == 30
+
+
+class TestAnthropicModelSetting:
+    def test_default_is_the_current_opus(self, monkeypatch):
+        monkeypatch.delenv("ANTHROPIC_MODEL", raising=False)
+        from app.core.config import Settings
+
+        assert Settings(_env_file=None).anthropic_model == "claude-opus-5-5"
+
+    def test_environment_overrides_the_default(self, monkeypatch):
+        monkeypatch.setenv("ANTHROPIC_MODEL", "claude-sonnet-5-5")
+        from app.core.config import Settings
+
+        assert Settings(_env_file=None).anthropic_model == "claude-sonnet-5-5"

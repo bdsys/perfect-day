@@ -118,6 +118,8 @@ Items 2 and 3 both change `apps/api/app/workers/llm.py` and `llm_providers.py`; 
 
 **Cost, estimated not measured:** about $0.016 per draft at 1,500 tokens in and 500 out, at $4 / $20 per million tokens. Thinking tokens are billed as output and are not in that figure. Prices are from the Claude API reference bundled with Claude Code, cached 2026-11-03.
 
+**Measured 2026-11-11 (25.2 built):** about $0.006 per draft for a single-event entry: three live calls used 509 to 611 input tokens and 183 to 208 output tokens, thinking included. The estimate above assumed a prompt about three times larger than a single-event entry really is.
+
 **Not decided:** which model fabricates least on this prompt. Nobody has measured it. If cost ever matters, run the same 20 to 30 real calendar days through each candidate and count flagged words before moving to a cheaper model.
 
 ### Verification for item 2

@@ -191,6 +191,13 @@ async def test_generate_draft_golden(db: AsyncSession, db_url: str):
     assert gen is not None, "Expected an LLMGeneration audit row with status='success'"
     assert gen.input_tokens and gen.input_tokens > 0, "Expected non-zero input token count"
     assert gen.output_tokens and gen.output_tokens > 0, "Expected non-zero output token count"
+    # Without this a silent failover to Gemini would also pass.
+    assert gen.model.startswith("claude-"), f"Expected a Claude model to answer, got {gen.model}"
+    # Shown with `pytest -s`; used to keep the cost figure in design/04 measured.
+    print(
+        f"\nlive draft: model={gen.model} input_tokens={gen.input_tokens} "
+        f"output_tokens={gen.output_tokens} latency_ms={gen.latency_ms}"
+    )
 
 
 # ---------------------------------------------------------------------------

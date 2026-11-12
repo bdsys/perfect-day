@@ -9,7 +9,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.workers.llm_providers import LLMPermanentError, LLMResult, LLMTransientError
+from app.workers.llm_providers import (
+    LLMPermanentError,
+    LLMResult,
+    LLMTransientError,
+    LLMUnusableResponseError,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -27,6 +32,13 @@ _VALID_LLM_RESULT = LLMResult(
     input_tokens=100,
     output_tokens=50,
     model="claude-haiku-4-5-20251001",
+)
+
+_NOT_JSON_RESULT = LLMResult(
+    raw_text="Here is your entry!",
+    input_tokens=90,
+    output_tokens=10,
+    model="claude-opus-5-5",
 )
 
 _GEMINI_RESULT = LLMResult(
@@ -406,3 +418,109 @@ class TestProviderFailover:
         assert entry_update.updated_at >= before, (
             f"updated_at ({entry_update.updated_at}) should be >= call start ({before})"
         )
+
+
+class TestUnusableResponse:
+    """A cut-off or refused reply is a failed generation that changes nothing."""
+
+    @pytest.mark.asyncio
+    async def test_entry_is_left_unchanged_and_no_other_provider_is_asked(self):
+        entry_id, entry, diary = _make_entry_and_diary()
+        anthropic_p = _make_provider(
+            name="anthropic",
+            side_effects=[LLMUnusableResponseError("stop_reason=refusal")],
+        )
+        gemini_p = _make_provider(name="gemini")
+        ctx, entry_update = _db_context(entry, diary)
+        entry_update.title = "Existing title"
+        entry_update.body_markdown = "Existing body."
+        entry_update.body_source = "llm"
+
+        with (
+            patch("app.workers.llm.db_session", return_value=ctx),
+            patch("app.workers.llm.AnthropicProvider", return_value=anthropic_p),
+            patch("app.workers.llm.GeminiProvider", return_value=gemini_p),
+        ):
+            from app.workers.llm import generate_draft_for_entry
+
+            await generate_draft_for_entry(entry_id)
+
+        assert entry_update.title == "Existing title"
+        assert entry_update.body_markdown == "Existing body."
+        assert entry_update.body_source == "llm", "no deterministic fallback over the entry"
+        assert anthropic_p.generate.await_count == 1, "a refusal is not retried"
+        gemini_p.generate.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_a_failed_generation_is_recorded_with_the_reason(self):
+        entry_id, entry, diary = _make_entry_and_diary()
+        anthropic_p = _make_provider(
+            name="anthropic",
+            side_effects=[LLMUnusableResponseError("stop_reason=max_tokens")],
+        )
+        ctx, _ = _db_context(entry, diary)
+
+        with (
+            patch("app.workers.llm.db_session", return_value=ctx) as db_session,
+            patch("app.workers.llm.AnthropicProvider", return_value=anthropic_p),
+            patch(
+                "app.workers.llm.GeminiProvider",
+                return_value=_make_provider(name="gemini", configured=False),
+            ),
+        ):
+            from app.workers.llm import generate_draft_for_entry
+
+            await generate_draft_for_entry(entry_id)
+
+        db = await db_session.return_value.__aenter__()
+        (generation,) = [call.args[0] for call in db.add.call_args_list]
+        assert generation.status == "failed"
+        assert generation.error == "stop_reason=max_tokens"
+
+
+class TestInvalidJsonRetry:
+    """A reply that is not JSON gets one more try from the same provider."""
+
+    @pytest.mark.asyncio
+    async def test_second_reply_from_the_same_provider_is_used(self):
+        entry_id, entry, diary = _make_entry_and_diary()
+        not_json = _NOT_JSON_RESULT
+        anthropic_p = _make_provider(name="anthropic", side_effects=[not_json, _VALID_LLM_RESULT])
+        gemini_p = _make_provider(name="gemini")
+        ctx, entry_update = _db_context(entry, diary)
+
+        with (
+            patch("app.workers.llm.db_session", return_value=ctx),
+            patch("app.workers.llm.AnthropicProvider", return_value=anthropic_p),
+            patch("app.workers.llm.GeminiProvider", return_value=gemini_p),
+        ):
+            from app.workers.llm import generate_draft_for_entry
+
+            await generate_draft_for_entry(entry_id)
+
+        assert anthropic_p.generate.await_count == 2
+        retry_prompt = anthropic_p.generate.await_args_list[1].args[2]
+        assert "NOT VALID JSON" in retry_prompt
+        assert entry_update.title == "A Great Day"
+        gemini_p.generate.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_two_bad_replies_move_on_to_the_next_provider(self):
+        entry_id, entry, diary = _make_entry_and_diary()
+        not_json = _NOT_JSON_RESULT
+        anthropic_p = _make_provider(name="anthropic", side_effects=[not_json, not_json])
+        gemini_p = _make_provider(name="gemini", result=_GEMINI_RESULT)
+        ctx, entry_update = _db_context(entry, diary)
+
+        with (
+            patch("app.workers.llm.db_session", return_value=ctx),
+            patch("app.workers.llm.AnthropicProvider", return_value=anthropic_p),
+            patch("app.workers.llm.GeminiProvider", return_value=gemini_p),
+        ):
+            from app.workers.llm import generate_draft_for_entry
+
+            await generate_draft_for_entry(entry_id)
+
+        assert anthropic_p.generate.await_count == 2
+        assert gemini_p.generate.await_count == 1
+        assert entry_update.title == "A Great Day"

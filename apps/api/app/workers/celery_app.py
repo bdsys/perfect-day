@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 from celery import Celery
+from celery.schedules import crontab
 
 from app.core.config import get_settings
 
@@ -17,6 +18,7 @@ def create_celery() -> Celery:
         include=[
             "app.workers.tasks",
             "app.workers.beat_tasks",
+            "app.workers.model_check",
         ],
     )
 
@@ -37,6 +39,12 @@ def create_celery() -> Celery:
             "process-hard-deletes": {
                 "task": "app.workers.beat_tasks.process_hard_deletes",
                 "schedule": 3600,  # every hour
+            },
+            "check-anthropic-model": {
+                "task": "app.workers.model_check.check_anthropic_model",
+                # A clock time, not an interval: an interval restarts from zero
+                # whenever beat restarts, so frequent deploys would starve it.
+                "schedule": crontab(minute=0, hour=6, day_of_week="mon"),
             },
             "sweep-orphaned-photos": {
                 "task": "app.workers.beat_tasks.sweep_orphaned_photos",
