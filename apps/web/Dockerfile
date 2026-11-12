@@ -3,8 +3,9 @@
 # ---- deps ----
 FROM node:20-alpine AS deps
 WORKDIR /app
-COPY package.json ./
-RUN npm install --frozen-lockfile 2>/dev/null || npm install
+COPY package.json package-lock.json ./
+# npm ci installs exactly what package-lock.json says, and fails if it is out of date.
+RUN npm ci
 
 # ---- builder ----
 FROM node:20-alpine AS builder

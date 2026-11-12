@@ -24,10 +24,11 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+          cache-dependency-path: apps/api/requirements-dev.lock
 
       - name: Install API deps
         working-directory: apps/api
-        run: pip install -e ".[dev]"
+        run: pip install --require-hashes -r requirements-dev.lock && pip install --no-deps -e .
 
       - name: Ruff lint
         working-directory: apps/api
@@ -49,11 +50,11 @@ jobs:
         with:
           node-version: "20"
           cache: npm
-          cache-dependency-path: apps/web/package.json
+          cache-dependency-path: apps/web/package-lock.json
 
       - name: Install web deps
         working-directory: apps/web
-        run: npm install
+        run: npm ci
 
       - name: ESLint
         working-directory: apps/web
@@ -77,10 +78,11 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+          cache-dependency-path: apps/api/requirements-dev.lock
 
       - name: Install deps
         working-directory: apps/api
-        run: pip install -e ".[dev]"
+        run: pip install --require-hashes -r requirements-dev.lock && pip install --no-deps -e .
 
       - name: Run unit tests
         working-directory: apps/api
@@ -107,10 +109,11 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+          cache-dependency-path: apps/api/requirements-dev.lock
 
       - name: Install deps
         working-directory: apps/api
-        run: pip install -e ".[dev]"
+        run: pip install --require-hashes -r requirements-dev.lock && pip install --no-deps -e .
 
       - name: Run integration tests
         working-directory: apps/api
@@ -140,11 +143,11 @@ jobs:
         with:
           node-version: "20"
           cache: npm
-          cache-dependency-path: apps/web/package.json
+          cache-dependency-path: apps/web/package-lock.json
 
       - name: Install deps
         working-directory: apps/web
-        run: npm install
+        run: npm ci
 
       - name: TypeScript check
         working-directory: apps/web
@@ -171,24 +174,25 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+          cache-dependency-path: apps/api/requirements-dev.lock
 
       - name: pip-audit
         working-directory: apps/api
         run: |
           pip install pip-audit
-          pip-audit --requirement <(pip install -e . --dry-run 2>/dev/null | grep -oP '(?<=Collecting )\S+' || echo "") || true
+          pip-audit --requirement requirements.lock || true
 
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
           node-version: "20"
           cache: npm
-          cache-dependency-path: apps/web/package.json
+          cache-dependency-path: apps/web/package-lock.json
 
       - name: pnpm audit
         working-directory: apps/web
         run: |
-          npm install
+          npm ci
           npm audit --prod || true
 
   # ---------------------------------------------------------------------------

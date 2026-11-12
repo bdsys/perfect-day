@@ -54,6 +54,17 @@ These can be left blank to test auth, diary CRUD, and entry management without t
 
 See **[Obtaining API Keys](#obtaining-api-keys)** below for step-by-step instructions on creating these credentials.
 
+### Dependencies are locked
+
+Docker images and CI install exact versions, so a rebuild never picks up a new library on its own:
+
+- **API:** `apps/api/requirements.lock` (runtime) and `requirements-dev.lock` (plus test and lint tools), with hashes. They are resolved under Python 3.12, the version the API image and CI use.
+- **Web:** `apps/web/package-lock.json`, installed with `npm ci`.
+
+To change a Python dependency, edit `apps/api/pyproject.toml`, then run `make lock`. It keeps every other version as it is. `make lock-upgrade` moves everything to the newest allowed versions. Either way, run `make test-all` before committing the new lock.
+
+Your local `.venv` from bootstrap is not installed from the lock (finding P-12 in `design/code-review-2026-11.md`).
+
 ---
 
 ## Running the Stack
