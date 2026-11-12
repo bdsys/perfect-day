@@ -566,6 +566,8 @@ async def restore_entry(
     if entry is None:
         raise HTTPException(status_code=404, detail="not_found")
     diary, role = await _get_diary_or_404(entry.diary_id, user, db, require_owner=False)
+    if role == "viewer":
+        raise HTTPException(status_code=403, detail="forbidden")
     owner_result = await db.execute(select(User).where(User.id == diary.owner_user_id))
     owner = owner_result.scalar_one()
     await enforce_entry_tier_limit(

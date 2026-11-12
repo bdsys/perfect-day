@@ -67,8 +67,12 @@ async def list_calendar_events(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[CalendarEventSummary]:
-    """List events synced to this diary. By default returns only unattached events."""
-    await _get_diary_or_404(diary_id, user, db)
+    """List events synced to this diary. By default returns only unattached events.
+
+    Owner only: the events are a copy of the owner's own calendar, including
+    events that have nothing to do with the diary (S-11, decision 2026-11-12).
+    """
+    await _get_diary_or_404(diary_id, user, db, require_owner=True)
 
     q = select(Event).where(Event.diary_id == diary_id)
     if not attached:
@@ -101,9 +105,8 @@ async def create_entry_from_event(
 ) -> EntryOut:
     from app.workers.tz_utils import google_event_to_entry_date
 
-    diary, role = await _get_diary_or_404(diary_id, user, db)
-    if role == "viewer":
-        raise HTTPException(status_code=403, detail="forbidden")
+    # Owner only, like the list it is picked from (S-11, decision 2026-11-12).
+    diary, _ = await _get_diary_or_404(diary_id, user, db, require_owner=True)
 
     event_result = await db.execute(
         select(Event).where(Event.id == body.event_id).with_for_update()
