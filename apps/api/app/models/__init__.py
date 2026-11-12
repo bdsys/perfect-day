@@ -293,6 +293,13 @@ class Entry(TimestampMixin, SoftDeleteMixin, Base):
         String(20), nullable=False, server_default="manual"
     )
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # The AI's pending version of an entry that already has text (follow-up 25.3).
+    # It never overwrites the text; the person accepts or dismisses it.
+    suggested_title: Mapped[str | None] = mapped_column(Text)
+    suggested_body_markdown: Mapped[str | None] = mapped_column(Text)
+    suggested_flagged_tokens: Mapped[list[str] | None] = mapped_column(ARRAY(Text))
+    suggested_body_source: Mapped[str | None] = mapped_column(String(20))
+    suggested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     diary: Mapped[Diary] = relationship(back_populates="entries")
     events: Mapped[list[Event]] = relationship(
@@ -326,6 +333,11 @@ class Entry(TimestampMixin, SoftDeleteMixin, Base):
         CheckConstraint(
             "creation_source IN ('manual','calendar_pick','rule')",
             name="ck_entries_creation_source",
+        ),
+        CheckConstraint(
+            "suggested_body_source IS NULL"
+            " OR suggested_body_source IN ('llm','llm_polished','llm_hybrid')",
+            name="ck_entries_suggested_body_source",
         ),
     )
 

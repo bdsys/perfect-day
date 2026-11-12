@@ -101,6 +101,16 @@ class EnrichmentOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class SuggestionOut(BaseModel):
+    """The AI's pending version of an entry that already has text."""
+
+    title: str | None
+    body_markdown: str
+    flagged_tokens: list[str]
+    body_source: str
+    created_at: datetime
+
+
 class EntryOut(BaseModel):
     id: uuid.UUID
     diary_id: uuid.UUID
@@ -122,6 +132,7 @@ class EntryOut(BaseModel):
     last_generation: LLMGenerationSummaryOut | None = None
     photos: list = []
     enrichments: list[EnrichmentOut] = []
+    suggestion: SuggestionOut | None = None
 
     model_config = {"from_attributes": True}
 
@@ -183,6 +194,15 @@ def _entry_out_from_orm(entry: Entry) -> EntryOut:
         if ep.photo is not None and ep.photo.deleted_at is None
     ]
     enrichments_out = [EnrichmentOut.model_validate(e) for e in entry.enrichments]
+    suggestion_out: SuggestionOut | None = None
+    if entry.suggested_body_markdown is not None:
+        suggestion_out = SuggestionOut(
+            title=entry.suggested_title,
+            body_markdown=entry.suggested_body_markdown,
+            flagged_tokens=entry.suggested_flagged_tokens or [],
+            body_source=entry.suggested_body_source or "llm",
+            created_at=entry.suggested_at or entry.updated_at,
+        )
     return EntryOut(
         id=entry.id,
         diary_id=entry.diary_id,
@@ -204,6 +224,7 @@ def _entry_out_from_orm(entry: Entry) -> EntryOut:
         last_generation=last_gen,
         photos=photos_out,
         enrichments=enrichments_out,
+        suggestion=suggestion_out,
     )
 
 
