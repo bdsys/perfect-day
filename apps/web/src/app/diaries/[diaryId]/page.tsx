@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
-import { api, type Diary, type Entry, type Integration, type ScanRun, type BackfillRun } from '@/lib/api'
+import { api, type Diary, type Entry, type Integration, type ScanRun, type ScanConfig, type BackfillRun } from '@/lib/api'
 import { useAuth } from '@/lib/auth-context'
 import { StatusPanel } from '@/components/StatusPanel'
 import { usePolling } from '@/lib/usePolling'
@@ -38,6 +38,9 @@ function EntryCard({ entry }: { entry: Entry }) {
   )
 }
 
+const CALENDAR_HINT = 'Connect Google Calendar to scan for new events and backfill past ones.'
+const OWNER_ONLY_HINT = 'Only the diary owner can scan for new events.'
+
 export default function DiaryDetailPage() {
   const { diaryId } = useParams<{ diaryId: string }>()
   const { user, loading: authLoading } = useAuth()
@@ -47,6 +50,8 @@ export default function DiaryDetailPage() {
   const [hasMoreEntries, setHasMoreEntries] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
   const [googleIntegration, setGoogleIntegration] = useState<Integration | null>(null)
+  // The OWNER's calendar connection and whether this viewer may scan (owner only).
+  const [scanAccess, setScanAccess] = useState<ScanConfig | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [pollingScan, setPollingScan] = useState(false)
@@ -78,14 +83,17 @@ export default function DiaryDetailPage() {
 
   useEffect(() => {
     if (!user || !diaryId) return
-    api.integrations.list()
-      .then((integrations) => {
+    // Scans read the diary owner's calendar, so the owner's connection decides
+    // what the page offers; the viewer's own connection only labels the header.
+    Promise.all([api.diaries.getScanConfig(diaryId), api.integrations.list()])
+      .then(([config, integrations]) => {
+        setScanAccess(config)
         const google = integrations.find(
           (i: Integration) => i.provider === 'google' && !i.revoked && i.scopes_granted.includes('calendar.readonly'),
         )
         setGoogleIntegration(google ?? null)
       })
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : 'Failed to load integrations'))
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : 'Failed to load the Google connection'))
   }, [user, diaryId])
 
   useEffect(() => {
@@ -306,6 +314,16 @@ export default function DiaryDetailPage() {
     }
   }
 
+  // Scan and Backfill read the owner's Google Calendar and only the owner may
+  // start them (decision 2026-11-12). The hint says why they are switched off.
+  const isOwner = scanAccess?.can_scan ?? false
+  const calendar = scanAccess?.calendar
+  const calendarOff = !isOwner || calendar !== 'connected'
+  const scanHint = !scanAccess ? undefined
+    : !isOwner ? OWNER_ONLY_HINT
+    : calendar !== 'connected' ? CALENDAR_HINT
+    : undefined
+
   if (authLoading || loading) return <div className="loading">Loading…</div>
   if (!user) return null
 
@@ -321,26 +339,34 @@ export default function DiaryDetailPage() {
           <h1 className="page-title">{diary?.name ?? 'Diary'}</h1>
           <div className="page-actions">
             <Link href={`/diaries/${diaryId}/settings`} className="btn btn-secondary">Settings</Link>
-            {googleIntegration ? (
+            {isOwner && calendar === 'connected' ? (
               <span className="btn btn-secondary" style={{ cursor: 'default', opacity: 0.7 }}>
-                Connected: {googleIntegration.google_name ?? 'Google account'}
-                {googleIntegration.google_email ? ` (${googleIntegration.google_email})` : ''} ✓
+                Connected: {googleIntegration?.google_name ?? 'Google account'}
+                {googleIntegration?.google_email ? ` (${googleIntegration.google_email})` : ''} ✓
               </span>
-            ) : (
+            ) : isOwner && calendar === 'none' ? (
               <button className="btn btn-secondary" onClick={connectCalendar}>
                 Connect Google Calendar
               </button>
-            )}
-            <div style={{ position: 'relative', display: 'inline-block' }}>
+            ) : null}
+            <div
+              style={{ position: 'relative', display: 'inline-block' }}
+              title={scanHint}
+            >
               <div className="split-btn">
-                <button className="btn btn-primary" onClick={handleScan} disabled={pollingScan}>
+                <button
+                  className="btn btn-primary"
+                  onClick={handleScan}
+                  disabled={pollingScan || calendarOff}
+                  aria-describedby={scanHint ? 'calendar-hint' : undefined}
+                >
                   {pollingScan ? 'Scanning…' : 'Scan now'}
                 </button>
                 <button
                   className="btn-gear"
                   aria-label="Scan options"
                   onClick={() => setShowScanOptions((v) => !v)}
-                  disabled={pollingScan}
+                  disabled={pollingScan || calendarOff}
                 >
                   ⚙
                 </button>
@@ -373,11 +399,15 @@ export default function DiaryDetailPage() {
                 </div>
               )}
             </div>
-            <div style={{ position: 'relative', display: 'inline-block' }}>
+            <div
+              style={{ position: 'relative', display: 'inline-block' }}
+              title={scanHint}
+            >
               <button
                 className="btn btn-secondary"
                 onClick={() => setShowBackfillOptions((v) => !v)}
-                disabled={pollingBackfill}
+                disabled={pollingBackfill || calendarOff}
+                aria-describedby={scanHint ? 'calendar-hint' : undefined}
               >
                 {pollingBackfill ? 'Backfilling…' : 'Backfill'}
               </button>
@@ -487,6 +517,36 @@ export default function DiaryDetailPage() {
             </button>
           </div>
         </div>
+
+        {calendar === 'lost' && (
+          <div className="error-message" role="alert" style={{ marginBottom: '1rem' }}>
+            {isOwner ? (
+              <>
+                <p style={{ margin: 0 }}>
+                  Google Calendar is disconnected, so new events aren&apos;t being picked up.
+                </p>
+                <button className="btn btn-primary" style={{ marginTop: '0.5rem' }} onClick={connectCalendar}>
+                  Reconnect Google Calendar
+                </button>
+              </>
+            ) : (
+              <p style={{ margin: 0 }}>
+                The diary owner&apos;s Google Calendar is disconnected, so new events aren&apos;t
+                being picked up. Ask them to reconnect it.
+              </p>
+            )}
+          </div>
+        )}
+        {scanHint && (
+          // The owner's lost-connection banner already explains; keep the hint for screen readers.
+          <p
+            id="calendar-hint"
+            hidden={isOwner && calendar === 'lost'}
+            style={{ marginBottom: '1rem', fontSize: '0.8rem', color: 'var(--text-muted)' }}
+          >
+            {scanHint}
+          </p>
+        )}
 
         {error && <p className="error-message" style={{ marginBottom: '1rem' }}>{error}</p>}
 

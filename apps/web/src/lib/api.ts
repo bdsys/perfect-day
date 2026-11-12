@@ -275,6 +275,18 @@ export interface Entry {
   suggestion: Suggestion | null
 }
 
+export interface ScanConfig {
+  /** Only the owner may scan: scans read the owner's calendar. */
+  can_scan: boolean
+  /** The diary OWNER's Google Calendar connection. 'lost': revoked or no calendar access. */
+  calendar: 'connected' | 'lost' | 'none'
+  scan_enabled: boolean
+  scan_interval_minutes: number
+  last_scan_status: string | null
+  next_scan_after: string | null
+  consecutive_failures: number
+}
+
 export interface ScanRun {
   id: string
   diary_id: string
@@ -434,6 +446,9 @@ export const api = {
         }
         throw e
       }
+    },
+    async getScanConfig(id: string): Promise<ScanConfig> {
+      return apiFetch(`/v1/diaries/${id}/scan`)
     },
     async listScanRuns(id: string): Promise<ScanRun[]> {
       return apiFetch(`/v1/diaries/${id}/scan/runs`)

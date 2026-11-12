@@ -54,13 +54,6 @@ _CALENDAR_UNAVAILABLE = {
 }
 
 
-def _calendar_connected(oauth_token) -> bool:
-    """True when the Google connection is live and includes calendar access."""
-    return oauth_token.revoked_at is None and "calendar.readonly" in (
-        oauth_token.scopes_granted or []
-    )
-
-
 async def _scan_diary(diary_id_str: str, past_days: int | None = None, future_days: int | None = None) -> None:
     import asyncio
 
@@ -68,6 +61,7 @@ async def _scan_diary(diary_id_str: str, past_days: int | None = None, future_da
 
     from app.core.dependencies import get_redis
     from app.models import Diary, OAuthToken, ScanJob, ScanRun, User
+    from app.services.calendar_connection import calendar_state
     from app.workers.calendar_sync import sync_calendar
     from app.workers.token_refresh import ensure_fresh_access_token
     from app.workers.utils import db_session
@@ -137,9 +131,10 @@ async def _scan_diary(diary_id_str: str, past_days: int | None = None, future_da
         # Calendar sync. An owner who never connected Google has nothing to
         # scan and is not warned; a connection that exists but cannot be read
         # is always reported, never skipped silently (C-18).
-        if oauth_token is not None and not _calendar_connected(oauth_token):
+        connection = calendar_state(oauth_token)
+        if connection == "lost":
             errors.append(dict(_CALENDAR_DISCONNECTED))
-        elif oauth_token is not None:
+        elif connection == "connected":
             try:
                 async with db_session() as db:
                     token_result = await db.execute(

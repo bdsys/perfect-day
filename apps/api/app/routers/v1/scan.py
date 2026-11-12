@@ -13,8 +13,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import get_current_user
 from app.core.database import get_db
 from app.core.dependencies import get_redis
-from app.models import BackfillRun, ScanJob, ScanRun, User
+from app.models import BackfillRun, OAuthToken, ScanJob, ScanRun, User
 from app.routers.v1.diaries import _get_diary_or_404
+from app.services.calendar_connection import calendar_state
 
 router = APIRouter(tags=["scan"])
 
@@ -51,10 +52,21 @@ async def get_scan_config(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    diary, _ = await _get_diary_or_404(diary_id, user, db)
+    diary, role = await _get_diary_or_404(diary_id, user, db)
     result = await db.execute(select(ScanJob).where(ScanJob.diary_id == diary_id))
     job = result.scalar_one_or_none()
+    # Scans read the OWNER's calendar, whoever is looking at the diary.
+    owner_token = (
+        await db.execute(
+            select(OAuthToken).where(
+                OAuthToken.user_id == diary.owner_user_id, OAuthToken.provider == "google"
+            )
+        )
+    ).scalar_one_or_none()
     return {
+        # Only the owner may scan: it reads their calendar (decision 2026-11-12).
+        "can_scan": role is None,
+        "calendar": calendar_state(owner_token),
         "scan_enabled": diary.scan_enabled,
         "scan_interval_minutes": diary.scan_interval_minutes,
         "last_scan_status": job.last_scan_status if job else None,

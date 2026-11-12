@@ -13,9 +13,9 @@ function googleStatusMessage(
   if (!status) return null
   if (status === 'connected') return { text: 'Google Calendar connected successfully.', isError: false }
   if (status === 'partial' && missing === 'photos') return { text: 'Google Calendar connected. Photos access was not granted (not needed for Phase 1).', isError: false }
-  if (status === 'partial' && missing === 'calendar') return { text: 'Calendar access was not granted. Please reconnect and allow Calendar.', isError: true }
-  if (status === 'partial' && missing === 'all') return { text: 'No Google permissions were granted. Please try connecting again.', isError: true }
-  if (status === 'denied') return { text: 'Google connection was cancelled or failed. Please try again.', isError: true }
+  if (status === 'partial' && missing === 'calendar') return { text: "Calendar access wasn't granted. Click Connect Google Calendar again and tick the Calendar checkbox on Google's screen.", isError: true }
+  if (status === 'cancelled') return { text: 'You cancelled the Google connection. Nothing was changed.', isError: false }
+  if (status === 'failed') return { text: 'Google connection failed. Please try again.', isError: true }
   return null
 }
 

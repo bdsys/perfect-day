@@ -332,3 +332,95 @@ class TestCallbackAnswers:
         r = await _callback(client, state, granted=SCOPE_CALENDAR)
 
         assert _redirect_query(r) == {"google": "failed", "reason": "nonce_reuse"}
+
+
+# ---------------------------------------------------------------------------
+# The diary page asks about the OWNER's connection: scans read the owner's
+# calendar, and only the owner may scan (decision 2026-11-12).
+# ---------------------------------------------------------------------------
+
+
+async def _owner_and_diary(client: AsyncClient, email: str) -> tuple[dict, dict]:
+    auth = await _register(client, email)
+    diary = (
+        await client.post("/v1/diaries", json={"name": "D", "timezone": "UTC"}, headers=auth)
+    ).json()
+    return auth, diary
+
+
+async def _give_google(db: AsyncSession, email: str, **fields) -> None:
+    from app.models import User
+
+    user_id = (await db.execute(select(User.id).where(User.email == email))).scalar_one()
+    db.add(
+        OAuthToken(
+            user_id=user_id,
+            provider="google",
+            access_token_ciphertext=b"x",
+            **{"scopes_granted": ["calendar.readonly"], **fields},
+        )
+    )
+    await db.commit()
+
+
+async def _scan_config(client: AsyncClient, diary: dict, auth: dict) -> dict:
+    r = await client.get(f"/v1/diaries/{diary['id']}/scan", headers=auth)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+class TestScanConfigReportsTheOwnersCalendar:
+    async def test_owner_who_never_connected(self, client: AsyncClient):
+        auth, diary = await _owner_and_diary(client, "sc-none@example.com")
+
+        config = await _scan_config(client, diary, auth)
+
+        assert config["calendar"] == "none"
+        assert config["can_scan"] is True
+
+    async def test_owner_with_a_working_connection(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
+        auth, diary = await _owner_and_diary(client, "sc-ok@example.com")
+        await _give_google(db_session, "sc-ok@example.com")
+
+        assert (await _scan_config(client, diary, auth))["calendar"] == "connected"
+
+    async def test_owner_with_a_revoked_connection(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
+        auth, diary = await _owner_and_diary(client, "sc-revoked@example.com")
+        await _give_google(db_session, "sc-revoked@example.com", revoked_at=datetime.now(tz=UTC))
+
+        assert (await _scan_config(client, diary, auth))["calendar"] == "lost"
+
+    async def test_owner_without_calendar_permission(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
+        auth, diary = await _owner_and_diary(client, "sc-noscope@example.com")
+        await _give_google(db_session, "sc-noscope@example.com", scopes_granted=[])
+
+        assert (await _scan_config(client, diary, auth))["calendar"] == "lost"
+
+    async def test_co_parent_sees_the_owners_connection_and_cannot_scan(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
+        from app.models import DiaryPermission, User
+
+        _, diary = await _owner_and_diary(client, "sc-owner@example.com")
+        await _give_google(db_session, "sc-owner@example.com", revoked_at=datetime.now(tz=UTC))
+        editor_auth = await _register(client, "sc-editor@example.com")
+        # The co-parent's own working connection must not count for this diary.
+        await _give_google(db_session, "sc-editor@example.com")
+        editor_id = (
+            await db_session.execute(select(User.id).where(User.email == "sc-editor@example.com"))
+        ).scalar_one()
+        db_session.add(
+            DiaryPermission(diary_id=uuid.UUID(diary["id"]), user_id=editor_id, role="editor")
+        )
+        await db_session.commit()
+
+        config = await _scan_config(client, diary, editor_auth)
+
+        assert config["calendar"] == "lost"
+        assert config["can_scan"] is False

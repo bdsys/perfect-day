@@ -114,7 +114,7 @@ Photos attached to a deleted diary are inaccessible even to the photo owner unti
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/v1/diaries/{id}/scan` | Scan config + last status. |
-| POST | `/v1/diaries/{id}/scan/run` | On-demand scan now. Owner only. |
+| POST | `/v1/diaries/{id}/scan/run` | On-demand scan now. Owner only: scans read the owner's Google Calendar (decision 2026-11-12, `design/code-review-2026-11.md`). |
 | GET | `/v1/diaries/{id}/scan/runs` | Scan history. |
 | POST | `/v1/diaries/{id}/scan/backfill` | Queue backfill. `{from_date, to_date, sources}`. Owner only. |
 | GET | `/v1/diaries/{id}/scan/backfill/{runId}` | Backfill job status. |
