@@ -61,6 +61,7 @@ def create_app() -> FastAPI:
         calendar_events,
         diaries,
         entries,
+        geocode,
         integrations,
         photos,
         rules,
@@ -75,6 +76,7 @@ def create_app() -> FastAPI:
     app.include_router(rules.router, prefix="/v1")
     app.include_router(scan.router, prefix="/v1")
     app.include_router(photos.router, prefix="/v1")
+    app.include_router(geocode.router, prefix="/v1")
 
     return app
 
