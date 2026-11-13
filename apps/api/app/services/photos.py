@@ -150,8 +150,14 @@ def strip_location(data: bytes, mime: str) -> bytes:
             if fmt == "JPEG":
                 exif = img.getexif()
                 exif.pop(0x8825, None)
+                img.info.pop("xmp", None)
+                img.info.pop("XML:com.adobe.xmp", None)
                 img.save(out, "JPEG", quality="keep", exif=exif)
             else:
+                # Savers (pillow-heif, PNG, WebP) copy metadata out of img.info;
+                # clear everything that can carry a location.
+                for k in ("exif", "xmp", "XML:com.adobe.xmp", "icc_profile"):
+                    img.info.pop(k, None)
                 img.save(out, fmt)
             return out.getvalue()
     except Exception as exc:
