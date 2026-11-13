@@ -11,8 +11,6 @@ from sqlalchemy import select, text
 from app.models import PhotoImport
 from tests.integration.test_photo_imports import _owner_with_entry, _user
 
-NOW = datetime.now(tz=UTC)
-
 
 async def _make_import(
     client,
@@ -23,6 +21,7 @@ async def _make_import(
     idle: timedelta | None = None,
 ) -> uuid.UUID:
     """A photo_imports row; *idle* back-dates updated_at (the trigger is paused for it)."""
+    now = datetime.now(tz=UTC)  # fresh: the full suite runs for minutes
     prefix = f"sw-{uuid.uuid4().hex[:8]}"
     _, entry = await _owner_with_entry(client, db_session, prefix, connected=False)
     user = await _user(db_session, f"{prefix}@example.com")
@@ -31,7 +30,7 @@ async def _make_import(
         entry_id=uuid.UUID(entry["id"]),
         google_session_id="sess-sweep",
         status=status,
-        expires_at=NOW + expires_in if expires_in is not None else None,
+        expires_at=now + expires_in if expires_in is not None else None,
     )
     db_session.add(imp)
     await db_session.commit()
@@ -40,7 +39,7 @@ async def _make_import(
         await db_session.execute(text(f"ALTER TABLE photo_imports DISABLE TRIGGER {trg}"))
         await db_session.execute(
             text("UPDATE photo_imports SET updated_at = :t WHERE id = :i"),
-            {"t": NOW - idle, "i": imp.id},
+            {"t": now - idle, "i": imp.id},
         )
         await db_session.execute(text(f"ALTER TABLE photo_imports ENABLE TRIGGER {trg}"))
         await db_session.commit()
