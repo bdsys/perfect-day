@@ -121,39 +121,4 @@ class TestEventAddressesStayWithTheOwner:
             assert event["attendees"] == []
 
 
-class TestRulePreviewHidesAddresses:
-    """The rule builder's preview lists matching events with their location."""
-
-    async def _preview(self, client, db_session, role: str, prefix: str):
-        from datetime import UTC, datetime, timedelta
-
-        owner_auth, other_auth, diary, _ = await _shared_entry_with_event(
-            client, db_session, role, prefix
-        )
-        await make_event(
-            db_session,
-            diary_id=uuid.UUID(diary["id"]),
-            occurred_at=datetime.now(tz=UTC) - timedelta(days=3),
-            payload={"summary": "Haircut", "location": ADDRESS, "start": {}, "end": {}},
-        )
-
-        async def _sample(auth):
-            r = await client.post(
-                f"/v1/diaries/{diary['id']}/rules/preview",
-                json={"condition": {"field": "title", "op": "contains", "value": "Haircut"}},
-                headers=auth,
-            )
-            assert r.status_code == 200, r.text
-            return r.json()["sample"]
-
-        return await _sample(owner_auth), await _sample(other_auth)
-
-    async def test_owner_sees_the_address_and_an_editor_does_not(self, client, db_session):
-        owner_sample, editor_sample = await self._preview(
-            client, db_session, "editor", "s13-rule"
-        )
-
-        assert owner_sample and editor_sample
-        assert {s["location"] for s in owner_sample} == {ADDRESS}
-        assert {s["location"] for s in editor_sample} == {""}
-        assert {s["summary"] for s in editor_sample} == {"Haircut"}
+# The rule preview is owner-only altogether since S-14: test_rules_owner_only.py.

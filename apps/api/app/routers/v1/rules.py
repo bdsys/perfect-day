@@ -126,7 +126,8 @@ async def _get_rule_or_404(
     user: User,
     db: AsyncSession,
 ) -> tuple[AutoCreationRule, str | None]:
-    """Load rule, verify diary access, return (rule, role). role is None for owner."""
+    """Load a rule the caller owns. Rules are the diary owner's alone (S-14):
+    anyone else with access to the diary gets 403."""
     result = await db.execute(
         select(AutoCreationRule).where(AutoCreationRule.id == rule_id)
     )
@@ -135,7 +136,7 @@ async def _get_rule_or_404(
         raise HTTPException(status_code=404, detail="not_found")
 
     # Verify the requesting user has access to the diary this rule belongs to.
-    _, role = await _get_diary_or_404(rule.diary_id, user, db)
+    _, role = await _get_diary_or_404(rule.diary_id, user, db, require_owner=True)
     return rule, role
 
 
@@ -153,8 +154,8 @@ async def list_rules(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> list[RuleOut]:
-    """List all auto-creation rules for a diary."""
-    await _get_diary_or_404(diary_id, user, db)
+    """List all auto-creation rules for a diary. Owner only (S-14)."""
+    await _get_diary_or_404(diary_id, user, db, require_owner=True)
 
     result = await db.execute(
         select(AutoCreationRule)
@@ -175,10 +176,8 @@ async def create_rule(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> RuleOut:
-    """Create a new auto-creation rule."""
-    _, role = await _get_diary_or_404(diary_id, user, db)
-    if role == "viewer":
-        raise HTTPException(status_code=403, detail="forbidden")
+    """Create a new auto-creation rule. Owner only (S-14)."""
+    await _get_diary_or_404(diary_id, user, db, require_owner=True)
 
     try:
         _validate_condition(body.condition)
@@ -223,9 +222,7 @@ async def patch_rule(
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> RuleOut:
     """Partially update a rule."""
-    rule, role = await _get_rule_or_404(rule_id, user, db)
-    if role == "viewer":
-        raise HTTPException(status_code=403, detail="forbidden")
+    rule, _ = await _get_rule_or_404(rule_id, user, db)
 
     if body.condition is not None:
         try:
@@ -257,9 +254,7 @@ async def delete_rule(
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> None:
     """Hard-delete a rule (cascade handles EntryRuleMatch / RuleSeriesClaim)."""
-    rule, role = await _get_rule_or_404(rule_id, user, db)
-    if role == "viewer":
-        raise HTTPException(status_code=403, detail="forbidden")
+    rule, _ = await _get_rule_or_404(rule_id, user, db)
 
     await db.delete(rule)
     await db.commit()
@@ -277,9 +272,9 @@ async def preview_rule(
 ) -> PreviewOut:
     """Preview how many events a condition would match over the last 90 days.
 
-    Only the diary owner gets each sample's location text (S-13).
+    Owner only: it searches the owner's whole synced calendar (S-14).
     """
-    _, role = await _get_diary_or_404(diary_id, user, db)
+    await _get_diary_or_404(diary_id, user, db, require_owner=True)
 
     try:
         _validate_condition(body.condition)
@@ -307,7 +302,7 @@ async def preview_rule(
         {
             "summary": (event.payload or {}).get("summary", ""),
             "occurred_at": event.occurred_at.isoformat() if event.occurred_at else None,
-            "location": (event.payload or {}).get("location", "") if role is None else "",
+            "location": (event.payload or {}).get("location", ""),
         }
         for event in matched[:10]
     ]
@@ -331,9 +326,7 @@ async def apply_rule(
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> dict:
     """Queue a backfill job to apply a rule over the past N days."""
-    rule, role = await _get_rule_or_404(rule_id, user, db)
-    if role == "viewer":
-        raise HTTPException(status_code=403, detail="forbidden")
+    rule, _ = await _get_rule_or_404(rule_id, user, db)
 
     try:
         from app.workers.tasks import apply_rule_backfill  # noqa: PLC0415

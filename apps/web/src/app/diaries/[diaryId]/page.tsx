@@ -503,12 +503,15 @@ export default function DiaryDetailPage() {
                 New entry from Google Calendar
               </button>
             )}
-            <button
-              className="btn btn-secondary"
-              onClick={() => router.push(`/diaries/${diaryId}/rules`)}
-            >
-              Auto-Creation Rules
-            </button>
+            {/* Rules run over the owner's calendar, so they are the owner's (S-14). */}
+            {isOwner && (
+              <button
+                className="btn btn-secondary"
+                onClick={() => router.push(`/diaries/${diaryId}/rules`)}
+              >
+                Auto-Creation Rules
+              </button>
+            )}
             <Link href="/photos" className="btn btn-secondary">
               Photos
             </Link>
@@ -624,10 +627,14 @@ export default function DiaryDetailPage() {
 
         {entries.length === 0 ? (
           <div className="empty-state">
-            <p>
-              No entries yet. Create one manually, pick from Google Calendar, or{' '}
-              <Link href={`/diaries/${diaryId}/rules`}>set up auto-creation rules</Link>.
-            </p>
+            {isOwner ? (
+              <p>
+                No entries yet. Create one manually, pick from Google Calendar, or{' '}
+                <Link href={`/diaries/${diaryId}/rules`}>set up auto-creation rules</Link>.
+              </p>
+            ) : (
+              <p>No entries yet. Create one manually.</p>
+            )}
           </div>
         ) : (
           entries.map((e) => <EntryCard key={e.id} entry={e} />)
