@@ -14,6 +14,9 @@ import { formatDateRange } from '@/lib/date'
 import { WeatherBadge } from '@/components/WeatherBadge'
 import { SuggestionBox } from '@/components/SuggestionBox'
 import { EntryPlace } from '@/components/EntryPlace'
+import { GooglePhotosPick } from '@/components/GooglePhotosPick'
+import { PhotoImportNotice } from '@/components/PhotoImportNotice'
+import { googleStatusMessage } from '@/lib/googleStatus'
 
 /** An event's time. With *timeZone* (the entry's own zone), times are shown there, with its name. */
 function formatEventTime(event: EventItem, timeZone?: string): string {
@@ -79,6 +82,15 @@ function EntryDetailPageInner() {
   const [regenErrorMessage, setRegenErrorMessage] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [answeringSuggestion, setAnsweringSuggestion] = useState(false)
+
+  const [noticeKey, setNoticeKey] = useState(0)
+  const googleMsg = googleStatusMessage({
+    status: searchParams.get('google'),
+    missing: searchParams.get('missing'),
+    reason: searchParams.get('reason'),
+    expected: searchParams.get('expected'),
+    page: 'entry',
+  })
 
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null)
   const [removingIds, setRemovingIds] = useState<Set<string>>(new Set())
@@ -267,6 +279,11 @@ function EntryDetailPageInner() {
     }
   }
 
+  const refreshAfterImport = useCallback(() => {
+    setNoticeKey((k) => k + 1)
+    api.entries.get(entryId).then(setEntry).catch(() => {})
+  }, [entryId])
+
   async function handleDelete() {
     if (!entry) return
     if (!confirm('Delete this entry? You can restore it within 30 days.')) return
@@ -296,6 +313,11 @@ function EntryDetailPageInner() {
 
       <div className="container" style={{ paddingTop: '1.5rem', maxWidth: 720 }}>
         {error && <p className="error-message" style={{ marginBottom: '1rem' }}>{error}</p>}
+        {googleMsg && (
+          <p className={googleMsg.isError ? 'error-message' : 'success-message'} style={{ marginBottom: '1rem' }}>
+            {googleMsg.text}
+          </p>
+        )}
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.25rem', flexWrap: 'wrap' }}>
           <span className={`status-badge status-${entry.status}`}>{entry.status}</span>
@@ -303,7 +325,13 @@ function EntryDetailPageInner() {
           <WeatherBadge enrichments={entry.enrichments ?? []} />
         </div>
         {!editing && <EntryPlace entry={entry} onUpdated={setEntry} />}
-        {!editing && entry.can_edit && <AddPhotos entry={entry} onChanged={setEntry} />}
+        {!editing && entry.can_edit && (
+          <AddPhotos
+            entry={entry}
+            onChanged={setEntry}
+            googlePhotos={<GooglePhotosPick entry={entry} onDone={refreshAfterImport} />}
+          />
+        )}
 
         {editing ? (
           <div className="card" style={{ marginTop: '1rem' }}>
@@ -440,6 +468,8 @@ function EntryDetailPageInner() {
                 onDismiss={() => answerSuggestion('dismiss')}
               />
             )}
+
+            {entry.can_edit && <PhotoImportNotice entryId={entry.id} refreshKey={noticeKey} />}
 
             {/* Photo strip */}
             {entry.photos && entry.photos.length > 0 && (

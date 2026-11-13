@@ -21,7 +21,7 @@ function friendlyUploadError(e: unknown): string {
 interface Props {
   entry: Entry;
   onChanged: (entry: Entry) => void;
-  /** Slot for the "From Google Photos" option (filled by the Google Photos task). */
+  /** Slot for the "From Google Photos" option (the entry page passes <GooglePhotosPick />). */
   googlePhotos?: React.ReactNode;
 }
 
@@ -202,7 +202,7 @@ export function AddPhotos({ entry, onChanged, googlePhotos }: Props) {
             </ul>
           </div>
 
-          {/* Slot for the Google Photos option (Task 9 passes the `googlePhotos` prop). */}
+          {/* Slot for the Google Photos option (the entry page passes the `googlePhotos` prop). */}
           {googlePhotos && (
             <div role="group" aria-label="From Google Photos">
               <h3>From Google Photos</h3>

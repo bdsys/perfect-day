@@ -225,6 +225,19 @@ export interface Integration {
   expires_at: string | null
   google_email: string | null
   google_name: string | null
+  photos: boolean
+}
+
+export type PhotoImportStatus =
+  | 'waiting' | 'copying' | 'done' | 'failed' | 'cancelled' | 'expired' | 'needs_reconnect'
+
+export interface PhotoImport {
+  id: string
+  entry_id: string
+  status: PhotoImportStatus
+  added_count: number
+  skipped_videos: number
+  failed_names: string[]
 }
 
 export interface EventItem {
@@ -583,11 +596,31 @@ export const api = {
   },
 
   integrations: {
-    async getGoogleAuthUrl(scopes = 'calendar'): Promise<{ url: string }> {
-      return apiFetch(`/v1/integrations/google/authorize?scopes=${scopes}`)
+    async getGoogleAuthUrl(scopes = 'calendar', returnTo?: string): Promise<{ url: string }> {
+      const q = new URLSearchParams({ scopes })
+      if (returnTo) q.set('return_to', returnTo)
+      return apiFetch(`/v1/integrations/google/authorize?${q.toString()}`)
     },
     async list(): Promise<Integration[]> {
       return apiFetch('/v1/integrations')
+    },
+  },
+
+  photoImports: {
+    async create(entryId: string): Promise<{ id: string; picker_uri: string; status: PhotoImportStatus }> {
+      return apiFetch(`/v1/entries/${entryId}/photo-imports`, { method: 'POST' })
+    },
+    async get(id: string): Promise<PhotoImport> {
+      return apiFetch(`/v1/photo-imports/${id}`)
+    },
+    async cancel(id: string): Promise<void> {
+      await apiFetch(`/v1/photo-imports/${id}/cancel`, { method: 'POST' })
+    },
+    async listForEntry(entryId: string): Promise<PhotoImport[]> {
+      return apiFetch(`/v1/entries/${entryId}/photo-imports`)
+    },
+    async dismiss(id: string): Promise<void> {
+      await apiFetch(`/v1/photo-imports/${id}/dismiss`, { method: 'POST' })
     },
   },
 
