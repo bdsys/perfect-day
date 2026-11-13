@@ -97,6 +97,13 @@ test.describe('Owner without a working Google Calendar', () => {
     await expect(page.getByText(HINT)).toHaveCount(0)
     await expect(page.getByText(BANNER)).toHaveCount(0)
   })
+
+  test('the owner gets the rules button and the empty diary points to rules', async ({ page }) => {
+    await openDiary(page, 'connected')
+
+    await expect(page.getByRole('button', { name: 'Auto-Creation Rules' })).toBeVisible()
+    await expect(page.getByRole('link', { name: 'set up auto-creation rules' })).toBeVisible()
+  })
 })
 
 test.describe('Co-parent (scanning is owner-only, decision 2026-11-12)', () => {
@@ -110,6 +117,27 @@ test.describe('Co-parent (scanning is owner-only, decision 2026-11-12)', () => {
     await expect(page.getByRole('button', { name: /Connect Google Calendar/ })).toHaveCount(0)
     // The synced events are the owner's own calendar (S-11).
     await expect(page.getByRole('button', { name: 'New entry from Google Calendar' })).toHaveCount(0)
+  })
+
+  test('no rules button, and the empty diary offers only a manual entry (S-14)', async ({ page }) => {
+    await openDiary(page, 'connected', false)
+
+    await expect(page.getByText('No entries yet. Create one manually.')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Auto-Creation Rules' })).toHaveCount(0)
+    await expect(page.getByRole('link', { name: 'set up auto-creation rules' })).toHaveCount(0)
+  })
+
+  test('opening the rules page directly says rules are the owner\'s (S-14)', async ({ page }) => {
+    await openDiary(page, 'connected', false)
+    await page.route(`${API}/v1/diaries/${shared.diaryId}/rules`, (route) =>
+      route.fulfill({ status: 403, contentType: 'application/json', body: JSON.stringify({ detail: 'forbidden' }) }),
+    )
+
+    await page.goto(`/diaries/${shared.diaryId}/rules`)
+
+    await expect(page.getByText('Only the diary owner can set up auto-creation rules.')).toBeVisible()
+    await expect(page.getByRole('button', { name: /New Rule/ })).toHaveCount(0)
+    await expect(page.getByRole('link', { name: 'Create your first rule' })).toHaveCount(0)
   })
 
   test("the owner's lost connection: a banner asks them to tell the owner, with no Reconnect button", async ({ page }) => {

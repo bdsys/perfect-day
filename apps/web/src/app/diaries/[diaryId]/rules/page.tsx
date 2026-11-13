@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
-import { api, type Rule } from '@/lib/api'
+import { api, ApiError, type Rule } from '@/lib/api'
 import { useAuth } from '@/lib/auth-context'
 
 export default function RulesListPage() {
@@ -14,6 +14,7 @@ export default function RulesListPage() {
   const [rules, setRules] = useState<Rule[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [notOwner, setNotOwner] = useState(false)
   const [toggling, setToggling] = useState<string | null>(null)
   const [deleting, setDeleting] = useState<string | null>(null)
   const [applying, setApplying] = useState<string | null>(null)
@@ -28,7 +29,11 @@ export default function RulesListPage() {
     if (!user || !diaryId) return
     api.rules.list(diaryId)
       .then(setRules)
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : 'Failed to load rules'))
+      .catch((e: unknown) => {
+        // Rules run over the owner's calendar, so they are the owner's (S-14).
+        if (e instanceof ApiError && e.status === 403) setNotOwner(true)
+        else setError(e instanceof Error ? e.message : 'Failed to load rules')
+      })
       .finally(() => setLoading(false))
   }, [user, diaryId])
 
@@ -74,6 +79,22 @@ export default function RulesListPage() {
 
   if (authLoading || loading) return <div className="loading">Loading…</div>
   if (!user) return null
+
+  if (notOwner) {
+    return (
+      <>
+        <nav className="nav">
+          <div className="nav-inner">
+            <Link href={`/diaries/${diaryId}`} className="nav-brand">← Diary</Link>
+          </div>
+        </nav>
+        <div className="container" style={{ paddingTop: '1.5rem', maxWidth: 720 }}>
+          <h1 className="page-title">Auto-Creation Rules</h1>
+          <p>Only the diary owner can set up auto-creation rules.</p>
+        </div>
+      </>
+    )
+  }
 
   return (
     <>
