@@ -17,7 +17,7 @@ from sqlalchemy import select
 
 from app.models import DiaryPermission, User
 from tests.fixtures.factories import make_photo
-from tests.integration.test_photos import _read_fixture, _upload_and_finalize
+from tests.integration.photo_helpers import read_fixture, upload_photo
 
 PASSWORD = "Password1!"  # noqa: S105
 
@@ -64,8 +64,8 @@ async def _setup(client, db_session, prefix, published, body=None):
             f"/v1/diaries/{diary['id']}/entries", json={"entry_date": "2026-05-16"}, headers=owner
         )
     ).json()
-    body = body or _read_fixture("sample.jpg")
-    pid = await _upload_and_finalize(client, editor, body)
+    body = body or read_fixture("sample.jpg")
+    pid = await upload_photo(client, editor, body)
     r = await client.post(
         f"/v1/entries/{entry['id']}/photos", json={"photo_id": pid}, headers=editor
     )

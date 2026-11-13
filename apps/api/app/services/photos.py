@@ -22,7 +22,6 @@ ALLOWED_MIME: frozenset[str] = frozenset({
 MAX_BYTES: int = 50 * 1024 * 1024
 THUMBNAIL_LONGEST_EDGE: int = 512
 THUMBNAIL_QUALITY: int = 80
-PRESIGN_TTL_SECONDS: int = 900
 
 
 def detect_mime(head: bytes) -> str | None:
@@ -231,35 +230,3 @@ def stream_object(key: str):
     """Return botocore StreamingBody for *key*. Caller is responsible for closing."""
     from app.core.dependencies import get_s3
     return get_s3().get_object(Bucket=_bucket(), Key=key)["Body"]
-
-
-def presign_put_url(key: str, content_type: str, content_length: int) -> str:
-    """Presigned PUT URL valid for PRESIGN_TTL_SECONDS, bound to exact size + type.
-
-    If s3_public_endpoint_url is set, the internal endpoint host is replaced with the
-    public-facing URL so browser clients can reach MinIO directly.
-    """
-    from urllib.parse import urlparse, urlunparse
-
-    from app.core.config import get_settings
-    from app.core.dependencies import get_s3
-
-    url = get_s3().generate_presigned_url(
-        "put_object",
-        Params={
-            "Bucket": _bucket(),
-            "Key": key,
-            "ContentType": content_type,
-            "ContentLength": content_length,
-        },
-        ExpiresIn=PRESIGN_TTL_SECONDS,
-    )
-
-    settings = get_settings()
-    public = settings.s3_public_endpoint_url.rstrip("/")
-    if public:
-        parsed = urlparse(url)
-        pub_parsed = urlparse(public)
-        url = urlunparse(parsed._replace(scheme=pub_parsed.scheme, netloc=pub_parsed.netloc))
-
-    return url
