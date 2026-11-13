@@ -79,7 +79,7 @@ from unittest.mock import AsyncMock, patch  # noqa: E402
 
 from sqlalchemy import select  # noqa: E402
 
-from app.models import Enrichment, Entry, User  # noqa: E402
+from app.models import Diary, Enrichment, Entry, User  # noqa: E402
 from app.services.geocoding import GeocodingUnavailable, Place  # noqa: E402
 from tests.fixtures.factories import make_entry_photo, make_event, make_photo  # noqa: E402
 
@@ -351,3 +351,278 @@ class TestPhotoChangesQueueARefresh:
 
         assert r.status_code == 204
         assert seen == {"linked": False, "entry_id": entry["id"]}
+
+
+# ---------------------------------------------------------------------------
+# Task 4: the parent sets an entry's place and time zone
+# ---------------------------------------------------------------------------
+
+import uuid as _uuid  # noqa: E402
+
+from app.models import DiaryPermission  # noqa: E402
+
+PLACE_IN = {"name": "Mukilteo, Washington", "lat": 47.94454, "lon": -122.30458}
+
+
+async def _api_entry(client, email: str, *, timezone: str = "America/Los_Angeles"):
+    r = await client.post("/v1/auth/register", json={"email": email, "password": "Password1!"})
+    auth = {"Authorization": f"Bearer {r.json()['access_token']}"}
+    diary = (
+        await client.post("/v1/diaries", json={"name": "D", "timezone": timezone}, headers=auth)
+    ).json()
+    entry = (
+        await client.post(
+            f"/v1/diaries/{diary['id']}/entries", json={"entry_date": "2026-05-16"}, headers=auth
+        )
+    ).json()
+    return auth, diary, entry
+
+
+async def _attach_event(db_session, entry_id: str, start: str, end: str):
+    await make_event(
+        db_session,
+        diary_id=(
+            await db_session.execute(select(Entry.diary_id).where(Entry.id == _uuid.UUID(entry_id)))
+        ).scalar_one(),
+        payload={"summary": "Flight", "start": {"dateTime": start}, "end": {"dateTime": end}},
+    )
+    # make_event cannot link by id alone; link the newest event to the entry.
+    from app.models import Event
+
+    newest = (
+        await db_session.execute(select(Event).order_by(Event.created_at.desc()).limit(1))
+    ).scalar_one()
+    newest.entry_id = _uuid.UUID(entry_id)
+    await db_session.commit()
+
+
+async def _patch(client, entry_id, auth, body, queued: list | None = None):
+    def _on_queue(entry_id, *args, **kwargs):
+        if queued is not None:
+            queued.append((entry_id, kwargs))
+
+    with patch("app.workers.tasks.refresh_entry_location.delay", side_effect=_on_queue):
+        return await client.patch(f"/v1/entries/{entry_id}", json=body, headers=auth)
+
+
+class TestParentSetsThePlace:
+    async def test_parent_sets_a_place(self, client, db_session):
+        auth, _, entry = await _api_entry(client, "t4-set@example.com")
+        queued: list = []
+
+        r = await _patch(client, entry["id"], auth, {"location": PLACE_IN}, queued)
+
+        assert r.status_code == 200, r.text
+        assert r.json()["location"] == {**PLACE_IN, "source": "parent"}
+        assert queued == [(entry["id"], {"refetch_weather": True})]
+
+    async def test_null_location_returns_to_automatic(self, client, db_session):
+        auth, diary, entry = await _api_entry(client, "t4-auto@example.com")
+        await _patch(client, entry["id"], auth, {"location": PLACE_IN})
+        home = (await db_session.execute(select(Diary).where(Diary.id == _uuid.UUID(diary["id"]))))
+        home = home.scalar_one()
+        home.lat, home.lon, home.location_name = HOME[0], HOME[1], "Everett, Washington"
+        await db_session.commit()
+        queued: list = []
+
+        r = await _patch(client, entry["id"], auth, {"location": None}, queued)
+        assert r.status_code == 200
+        assert r.json()["location"] is None
+        assert queued == [(entry["id"], {"refetch_weather": True})]
+
+        stored = await _refresh(db_session, (await _reload(db_session, _uuid.UUID(entry["id"]))))
+        assert stored.location_source == "home"
+
+    async def test_viewer_cannot_change_the_place(self, client, db_session):
+        owner_auth, diary, entry = await _api_entry(client, "t4-owner@example.com")
+        await client.post(f"/v1/entries/{entry['id']}/publish", headers=owner_auth)
+        r = await client.post(
+            "/v1/auth/register", json={"email": "t4-viewer@example.com", "password": "Password1!"}
+        )
+        viewer_auth = {"Authorization": f"Bearer {r.json()['access_token']}"}
+        viewer = (
+            await db_session.execute(select(User).where(User.email == "t4-viewer@example.com"))
+        ).scalar_one()
+        db_session.add(
+            DiaryPermission(diary_id=_uuid.UUID(diary["id"]), user_id=viewer.id, role="viewer")
+        )
+        await db_session.commit()
+
+        r = await _patch(client, entry["id"], viewer_auth, {"location": PLACE_IN})
+
+        assert r.status_code == 403
+
+    async def test_entry_out_shows_place_to_a_viewer_of_a_published_entry(
+        self, client, db_session
+    ):
+        owner_auth, diary, entry = await _api_entry(client, "t4-show@example.com")
+        await _patch(client, entry["id"], owner_auth, {"location": PLACE_IN})
+        await client.post(f"/v1/entries/{entry['id']}/publish", headers=owner_auth)
+        r = await client.post(
+            "/v1/auth/register", json={"email": "t4-see@example.com", "password": "Password1!"}
+        )
+        viewer_auth = {"Authorization": f"Bearer {r.json()['access_token']}"}
+        viewer = (
+            await db_session.execute(select(User).where(User.email == "t4-see@example.com"))
+        ).scalar_one()
+        db_session.add(
+            DiaryPermission(diary_id=_uuid.UUID(diary["id"]), user_id=viewer.id, role="viewer")
+        )
+        await db_session.commit()
+
+        r = await client.get(f"/v1/entries/{entry['id']}", headers=viewer_auth)
+
+        # The place's name, but never its coordinates: only the owner gets those.
+        assert r.status_code == 200
+        assert r.json()["location"] == {
+            "name": PLACE_IN["name"], "lat": None, "lon": None, "source": "parent",
+        }  # fmt: skip
+
+
+class TestCoordinatesStayWithTheOwner:
+    """A photo's GPS can pinpoint a home or a school (side-agent note, 2026-11-12).
+
+    Only the diary owner gets exact coordinates, for the entry's place and for
+    its photos. Co-parents and viewers get the place name.
+    """
+
+    async def _shared_entry_with_photo(self, client, db_session, role: str, prefix: str):
+        owner_auth, diary, entry = await _api_entry(client, f"{prefix}-owner@example.com")
+        stored = await _reload(db_session, _uuid.UUID(entry["id"]))  # expires the session
+        owner = (
+            await db_session.execute(
+                select(User).where(User.email == f"{prefix}-owner@example.com")
+            )
+        ).scalar_one()
+        photo = await make_photo(db_session, user=owner, lat=PHOTO[0], lon=PHOTO[1])
+        await make_entry_photo(db_session, entry=stored, photo=photo)
+        stored.lat, stored.lon, stored.location_source = PHOTO[0], PHOTO[1], "photo"
+        await db_session.commit()
+        await client.post(f"/v1/entries/{entry['id']}/publish", headers=owner_auth)
+        r = await client.post(
+            "/v1/auth/register",
+            json={"email": f"{prefix}-{role}@example.com", "password": "Password1!"},
+        )
+        other_auth = {"Authorization": f"Bearer {r.json()['access_token']}"}
+        other = (
+            await db_session.execute(
+                select(User).where(User.email == f"{prefix}-{role}@example.com")
+            )
+        ).scalar_one()
+        db_session.add(
+            DiaryPermission(diary_id=_uuid.UUID(diary["id"]), user_id=other.id, role=role)
+        )
+        await db_session.commit()
+        return owner_auth, other_auth, diary, entry
+
+    async def test_owner_gets_exact_coordinates(self, client, db_session):
+        owner_auth, _, _, entry = await self._shared_entry_with_photo(
+            client, db_session, "viewer", "gps-own"
+        )
+
+        body = (await client.get(f"/v1/entries/{entry['id']}", headers=owner_auth)).json()
+
+        assert (round(body["location"]["lat"], 5), round(body["location"]["lon"], 5)) == (
+            round(PHOTO[0], 5), round(PHOTO[1], 5),
+        )  # fmt: skip
+        assert body["photos"][0]["lat"] is not None
+
+    async def test_viewer_gets_no_coordinates(self, client, db_session):
+        _, viewer_auth, diary, entry = await self._shared_entry_with_photo(
+            client, db_session, "viewer", "gps-view"
+        )
+
+        one = (await client.get(f"/v1/entries/{entry['id']}", headers=viewer_auth)).json()
+        listed = (
+            await client.get(f"/v1/diaries/{diary['id']}/entries", headers=viewer_auth)
+        ).json()
+
+        for body in (one, listed[0]):
+            assert body["location"] == {"name": None, "lat": None, "lon": None, "source": "photo"}
+            assert [(p["lat"], p["lon"]) for p in body["photos"]] == [(None, None)]
+
+    async def test_editor_gets_no_coordinates_even_when_editing(self, client, db_session):
+        _, editor_auth, _, entry = await self._shared_entry_with_photo(
+            client, db_session, "editor", "gps-edit"
+        )
+
+        read = (await client.get(f"/v1/entries/{entry['id']}", headers=editor_auth)).json()
+        r = await _patch(client, entry["id"], editor_auth, {"title": "Edited"})
+
+        for body in (read, r.json()):
+            assert body["location"]["lat"] is None
+            assert body["photos"][0]["lat"] is None
+
+
+class TestTimeZoneOverride:
+    async def test_time_zone_moves_the_date_of_an_entry_with_events(self, client, db_session):
+        auth, _, entry = await _api_entry(client, "t4-tz@example.com")
+        # 9 am in Tokyo on the 17th is the 16th in Los Angeles (the diary's zone).
+        await _attach_event(
+            db_session, entry["id"], "2026-05-17T09:00:00+09:00", "2026-05-17T10:00:00+09:00"
+        )
+        queued: list = []
+
+        r = await _patch(client, entry["id"], auth, {"tz_override": "Asia/Tokyo"}, queued)
+
+        assert r.status_code == 200, r.text
+        assert r.json()["tz_override"] == "Asia/Tokyo"
+        assert (r.json()["entry_date"], r.json()["entry_end_date"]) == ("2026-05-17", None)
+        assert queued == [(entry["id"], {"refetch_weather": True})]
+
+    async def test_time_zone_leaves_an_entry_without_events_alone(self, client, db_session):
+        auth, _, entry = await _api_entry(client, "t4-noevents@example.com")
+        queued: list = []
+
+        r = await _patch(client, entry["id"], auth, {"tz_override": "Asia/Tokyo"}, queued)
+
+        assert r.status_code == 200
+        assert r.json()["entry_date"] == "2026-05-16"
+        assert r.json()["tz_override"] == "Asia/Tokyo"
+        assert queued == []
+
+    async def test_multi_day_entry_dates_recomputed(self, client, db_session):
+        auth, _, entry = await _api_entry(client, "t4-multi@example.com")
+        await _attach_event(
+            db_session, entry["id"], "2026-05-17T08:00:00+09:00", "2026-05-18T20:00:00+09:00"
+        )
+
+        r = await _patch(client, entry["id"], auth, {"tz_override": "Asia/Tokyo"})
+
+        assert (r.json()["entry_date"], r.json()["entry_end_date"]) == ("2026-05-17", "2026-05-18")
+
+    async def test_clearing_the_time_zone_uses_the_diary_zone(self, client, db_session):
+        auth, _, entry = await _api_entry(client, "t4-clear@example.com")
+        await _attach_event(
+            db_session, entry["id"], "2026-05-17T09:00:00+09:00", "2026-05-17T10:00:00+09:00"
+        )
+        await _patch(client, entry["id"], auth, {"tz_override": "Asia/Tokyo"})
+
+        r = await _patch(client, entry["id"], auth, {"tz_override": None})
+
+        assert r.json()["tz_override"] is None
+        assert r.json()["entry_date"] == "2026-05-16"
+
+    async def test_unknown_time_zone_is_422(self, client, db_session):
+        auth, _, entry = await _api_entry(client, "t4-bad@example.com")
+
+        r = await _patch(client, entry["id"], auth, {"tz_override": "Mars/Olympus_Mons"})
+
+        assert r.status_code == 422
+
+    async def test_editing_the_date_by_hand_queues_a_refresh(self, client, db_session):
+        auth, _, entry = await _api_entry(client, "t4-date@example.com")
+        queued: list = []
+
+        r = await _patch(client, entry["id"], auth, {"entry_date": "2026-05-20"}, queued)
+
+        assert r.status_code == 200
+        assert queued == [(entry["id"], {"refetch_weather": True})]
+
+    async def test_editing_only_the_text_queues_nothing(self, client, db_session):
+        auth, _, entry = await _api_entry(client, "t4-text@example.com")
+        queued: list = []
+
+        await _patch(client, entry["id"], auth, {"title": "A new title"}, queued)
+
+        assert queued == []

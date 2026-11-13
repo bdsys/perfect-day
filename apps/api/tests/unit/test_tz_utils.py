@@ -157,3 +157,42 @@ class TestGoogleEventTimes:
         assert google_event_times({"start": {"dateTime": "not a date"}}, "UTC") == (None, None)
         assert google_event_times({"start": {"date": "2026-13-45"}}, "UTC") == (None, None)
         assert google_event_times({}, "UTC") == (None, None)
+
+
+# ---------------------------------------------------------------------------
+# entry_dates_from_events — an entry's dates in a chosen time zone (item 24)
+# ---------------------------------------------------------------------------
+
+from app.workers.tz_utils import entry_dates_from_events  # noqa: E402
+
+
+def _timed(start: str, end: str) -> dict:
+    return {"start": {"dateTime": start}, "end": {"dateTime": end}}
+
+
+def test_a_morning_in_tokyo_is_the_day_before_in_los_angeles():
+    events = [_timed("2026-05-16T09:00:00+09:00", "2026-05-16T10:00:00+09:00")]
+
+    assert entry_dates_from_events(events, "Asia/Tokyo") == (date(2026, 5, 16), None)
+    assert entry_dates_from_events(events, "America/Los_Angeles") == (date(2026, 5, 15), None)
+
+
+def test_events_on_different_days_give_a_range():
+    events = [
+        _timed("2026-05-17T15:00:00+09:00", "2026-05-17T16:00:00+09:00"),
+        _timed("2026-05-16T09:00:00+09:00", "2026-05-16T10:00:00+09:00"),
+    ]
+
+    assert entry_dates_from_events(events, "Asia/Tokyo") == (date(2026, 5, 16), date(2026, 5, 17))
+
+
+def test_an_all_day_event_is_the_same_day_in_any_zone():
+    events = [{"start": {"date": "2026-05-16"}, "end": {"date": "2026-05-17"}}]
+
+    for zone in ("Asia/Tokyo", "America/Los_Angeles", "UTC"):
+        assert entry_dates_from_events(events, zone) == (date(2026, 5, 16), None)
+
+
+def test_no_usable_event_gives_none():
+    assert entry_dates_from_events([], "UTC") is None
+    assert entry_dates_from_events([{"start": {}, "end": {}}], "UTC") is None

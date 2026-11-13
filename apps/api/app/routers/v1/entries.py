@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, date, datetime
+from typing import Annotated
 
+import pytz
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -22,6 +24,7 @@ from app.models import (
 from app.routers.v1.diaries import _get_diary_or_404
 from app.services.flagged_words import still_present
 from app.services.tier import enforce_entry_tier_limit
+from app.workers.tz_utils import entry_dates_from_events
 
 router = APIRouter(tags=["entries"])
 
@@ -44,11 +47,40 @@ class EntryCreate(BaseModel):
         return self
 
 
+class LocationIn(BaseModel):
+    """A place the parent chose, from the city search."""
+
+    name: Annotated[str, Field(min_length=1, max_length=200)]
+    lat: Annotated[float, Field(ge=-90, le=90)]
+    lon: Annotated[float, Field(ge=-180, le=180)]
+
+
+class LocationOut(BaseModel):
+    name: str | None  # None for a photo's GPS: there is no town name for it
+    # Exact coordinates go to the diary owner only: a photo's GPS can pinpoint a
+    # home or a school. Everyone else gets None (item 24).
+    lat: float | None
+    lon: float | None
+    source: str  # parent | photo | event | home
+
+
 class EntryPatch(BaseModel):
     title: str | None = None
     body_markdown: str | None = None
     entry_date: date | None = None
     entry_end_date: date | None = None
+    # null = go back to the automatic place
+    location: LocationIn | None = None
+    # null = the diary's time zone
+    tz_override: str | None = None
+
+    @field_validator("tz_override")
+    @classmethod
+    def _known_time_zone(cls, value: str | None) -> str | None:
+        # pytz is what reads it when the entry's dates are worked out.
+        if value is not None and value not in pytz.all_timezones_set:
+            raise ValueError("unknown_time_zone")
+        return value
 
     @model_validator(mode="after")
     def _entry_date_not_null(self) -> EntryPatch:
@@ -134,6 +166,8 @@ class EntryOut(BaseModel):
     photos: list = []
     enrichments: list[EnrichmentOut] = []
     suggestion: SuggestionOut | None = None
+    location: LocationOut | None = None
+    tz_override: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -159,8 +193,15 @@ def _event_out_from_orm(event: Event) -> EventOut:
     )
 
 
-def _entry_out_from_orm(entry: Entry, *, can_edit: bool = False) -> EntryOut:
-    """The API view of *entry*. A pending AI suggestion is shown only to editors."""
+def _entry_out_from_orm(
+    entry: Entry, *, can_edit: bool = False, exact_places: bool = False
+) -> EntryOut:
+    """The API view of *entry*. A pending AI suggestion is shown only to editors.
+
+    *exact_places*: the caller is the diary owner. Only then do the entry's
+    place and its photos carry coordinates; for anyone else they are None,
+    because a photo's GPS can pinpoint a home or a school.
+    """
     from app.routers.v1.photos import _photo_out
 
     events_out = sorted(
@@ -189,6 +230,8 @@ def _entry_out_from_orm(entry: Entry, *, can_edit: bool = False) -> EntryOut:
         )
     photos_out = [
         _photo_out(ep.photo)
+        if exact_places
+        else _photo_out(ep.photo).model_copy(update={"lat": None, "lon": None})
         for ep in sorted(
             entry.entry_photos,
             key=lambda ep: (ep.position is None, ep.position or 0),
@@ -227,6 +270,17 @@ def _entry_out_from_orm(entry: Entry, *, can_edit: bool = False) -> EntryOut:
         photos=photos_out,
         enrichments=enrichments_out,
         suggestion=suggestion_out,
+        location=(
+            LocationOut(
+                name=entry.location_name,
+                lat=float(entry.lat) if exact_places else None,
+                lon=float(entry.lon) if exact_places else None,
+                source=entry.location_source or "parent",
+            )
+            if entry.lat is not None and entry.lon is not None
+            else None
+        ),
+        tz_override=entry.tz_override,
     )
 
 
@@ -327,7 +381,10 @@ async def list_deleted_entries(
         .where(Entry.diary_id == diary_id, Entry.deleted_at.is_not(None))
         .order_by(Entry.deleted_at.desc())
     )
-    return [_entry_out_from_orm(e, can_edit=True) for e in entry_result.scalars()]
+    # Owner-only (the query above checks owner_user_id).
+    return [
+        _entry_out_from_orm(e, can_edit=True, exact_places=True) for e in entry_result.scalars()
+    ]
 
 
 @router.get("/diaries/{diary_id}/entries", response_model=list[EntryOut])
@@ -383,7 +440,10 @@ async def list_entries(
     q = q.order_by(*ENTRY_TIMELINE_ORDER).limit(limit)
 
     result = await db.execute(q)
-    return [_entry_out_from_orm(e, can_edit=role != "viewer") for e in result.scalars()]
+    return [
+        _entry_out_from_orm(e, can_edit=role != "viewer", exact_places=role is None)
+        for e in result.scalars()
+    ]
 
 
 @router.post(
@@ -421,7 +481,7 @@ async def create_entry(
     db.add(entry)
     await db.flush()
     await db.refresh(entry, ["events", "rule_matches", "llm_generations", "entry_photos", "enrichments"])
-    return _entry_out_from_orm(entry, can_edit=True)
+    return _entry_out_from_orm(entry, can_edit=True, exact_places=role is None)
 
 
 @router.get("/entries/{entry_id}", response_model=EntryOut)
@@ -431,7 +491,7 @@ async def get_entry(
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> EntryOut:
     entry, _, role = await _get_entry_or_404(entry_id, user, db)
-    return _entry_out_from_orm(entry, can_edit=role != "viewer")
+    return _entry_out_from_orm(entry, can_edit=role != "viewer", exact_places=role is None)
 
 
 @router.patch("/entries/{entry_id}", response_model=EntryOut)
@@ -441,9 +501,14 @@ async def patch_entry(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> EntryOut:
-    entry, _, _ = await _get_entry_or_404(entry_id, user, db, require_editor=True)
+    entry, diary, role = await _get_entry_or_404(entry_id, user, db, require_editor=True)
 
     updates = body.model_dump(exclude_unset=True)
+    location_set = "location" in updates
+    tz_set = "tz_override" in updates
+    updates.pop("location", None)
+    new_tz = updates.pop("tz_override", None)
+    dates_before = (entry.entry_date, entry.entry_end_date)
     # Record that a person has changed the words. Automatic clean-up (a
     # cancelled or moved event) only ever removes text nobody has touched.
     text_changed = any(
@@ -457,9 +522,38 @@ async def patch_entry(
     if text_changed:
         # A warning goes once its word has left the text. A pending suggestion stays.
         entry.flagged_tokens = still_present(entry.flagged_tokens or [], _entry_text(entry))
+
+    # Item 24: the parent's place, and a per-entry time zone that moves the
+    # entry's dates to where its events happened.
+    refetch_weather = False
+    if location_set:
+        if body.location is None:  # back to the automatic place, worked out by the worker
+            entry.location_name = entry.lat = entry.lon = entry.location_source = None
+        else:
+            entry.location_name = body.location.name
+            entry.lat, entry.lon = body.location.lat, body.location.lon
+            entry.location_source = "parent"
+        refetch_weather = True
+    if tz_set and new_tz != entry.tz_override:
+        entry.tz_override = new_tz
+        dates = entry_dates_from_events(
+            [e.payload or {} for e in entry.events], new_tz or diary.timezone
+        )
+        if dates is not None:
+            entry.entry_date, entry.entry_end_date = dates
+
     if entry.entry_end_date is not None and entry.entry_end_date < entry.entry_date:
         raise HTTPException(status_code=422, detail="entry_end_date_before_entry_date")
-    return _entry_out_from_orm(entry, can_edit=True)
+    if (entry.entry_date, entry.entry_end_date) != dates_before:
+        refetch_weather = True  # weather is per day
+
+    out = _entry_out_from_orm(entry, can_edit=True, exact_places=role is None)
+    if refetch_weather:
+        await db.commit()  # so the worker sees the change
+        from app.workers.tasks import queue_location_refresh
+
+        queue_location_refresh(entry.id, refetch_weather=True)
+    return out
 
 
 @router.post("/entries/{entry_id}/publish", response_model=EntryOut)
@@ -470,7 +564,7 @@ async def publish_entry(
 ) -> EntryOut:
     entry, diary, role = await _get_entry_or_404(entry_id, user, db, require_editor=True)
     if entry.status == "published":
-        return _entry_out_from_orm(entry, can_edit=True)
+        return _entry_out_from_orm(entry, can_edit=True, exact_places=role is None)
 
     # entry_edit_diffs (design/04-llm-integration.md) is not captured yet: the
     # original LLM body is not stored separately, so there is nothing to diff.
@@ -479,7 +573,7 @@ async def publish_entry(
     # Publishing is the parent's sign-off: warnings and any pending suggestion go.
     entry.flagged_tokens = []
     _clear_suggestion(entry)
-    return _entry_out_from_orm(entry, can_edit=True)
+    return _entry_out_from_orm(entry, can_edit=True, exact_places=role is None)
 
 
 @router.post("/entries/{entry_id}/suggestion/accept", response_model=EntryOut)
@@ -489,7 +583,7 @@ async def accept_suggestion(
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> EntryOut:
     """Replace the entry's title and text with the AI's pending suggestion."""
-    entry, _, _ = await _get_entry_or_404(entry_id, user, db, require_editor=True)
+    entry, _, role = await _get_entry_or_404(entry_id, user, db, require_editor=True)
     if entry.suggested_body_markdown is None:
         raise HTTPException(status_code=409, detail="no_suggestion")
 
@@ -506,7 +600,7 @@ async def accept_suggestion(
     # Accepting into a published entry is the parent's sign-off, as publishing is.
     entry.flagged_tokens = [] if published else warnings
     _clear_suggestion(entry)
-    return _entry_out_from_orm(entry, can_edit=True)
+    return _entry_out_from_orm(entry, can_edit=True, exact_places=role is None)
 
 
 @router.delete("/entries/{entry_id}/suggestion", response_model=EntryOut)
@@ -516,11 +610,11 @@ async def dismiss_suggestion(
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> EntryOut:
     """Discard the AI's pending suggestion; the entry's text is unchanged."""
-    entry, _, _ = await _get_entry_or_404(entry_id, user, db, require_editor=True)
+    entry, _, role = await _get_entry_or_404(entry_id, user, db, require_editor=True)
     if entry.suggested_body_markdown is None:
         raise HTTPException(status_code=409, detail="no_suggestion")
     _clear_suggestion(entry)
-    return _entry_out_from_orm(entry, can_edit=True)
+    return _entry_out_from_orm(entry, can_edit=True, exact_places=role is None)
 
 
 @router.post("/entries/{entry_id}/unpublish", response_model=EntryOut)
@@ -529,10 +623,10 @@ async def unpublish_entry(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> EntryOut:
-    entry, _, _ = await _get_entry_or_404(entry_id, user, db, require_editor=True)
+    entry, _, role = await _get_entry_or_404(entry_id, user, db, require_editor=True)
     entry.status = "draft"
     entry.published_at = None
-    return _entry_out_from_orm(entry, can_edit=True)
+    return _entry_out_from_orm(entry, can_edit=True, exact_places=role is None)
 
 
 @router.delete("/entries/{entry_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -541,7 +635,7 @@ async def delete_entry(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> None:
-    entry, _, _ = await _get_entry_or_404(entry_id, user, db, require_editor=True)
+    entry, _, role = await _get_entry_or_404(entry_id, user, db, require_editor=True)
     entry.deleted_at = datetime.now(tz=UTC)
 
 
@@ -577,7 +671,7 @@ async def restore_entry(
         owner_subscription_tier=owner.subscription_tier,
     )
     entry.deleted_at = None
-    return _entry_out_from_orm(entry, can_edit=role != "viewer")
+    return _entry_out_from_orm(entry, can_edit=role != "viewer", exact_places=role is None)
 
 
 @router.post("/entries/{entry_id}/regenerate", response_model=EntryOut)
@@ -586,9 +680,9 @@ async def regenerate_entry(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> EntryOut:
-    entry, _, _ = await _get_entry_or_404(entry_id, user, db, require_editor=True)
+    entry, _, role = await _get_entry_or_404(entry_id, user, db, require_editor=True)
     from app.workers.tasks import generate_entry_draft
 
     # Nothing about the entry changes here, so there is no commit to wait for.
     generate_entry_draft.delay(str(entry.id), trigger="regenerate")
-    return _entry_out_from_orm(entry, can_edit=True)
+    return _entry_out_from_orm(entry, can_edit=True, exact_places=role is None)

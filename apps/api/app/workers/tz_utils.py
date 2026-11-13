@@ -92,3 +92,24 @@ def google_event_times(
     except (ValueError, TypeError, OverflowError):
         return None, None
     return None, None
+
+
+def entry_dates_from_events(events: list[dict], tz_name: str) -> tuple[date, date | None] | None:
+    """An entry's (start, end) dates from its calendar events, read in *tz_name*.
+
+    The earliest start and the latest end across the events. The end is None
+    when it is the same day as the start. None when no event has a usable date.
+    Used when a parent sets a per-entry time zone (item 24).
+    """
+    starts: list[date] = []
+    ends: list[date] = []
+    for event in events:
+        start, end = google_event_to_entry_date(event, tz_name)
+        if start is None:
+            continue
+        starts.append(start)
+        ends.append(end or start)
+    if not starts:
+        return None
+    first, last = min(starts), max(ends)
+    return first, (last if last != first else None)
