@@ -69,7 +69,8 @@ def upgrade() -> None:
             "updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
         ),
         sa.CheckConstraint(
-            "status IN ('waiting','copying','done','failed','cancelled','expired','needs_reconnect')",
+            "status IN ('waiting','copying','done','failed','cancelled','expired',"
+            "'needs_reconnect')",
             name="ck_photo_imports_status",
         ),
     )
