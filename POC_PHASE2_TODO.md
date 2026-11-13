@@ -51,7 +51,7 @@ Build 22 first within Wave A — it introduces the LLM provider abstraction that
 ### Wave C — requires Wave B complete
 | # | Feature | Status |
 |---|---|---|
-| 14 | Fast photo adding on drafts (was "Google Photos grant + scan") | pending — needs design. Google removed library access on 2025-03-31; automatic photos moved to the mobile app (`design/11-mobile-app.md` M-1) |
+| 14 | Fast photo adding on drafts (was "Google Photos grant + scan"), plus review fixes S-5, S-7, S-8 | design `docs/superpowers/specs/2026-11-13-photos-on-drafts-design.md`; after it, one triage session with Andrew on the review's remaining open findings. Google removed library access on 2025-03-31; automatic photos moved to the mobile app (`design/11-mobile-app.md` M-1) |
 | 18 | Tier enforcement | pending |
 
 Build 14 before 18. 18 must gate photo uploads (needs 13) and worker auto-entries (touches `tasks.py` after 14/15/17 settle).
