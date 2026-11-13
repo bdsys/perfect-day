@@ -143,3 +143,37 @@ class TestSearchPlaces:
         assert places == [_place()]
         assert get.await_args.kwargs["params"]["language"] == "en"
         assert get.await_args.kwargs["params"]["countryCode"] == "US"
+
+
+class TestOnlyTheNamedTownCounts:
+    """Final review I6: a result must be the town the text names, and a living one."""
+
+    async def test_a_result_with_another_name_is_rejected(self, client: AsyncClient):
+        # Open-Meteo prefix-matches: "Woodland" can return "Woodland Park" or similar.
+        search = AsyncMock(return_value=[_place(name="Woodland Park", admin1="Washington")])
+        with patch("app.services.geocoding.search_places", search):
+            assert await place_from_event_text(_unique("Woodland, WA")) is None
+
+    async def test_the_name_must_match_but_not_its_case(self, client: AsyncClient):
+        search = AsyncMock(return_value=[_place(name="Mukilteo")])
+        with patch("app.services.geocoding.search_places", search):
+            place = await place_from_event_text(_unique("mukilteo, WA"))
+        assert place is not None and place.name == "Mukilteo"
+
+    async def test_historical_or_abandoned_places_are_rejected(self, client: AsyncClient):
+        for code in ("PPLH", "PPLQ", "PPLW"):
+            search = AsyncMock(return_value=[_place(feature_code=code)])
+            with patch("app.services.geocoding.search_places", search):
+                assert await place_from_event_text(_unique("Mukilteo, WA")) is None, code
+
+    async def test_georgia_the_country_does_not_become_georgia_the_state(self, client: AsyncClient):
+        # "Tbilisi, Georgia" names the state Georgia; no US town called Tbilisi.
+        search = AsyncMock(return_value=[_place(name="Tifton", admin1="Georgia")])
+        with patch("app.services.geocoding.search_places", search):
+            assert await place_from_event_text(_unique("Tbilisi, Georgia")) is None
+
+    async def test_a_zip_result_needs_no_name_match(self, client: AsyncClient):
+        # A ZIP search returns the postal town, whose name the text need not repeat.
+        search = AsyncMock(return_value=[_place(name="Everett", admin1="Washington")])
+        with patch("app.services.geocoding.search_places", search):
+            assert await place_from_event_text(_unique("Suite B, WA 98204")) is not None

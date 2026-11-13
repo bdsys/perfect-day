@@ -170,17 +170,24 @@ async def place_from_event_text(text: str) -> Place | None:
         log.warning("geocoding_unavailable", error=str(exc))
         return None  # not cached: try again next time
 
-    place = next(
-        (
-            r
-            for r in results
-            if r.admin1 == state
-            and (kind == "zip" or (r.feature_code or "").startswith("PPL"))
-        ),
-        None,
-    )
+    place = next((r for r in results if _is_the_named_place(r, kind, query, state)), None)
     await _cache_set(key, "null" if place is None else json.dumps(dataclasses.asdict(place)))
     return place
+
+
+# GeoNames codes for places that no longer exist or no longer have people.
+_GONE = {"PPLH", "PPLQ", "PPLW"}
+
+
+def _is_the_named_place(r: Place, kind: str, query: str, state: str) -> bool:
+    """In the state the text names; for a city, a living town of exactly that name."""
+    if r.admin1 != state:
+        return False
+    if kind == "zip":
+        return True  # the postal town's name need not appear in the text
+    code = r.feature_code or ""
+    # Open-Meteo prefix-matches, so "Woodland" can return "Woodland Park".
+    return code.startswith("PPL") and code not in _GONE and r.name.casefold() == query.casefold()
 
 
 async def _cache_get(key: str) -> str | None:
