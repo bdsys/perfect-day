@@ -680,6 +680,32 @@ async def _refresh_entry_location(entry_id_str: str, *, refetch_weather: bool = 
         )
 
 
+@celery_app.task(name="app.workers.tasks.refresh_diary_locations", bind=True, max_retries=3)
+def refresh_diary_locations(self, diary_id: str) -> None:
+    """The diary's home place changed: refresh entries that have no place of their own."""
+    run_sync(_refresh_diary_locations(diary_id))
+
+
+async def _refresh_diary_locations(diary_id_str: str) -> None:
+    from sqlalchemy import or_, select
+
+    from app.models import Entry
+    from app.workers.utils import db_session
+
+    async with db_session() as db:
+        entry_ids = (
+            await db.execute(
+                select(Entry.id).where(
+                    Entry.diary_id == uuid.UUID(diary_id_str),
+                    Entry.deleted_at.is_(None),
+                    or_(Entry.location_source.is_(None), Entry.location_source == "home"),
+                )
+            )
+        ).scalars().all()
+    for entry_id in entry_ids:
+        queue_location_refresh(entry_id)
+
+
 def queue_location_refresh(entry_id: uuid.UUID | str, *, refetch_weather: bool = False) -> None:
     """Queue refresh_entry_location; a queue outage is logged, never raised to the caller."""
     try:

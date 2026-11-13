@@ -626,3 +626,111 @@ class TestTimeZoneOverride:
         await _patch(client, entry["id"], auth, {"title": "A new title"}, queued)
 
         assert queued == []
+
+
+# ---------------------------------------------------------------------------
+# Task 5: the diary's home place
+# ---------------------------------------------------------------------------
+
+HOME_IN = {"location_name": "Everett, Washington", "lat": HOME[0], "lon": HOME[1]}
+
+
+class TestDiaryHomePlace:
+    async def test_owner_sets_home_place_and_entries_follow(self, client, db_session):
+        auth, diary, entry = await _api_entry(client, "t5-home@example.com")
+        parent_entry = (
+            await client.post(
+                f"/v1/diaries/{diary['id']}/entries", json={"entry_date": "2026-05-17"},
+                headers=auth,
+            )
+        ).json()  # fmt: skip
+        await _patch(client, parent_entry["id"], auth, {"location": PLACE_IN})
+        queued_diaries: list = []
+
+        with patch(
+            "app.workers.tasks.refresh_diary_locations.delay",
+            side_effect=lambda diary_id: queued_diaries.append(diary_id),
+        ):
+            r = await client.patch(f"/v1/diaries/{diary['id']}", json=HOME_IN, headers=auth)
+
+        assert r.status_code == 200, r.text
+        assert r.json()["location_name"] == "Everett, Washington"
+        assert queued_diaries == [diary["id"]]
+
+        # The diary task queues a refresh for entries without a place of their own.
+        from app.workers.tasks import _refresh_diary_locations
+
+        queued_entries: list = []
+        with (
+            _worker_uses(db_session),
+            patch(
+                "app.workers.tasks.refresh_entry_location.delay",
+                side_effect=lambda entry_id, **kw: queued_entries.append(entry_id),
+            ),
+        ):
+            await _refresh_diary_locations(diary["id"])
+        assert queued_entries == [entry["id"]]
+
+        stored = await _refresh(db_session, await _reload(db_session, _uuid.UUID(entry["id"])))
+        assert (stored.location_source, stored.location_name) == ("home", "Everett, Washington")
+
+    async def test_editor_cannot_set_home_place(self, client, db_session):
+        _, diary, _ = await _api_entry(client, "t5-owner@example.com")
+        r = await client.post(
+            "/v1/auth/register", json={"email": "t5-editor@example.com", "password": "Password1!"}
+        )
+        editor_auth = {"Authorization": f"Bearer {r.json()['access_token']}"}
+        editor = (
+            await db_session.execute(select(User).where(User.email == "t5-editor@example.com"))
+        ).scalar_one()
+        db_session.add(
+            DiaryPermission(diary_id=_uuid.UUID(diary["id"]), user_id=editor.id, role="editor")
+        )
+        await db_session.commit()
+
+        r = await client.patch(f"/v1/diaries/{diary['id']}", json=HOME_IN, headers=editor_auth)
+
+        assert r.status_code == 403
+
+    async def test_partial_home_place_is_422(self, client, db_session):
+        auth, diary, _ = await _api_entry(client, "t5-partial@example.com")
+
+        r = await client.patch(
+            f"/v1/diaries/{diary['id']}",
+            json={"location_name": "Everett, Washington", "lat": HOME[0]},
+            headers=auth,
+        )
+
+        assert r.status_code == 422
+
+    async def test_clearing_the_home_place_clears_its_name(self, client, db_session):
+        auth, diary, _ = await _api_entry(client, "t5-clear@example.com")
+        with patch("app.workers.tasks.refresh_diary_locations.delay"):
+            await client.patch(f"/v1/diaries/{diary['id']}", json=HOME_IN, headers=auth)
+            r = await client.patch(
+                f"/v1/diaries/{diary['id']}", json={"lat": None, "lon": None}, headers=auth
+            )
+
+        assert r.status_code == 200
+        assert (r.json()["lat"], r.json()["lon"], r.json()["location_name"]) == (None, None, None)
+
+    async def test_parent_place_ignores_home_change(self, client, db_session):
+        auth, diary, entry = await _api_entry(client, "t5-keep@example.com")
+        await _patch(client, entry["id"], auth, {"location": PLACE_IN})
+        with patch("app.workers.tasks.refresh_diary_locations.delay"):
+            await client.patch(f"/v1/diaries/{diary['id']}", json=HOME_IN, headers=auth)
+
+        stored = await _refresh(db_session, await _reload(db_session, _uuid.UUID(entry["id"])))
+
+        assert (stored.location_source, stored.location_name) == ("parent", PLACE_IN["name"])
+
+    async def test_renaming_the_diary_queues_nothing(self, client, db_session):
+        auth, diary, _ = await _api_entry(client, "t5-rename@example.com")
+        queued: list = []
+        with patch(
+            "app.workers.tasks.refresh_diary_locations.delay",
+            side_effect=lambda diary_id: queued.append(diary_id),
+        ):
+            await client.patch(f"/v1/diaries/{diary['id']}", json={"name": "New"}, headers=auth)
+
+        assert queued == []
