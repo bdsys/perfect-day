@@ -78,7 +78,7 @@ test.describe('Edit entry dates', () => {
     const entryId = await createEntry({ entry_date: '2025-06-01', entry_end_date: '2025-06-03' })
     await goToEntry(page, entryId)
 
-    await page.locator('button:has-text("Edit")').click()
+    await page.getByRole('button', { name: 'Edit', exact: true }).click()
 
     const startInput = page.locator('#entry-date')
     await expect(startInput).toBeVisible()
@@ -93,7 +93,7 @@ test.describe('Edit entry dates', () => {
     const entryId = await createEntry({ entry_date: '2025-07-10' })
     await goToEntry(page, entryId)
 
-    await page.locator('button:has-text("Edit")').click()
+    await page.getByRole('button', { name: 'Edit', exact: true }).click()
 
     await page.locator('#entry-date').fill('2025-07-10')
     await page.locator('#entry-end-date').fill('2025-07-05')
@@ -113,7 +113,7 @@ test.describe('Edit entry dates', () => {
     const entryId = await createEntry({ entry_date: '2025-08-01' })
     await goToEntry(page, entryId)
 
-    await page.locator('button:has-text("Edit")').click()
+    await page.getByRole('button', { name: 'Edit', exact: true }).click()
 
     const newStart = '2025-08-15'
     const newEnd = plusDays(newStart, 2)
@@ -122,7 +122,7 @@ test.describe('Edit entry dates', () => {
     await page.getByRole('button', { name: 'Save' }).click()
 
     // Edit form gone, Edit button back.
-    await expect(page.locator('button:has-text("Edit")')).toBeVisible({ timeout: 10_000 })
+    await expect(page.getByRole('button', { name: 'Edit', exact: true })).toBeVisible({ timeout: 10_000 })
 
     // Date range header now shows the new range with an en-dash (formatDateRange output).
     await expect(page.locator('text=–').first()).toBeVisible()
@@ -132,7 +132,7 @@ test.describe('Edit entry dates', () => {
     const entryId = await createEntry({ entry_date: '2025-09-01', entry_end_date: '2025-09-04' })
     await goToEntry(page, entryId)
 
-    await page.locator('button:has-text("Edit")').click()
+    await page.getByRole('button', { name: 'Edit', exact: true }).click()
 
     // Pre-condition: end date is populated.
     await expect(page.locator('#entry-end-date')).toHaveValue('2025-09-04')
@@ -142,10 +142,10 @@ test.describe('Edit entry dates', () => {
     await page.getByRole('button', { name: 'Save' }).click()
 
     // Edit form gone.
-    await expect(page.locator('button:has-text("Edit")')).toBeVisible({ timeout: 10_000 })
+    await expect(page.getByRole('button', { name: 'Edit', exact: true })).toBeVisible({ timeout: 10_000 })
 
     // Reopen edit and confirm the end date is now empty (round-trip from server).
-    await page.locator('button:has-text("Edit")').click()
+    await page.getByRole('button', { name: 'Edit', exact: true }).click()
     await expect(page.locator('#entry-end-date')).toHaveValue('')
   })
 })

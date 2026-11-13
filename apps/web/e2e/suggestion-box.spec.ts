@@ -163,7 +163,7 @@ test.describe('AI suggestion box', () => {
     const entryId = await entryWithSuggestion()
     await openEntry(page, entryId)
 
-    await page.getByRole('button', { name: 'Edit' }).click()
+    await page.getByRole('button', { name: 'Edit', exact: true }).click()
 
     await expect(page.getByRole('region', { name: 'The AI suggests a new version' })).toHaveCount(0)
   })

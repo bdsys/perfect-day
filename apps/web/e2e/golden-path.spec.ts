@@ -135,7 +135,7 @@ test.describe('Phase 1 golden path', () => {
     await page.locator('text=E2E Test Entry').first().click()
     await page.waitForURL('**/entries/**')
 
-    await page.click('button:has-text("Edit")')
+    await page.getByRole('button', { name: 'Edit', exact: true }).click()
     await page.fill('#entry-body', 'Edited body content.')
     await page.click('button:has-text("Save")')
     await expect(page.locator('text=Edited body content.')).toBeVisible({ timeout: 5_000 })
