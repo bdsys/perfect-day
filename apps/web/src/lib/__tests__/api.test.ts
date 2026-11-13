@@ -111,6 +111,8 @@ describe("api.photos.upload", () => {
     upload = {} as { onprogress?: unknown };
     onload?: () => void;
     onerror?: () => void;
+    onabort?: () => void;
+    ontimeout?: () => void;
     open = jest.fn();
     setRequestHeader(k: string, v: string) { this.headers[k] = v; }
     send(body: unknown) { this.sent = body; FakeXHR.instances.push(this); }
@@ -146,5 +148,15 @@ describe("api.photos.upload", () => {
     const p = api.photos.upload(new File(["a"], "a.jpg", { type: "image/jpeg" }));
     FakeXHR.instances[0].respond(413, { error: { code: "http_error", message: "size_exceeds_limit" } });
     await expect(p).rejects.toMatchObject({ status: 413, code: "size_exceeds_limit" });
+  });
+
+  it("settles when the XHR is aborted or times out", async () => {
+    const f = new File(["a"], "a.jpg", { type: "image/jpeg" });
+    const p1 = api.photos.upload(f);
+    FakeXHR.instances[0].onabort?.();
+    await expect(p1).rejects.toThrow("upload network error");
+    const p2 = api.photos.upload(f);
+    FakeXHR.instances[1].ontimeout?.();
+    await expect(p2).rejects.toThrow("upload network error");
   });
 });

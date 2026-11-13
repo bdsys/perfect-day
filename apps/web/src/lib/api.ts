@@ -672,7 +672,10 @@ export const api = {
           xhr.upload.onprogress = (e) => {
             if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total)
           }
-          xhr.onerror = () => reject(new Error('upload network error'))
+          const netFail = () => reject(new Error('upload network error'))
+          xhr.onerror = netFail
+          xhr.onabort = netFail
+          xhr.ontimeout = netFail
           xhr.onload = () => {
             if (xhr.status >= 200 && xhr.status < 300) {
               try {

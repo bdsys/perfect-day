@@ -1,9 +1,22 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, type Entry, type Photo } from "../lib/api";
+import { api, ApiError, type Entry, type Photo } from "../lib/api";
 import { PhotoThumbnail } from "./PhotoThumbnail";
 
 const MAX_CONCURRENT = 3;
+const MAX_BYTES = 52428800; // 50 MB, the API's limit
+const TOO_BIG = "This photo is over 50 MB.";
+
+function friendlyUploadError(e: unknown): string {
+  if (e instanceof ApiError) {
+    if (e.status === 413 || e.code === "size_exceeds_limit") return TOO_BIG;
+    if (e.status === 415 || e.code === "unsupported_mime") return "This file isn't a photo we can use.";
+    if (e.status === 401 || e.code === "unauthorized") return "You've been signed out. Sign in again and try.";
+  } else if (e instanceof Error && e.message === "upload network error") {
+    return "The upload didn't finish. Check your connection and try again.";
+  }
+  return "Couldn't add this photo.";
+}
 
 interface Props {
   entry: Entry;
@@ -56,35 +69,49 @@ export function AddPhotos({ entry, onChanged, googlePhotos }: Props) {
     setItems((prev) => prev.map((it) => (it.id === id ? { ...it, ...change } : it)));
   }, []);
 
-  const runBatch = useCallback(
-    async (ids: number[]) => {
-      const queue = [...ids];
-      let anyDone = false;
-      async function worker() {
-        for (let id = queue.shift(); id !== undefined; id = queue.shift()) {
-          const file = filesRef.current.get(id)!;
-          patch(id, { status: "uploading", progress: 0, error: undefined });
-          try {
-            const photo = await api.photos.upload(file, (p) => patch(id, { progress: p }));
-            await api.photos.attachToEntry(entryRef.current.id, photo.id);
-            anyDone = true;
-            filesRef.current.delete(id);
-            patch(id, { status: "done", progress: 1 });
-          } catch (e) {
-            patch(id, { status: "error", error: e instanceof Error ? e.message : "upload failed" });
+  // One queue and one pool for the whole component, so at most MAX_CONCURRENT
+  // uploads run at once no matter how many picks or retries happen.
+  const queueRef = useRef<number[]>([]);
+  const activeRef = useRef(0);
+  const anyDoneRef = useRef(false);
+
+  const pump = useCallback(() => {
+    while (activeRef.current < MAX_CONCURRENT && queueRef.current.length > 0) {
+      const id = queueRef.current.shift()!;
+      const file = filesRef.current.get(id)!;
+      activeRef.current++;
+      patch(id, { status: "uploading", progress: 0, error: undefined });
+      void (async () => {
+        try {
+          const photo = await api.photos.upload(file, (p) => patch(id, { progress: p }));
+          await api.photos.attachToEntry(entryRef.current.id, photo.id);
+          anyDoneRef.current = true;
+          filesRef.current.delete(id);
+          patch(id, { status: "done", progress: 1 });
+        } catch (e) {
+          patch(id, { status: "error", error: friendlyUploadError(e) });
+        } finally {
+          activeRef.current--;
+          pump();
+          if (activeRef.current === 0 && queueRef.current.length === 0 && anyDoneRef.current) {
+            anyDoneRef.current = false;
+            try {
+              onChangedRef.current(await api.entries.get(entryRef.current.id));
+            } catch {
+              /* the photos are attached; the strip refreshes on next load */
+            }
           }
         }
-      }
-      await Promise.all(Array.from({ length: Math.min(MAX_CONCURRENT, ids.length) }, worker));
-      if (anyDone) {
-        try {
-          onChangedRef.current(await api.entries.get(entryRef.current.id));
-        } catch {
-          /* the photos are attached; the strip refreshes on next load */
-        }
-      }
+      })();
+    }
+  }, [patch]);
+
+  const enqueue = useCallback(
+    (ids: number[]) => {
+      queueRef.current.push(...ids);
+      pump();
     },
-    [patch],
+    [pump],
   );
 
   function handleFiles(e: React.ChangeEvent<HTMLInputElement>) {
@@ -92,13 +119,16 @@ export function AddPhotos({ entry, onChanged, googlePhotos }: Props) {
     const files = Array.from(input.files ?? []);
     input.value = "";
     if (files.length === 0) return;
+    const toUpload: number[] = [];
     const added: Item[] = files.map((file) => {
       const id = nextId.current++;
+      if (file.size > MAX_BYTES) return { id, file, status: "error", progress: 0, error: TOO_BIG };
       filesRef.current.set(id, file);
+      toUpload.push(id);
       return { id, file, status: "queued", progress: 0 };
     });
     setItems((prev) => [...prev, ...added]);
-    void runBatch(added.map((i) => i.id));
+    enqueue(toUpload);
   }
 
   async function attachFromLibrary(photoId: string) {
@@ -138,9 +168,11 @@ export function AddPhotos({ entry, onChanged, googlePhotos }: Props) {
                     {it.status === "error" && (
                       <>
                         <span role="alert" style={{ color: "var(--error)" }}>{it.error}</span>
-                        <button type="button" onClick={() => void runBatch([it.id])}>
+                        {it.file.size <= MAX_BYTES && (
+                        <button type="button" onClick={() => enqueue([it.id])}>
                           Try again
                         </button>
+                        )}
                       </>
                     )}
                   </li>
@@ -157,12 +189,14 @@ export function AddPhotos({ entry, onChanged, googlePhotos }: Props) {
             <ul className="photo-grid">
               {available.map((p) => (
                 <li key={p.id}>
-                  <PhotoThumbnail
-                    photoId={p.id}
-                    alt=""
-                    className="thumbnail"
+                  <button
+                    type="button"
+                    aria-label="Add this photo to the entry"
                     onClick={() => void attachFromLibrary(p.id)}
-                  />
+                    style={{ padding: 0, border: 0, background: "none", cursor: "pointer" }}
+                  >
+                    <PhotoThumbnail photoId={p.id} alt="" className="thumbnail" />
+                  </button>
                 </li>
               ))}
             </ul>
