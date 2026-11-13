@@ -3,14 +3,14 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi import status as http_status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import select
+from sqlalchemy import and_, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user
@@ -24,7 +24,7 @@ from app.core.photo_crypto import (
     unwrap_dek,
     wrap_dek,
 )
-from app.models import EntryPhoto, Photo, User
+from app.models import Diary, DiaryPermission, Entry, EntryPhoto, Photo, User
 from app.services.photos import (
     ALLOWED_MIME,
     MAX_BYTES,
@@ -238,6 +238,7 @@ async def finalize_photo(
 
 @router.get("/photos", response_model=list[PhotoOut])
 async def list_user_photos(
+    near: date | None = None,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> list[PhotoOut]:
@@ -248,8 +249,13 @@ async def list_user_photos(
             Photo.deleted_at.is_(None),
             Photo.finalized_at.is_not(None),
         )
-        .order_by(Photo.created_at.desc())
     )
+    if near is None:
+        q = q.order_by(Photo.created_at.desc())
+    else:
+        # Closest to the entry's date first; photos with no date after those.
+        gap = func.abs(func.date(Photo.taken_at) - near)
+        q = q.order_by(Photo.taken_at.is_(None), gap.asc(), Photo.created_at.desc())
     rows = (await db.execute(q)).scalars().all()
     return [_photo_out(p) for p in rows]
 
@@ -259,6 +265,44 @@ async def list_user_photos(
 # ---------------------------------------------------------------------------
 
 
+async def _readable_photo(photo_id: uuid.UUID, user: User, db: AsyncSession) -> Photo | None:
+    """The photo if *user* may read it, else None (design/03 "Photo authorization").
+
+    Readable when the user uploaded it, or when it is attached to a live entry
+    in a live diary the user can read: owner and editors always, viewers only
+    once the entry is published.
+    """
+    role_ok = or_(
+        Diary.owner_user_id == user.id,
+        DiaryPermission.role == "editor",
+        and_(DiaryPermission.role == "viewer", Entry.status == "published"),
+    )
+    shared = exists(
+        select(EntryPhoto.photo_id)
+        .join(Entry, Entry.id == EntryPhoto.entry_id)
+        .join(Diary, Diary.id == Entry.diary_id)
+        .outerjoin(
+            DiaryPermission,
+            and_(DiaryPermission.diary_id == Diary.id, DiaryPermission.user_id == user.id),
+        )
+        .where(
+            EntryPhoto.photo_id == Photo.id,
+            Entry.deleted_at.is_(None),
+            Diary.deleted_at.is_(None),
+            role_ok,
+        )
+    )
+    result = await db.execute(
+        select(Photo).where(
+            Photo.id == photo_id,
+            Photo.deleted_at.is_(None),
+            Photo.finalized_at.is_not(None),
+            or_(Photo.user_id == user.id, shared),
+        )
+    )
+    return result.scalar_one_or_none()
+
+
 @router.get("/photos/{photo_id}")
 async def get_photo(
     photo_id: uuid.UUID,
@@ -266,15 +310,7 @@ async def get_photo(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db, scope="function"),
 ):
-    result = await db.execute(
-        select(Photo).where(
-            Photo.id == photo_id,
-            Photo.user_id == user.id,
-            Photo.deleted_at.is_(None),
-            Photo.finalized_at.is_not(None),
-        )
-    )
-    photo = result.scalar_one_or_none()
+    photo = await _readable_photo(photo_id, user, db)
     if photo is None:
         raise HTTPException(status_code=404, detail="not_found")
 
@@ -290,7 +326,7 @@ async def get_photo(
 
     if photo.dek_ciphertext is None:
         raise HTTPException(status_code=409, detail="not_finalized")
-    dek = unwrap_dek(photo.dek_ciphertext, user.id)
+    dek = unwrap_dek(photo.dek_ciphertext, photo.user_id)
 
     def _stream():
         s3_body = stream_object(key)
