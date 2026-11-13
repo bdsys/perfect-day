@@ -12,13 +12,20 @@ from typing import Literal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.photo_crypto import PURPOSE_THUMB, encrypt_stream, generate_dek, wrap_dek
+from app.core.photo_crypto import (
+    PURPOSE_DISPLAY,
+    PURPOSE_THUMB,
+    encrypt_stream,
+    generate_dek,
+    wrap_dek,
+)
 from app.models import Photo, User
 from app.services.photos import (
     ALLOWED_MIME,
     delete_object,
     detect_mime,
     generate_thumbnail,
+    make_display_jpeg,
     parse_exif,
     put_object_bytes,
 )
@@ -49,6 +56,11 @@ async def ingest_photo(
     except ValueError:
         thumb = b""  # non-fatal: store without a thumbnail
 
+    try:
+        display = await loop.run_in_executor(None, lambda: make_display_jpeg(data, mime))
+    except ValueError:
+        display = None  # non-fatal: the backfill sweep retries
+
     dek = generate_dek()
     wrapped = wrap_dek(dek, owner.id)
     enc_full = await loop.run_in_executor(None, lambda: encrypt_stream(data, dek))
@@ -58,9 +70,16 @@ async def ingest_photo(
         else None
     )
 
+    enc_display = (
+        await loop.run_in_executor(None, lambda: encrypt_stream(display, dek, PURPOSE_DISPLAY))
+        if display
+        else None
+    )
+
     photo_id = uuid.uuid4()
     full_key = f"{owner.id}/{photo_id}.enc"
     thumb_key = f"{owner.id}/{photo_id}_thumb.enc"
+    display_key = f"{owner.id}/{photo_id}_display.enc"
     stored: list[str] = []
     try:
         await loop.run_in_executor(None, lambda: put_object_bytes(full_key, enc_full))
@@ -68,6 +87,9 @@ async def ingest_photo(
         if enc_thumb:
             await loop.run_in_executor(None, lambda: put_object_bytes(thumb_key, enc_thumb))
             stored.append(thumb_key)
+        if enc_display:
+            await loop.run_in_executor(None, lambda: put_object_bytes(display_key, enc_display))
+            stored.append(display_key)
         photo = Photo(
             id=photo_id,
             user_id=owner.id,
@@ -80,6 +102,7 @@ async def ingest_photo(
             source=source,
             external_id=external_id,
             thumbnail_s3_key=thumb_key if enc_thumb else None,
+            display_s3_key=display_key if enc_display else None,
             dek_ciphertext=wrapped,
             finalized_at=datetime.now(tz=UTC),
         )

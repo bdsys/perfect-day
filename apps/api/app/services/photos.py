@@ -181,6 +181,34 @@ def generate_thumbnail(image_bytes: bytes, mime: str) -> bytes:
         raise ValueError(f"undecodable image: {e}") from e
 
 
+DISPLAY_QUALITY: int = 90
+_NEEDS_DISPLAY_COPY = frozenset({"image/heic", "image/heif"})
+
+
+def make_display_jpeg(data: bytes, mime: str) -> bytes | None:
+    """A full-size JPEG of a HEIC/HEIF photo, for browsers that cannot show HEIC.
+
+    Returns None for types browsers already display. The JPEG is built without
+    any EXIF, so it carries no location and is safe to show to anyone.
+    Raises ValueError on undecodable input.
+    """
+    if mime not in _NEEDS_DISPLAY_COPY:
+        return None
+    from PIL import Image, ImageOps
+
+    try:
+        with Image.open(BytesIO(data)) as img:
+            img.load()
+            img = ImageOps.exif_transpose(img) or img
+            if img.mode != "RGB":
+                img = img.convert("RGB")
+            out = BytesIO()
+            img.save(out, format="JPEG", quality=DISPLAY_QUALITY)
+            return out.getvalue()
+    except Exception as e:
+        raise ValueError("unreadable_image") from e
+
+
 # ---------------------------------------------------------------------------
 # S3 wrappers
 # ---------------------------------------------------------------------------

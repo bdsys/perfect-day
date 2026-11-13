@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import get_current_user
 from app.core.database import get_db
 from app.core.photo_crypto import (
+    PURPOSE_DISPLAY,
     PURPOSE_FULL,
     PURPOSE_THUMB,
     iter_decrypt_stream,
@@ -125,7 +126,7 @@ async def list_user_photos(
 
 
 # ---------------------------------------------------------------------------
-# Task 12: GET /v1/photos/{id}?kind=full|thumb
+# Task 12: GET /v1/photos/{id}?kind=full|thumb|original
 # ---------------------------------------------------------------------------
 
 
@@ -170,7 +171,7 @@ async def _readable_photo(photo_id: uuid.UUID, user: User, db: AsyncSession) -> 
 @router.get("/photos/{photo_id}")
 async def get_photo(
     photo_id: uuid.UUID,
-    kind: Literal["full", "thumb"] = "full",
+    kind: Literal["full", "thumb", "original"] = "full",
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db, scope="function"),
 ):
@@ -183,6 +184,11 @@ async def get_photo(
         key = photo.thumbnail_s3_key
         media_type = "image/jpeg"
         purpose = PURPOSE_THUMB
+    elif kind == "full" and photo.display_s3_key is not None:
+        # JPEG copy of a HEIC photo; made without EXIF, so no location to strip.
+        key = photo.display_s3_key
+        media_type = "image/jpeg"
+        purpose = PURPOSE_DISPLAY
     else:
         key = photo.s3_key
         media_type = photo.mime_type or "application/octet-stream"
