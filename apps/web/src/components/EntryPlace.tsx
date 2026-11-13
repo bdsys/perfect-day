@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api, type Entry, type GeocodeResult } from '@/lib/api'
 import { OpenMeteoCredit } from './OpenMeteoCredit'
 import { PlaceSearch } from './PlaceSearch'
@@ -22,6 +22,10 @@ function timeZones(current: string | null): string[] {
   return current && !zones.includes(current) ? [current, ...zones] : zones
 }
 
+// The worker works out the place and fetches weather after a change; look
+// again a few times so the page doesn't show the new place beside old weather.
+const CATCH_UP_MS = [2000, 5000, 10000]
+
 /**
  * Where the entry happened, and (for editors) changing it, plus the
  * rarely-needed per-entry time zone under "Advanced" (item 24).
@@ -31,6 +35,27 @@ export function EntryPlace({ entry, onUpdated }: Props) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const hasWeather = (entry.enrichments ?? []).some((e) => e.kind === 'weather')
+  const [catchUpRound, setCatchUpRound] = useState(0)
+  const [catchingUp, setCatchingUp] = useState(false)
+  const entryId = useRef(entry.id)
+  const latestOnUpdated = useRef(onUpdated)
+  latestOnUpdated.current = onUpdated
+
+  useEffect(() => {
+    if (catchUpRound === 0) return
+    setCatchingUp(true)
+    const timers = CATCH_UP_MS.map((ms, i) =>
+      setTimeout(async () => {
+        try {
+          latestOnUpdated.current(await api.entries.get(entryId.current))
+        } catch {
+          // the next look, or a reload, will catch up
+        }
+        if (i === CATCH_UP_MS.length - 1) setCatchingUp(false)
+      }, ms),
+    )
+    return () => timers.forEach(clearTimeout)
+  }, [catchUpRound])
 
   async function save(body: Parameters<typeof api.entries.patch>[1]) {
     setBusy(true)
@@ -38,6 +63,7 @@ export function EntryPlace({ entry, onUpdated }: Props) {
     try {
       onUpdated(await api.entries.patch(entry.id, body))
       setEditingPlace(false)
+      setCatchUpRound((n) => n + 1)
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Could not save')
     } finally {
@@ -54,6 +80,7 @@ export function EntryPlace({ entry, onUpdated }: Props) {
           </span>
         )}
         {entry.location && !hasWeather && <OpenMeteoCredit />}
+        {catchingUp && <span>Updating the place and weather…</span>}
         {entry.can_edit && (
           <button
             type="button"

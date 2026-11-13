@@ -198,10 +198,12 @@ function EntryDetailPageInner() {
     if (!entry) return
     try {
       const updated = await api.entries.get(entry.id)
-      // Prefer terminating on last_generation.created_at change; fall back to updated_at
+      // Prefer terminating on last_generation.created_at change. Without a
+      // generation record, wait for text: the draft job works out the entry's
+      // place first (item 24), which changes updated_at before any draft exists.
       const genChanged = updated.last_generation != null
         ? updated.last_generation.created_at !== regenStartedGenAt
-        : updated.updated_at !== regenStartedAt
+        : updated.updated_at !== regenStartedAt && !!updated.body_markdown
 
       if (genChanged) {
         setEntry(updated)
