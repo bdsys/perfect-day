@@ -332,6 +332,17 @@ async def delete_photo(
         raise HTTPException(status_code=404, detail="not_found")
     photo.deleted_at = datetime.now(tz=UTC)
 
+    # Entries that used it may have taken their place from its GPS (item 24).
+    entry_ids = (
+        await db.execute(select(EntryPhoto.entry_id).where(EntryPhoto.photo_id == photo_id))
+    ).scalars().all()
+    if entry_ids:
+        await db.commit()  # so the worker sees the photo gone
+        from app.workers.tasks import queue_location_refresh
+
+        for entry_id in entry_ids:
+            queue_location_refresh(entry_id)
+
 
 # ---------------------------------------------------------------------------
 # Task 15: Entry photo attach/detach

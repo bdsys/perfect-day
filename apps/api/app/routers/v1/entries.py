@@ -483,7 +483,13 @@ async def create_entry(
     db.add(entry)
     await db.flush()
     await db.refresh(entry, ["events", "rule_matches", "llm_generations", "entry_photos", "enrichments"])
-    return _entry_out_from_orm(entry, can_edit=True, exact_places=role is None)
+    out = _entry_out_from_orm(entry, can_edit=True, exact_places=role is None)
+    # Work out its place (home place, for now) so it gets weather (item 24).
+    await db.commit()  # so the worker sees the entry
+    from app.workers.tasks import queue_location_refresh
+
+    queue_location_refresh(entry.id)
+    return out
 
 
 @router.get("/entries/{entry_id}", response_model=EntryOut)

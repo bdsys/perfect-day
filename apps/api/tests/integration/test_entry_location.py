@@ -860,3 +860,60 @@ class TestJobsThatOverlap:
         ).scalars().all()
         assert seen == {"moved": True}
         assert rows == []
+
+
+class TestMoreChangesQueueARefresh:
+    """Final review I4, and the promoted 'new manual entry' ruling."""
+
+    async def test_deleting_a_photo_refreshes_the_entries_that_used_it(
+        self, client, db_session, sync_engine
+    ):
+        auth, entry, photo = await TestPhotoChangesQueueARefresh()._owner_entry_photo(
+            client, db_session, "loc-delete@example.com"
+        )
+        await client.post(
+            f"/v1/entries/{entry['id']}/photos", json={"photo_id": str(photo.id)}, headers=auth
+        )
+        seen: list = []
+
+        def _on_queue(entry_id, *args, **kwargs):
+            with sync_engine.connect() as conn:
+                gone = conn.execute(
+                    text_sql("SELECT deleted_at IS NOT NULL FROM photos WHERE id = :p"),
+                    {"p": str(photo.id)},
+                ).scalar_one()
+            seen.append((entry_id, gone))
+
+        with patch("app.workers.tasks.refresh_entry_location.delay", side_effect=_on_queue):
+            r = await client.delete(f"/v1/photos/{photo.id}", headers=auth)
+
+        assert r.status_code == 204
+        assert seen == [(entry["id"], True)]
+
+    async def test_a_new_manual_entry_gets_its_place_worked_out(
+        self, client, db_session, sync_engine
+    ):
+        r = await client.post(
+            "/v1/auth/register", json={"email": "loc-new@example.com", "password": "Password1!"}
+        )
+        auth = {"Authorization": f"Bearer {r.json()['access_token']}"}
+        diary = (
+            await client.post("/v1/diaries", json={"name": "D", "timezone": "UTC"}, headers=auth)
+        ).json()
+        seen: list = []
+
+        def _on_queue(entry_id, *args, **kwargs):
+            with sync_engine.connect() as conn:
+                exists = conn.execute(
+                    text_sql("SELECT 1 FROM entries WHERE id = :e"), {"e": entry_id}
+                ).first() is not None
+            seen.append((entry_id, exists))
+
+        with patch("app.workers.tasks.refresh_entry_location.delay", side_effect=_on_queue):
+            r = await client.post(
+                f"/v1/diaries/{diary['id']}/entries", json={"entry_date": "2026-05-16"},
+                headers=auth,
+            )  # fmt: skip
+
+        assert r.status_code == 201
+        assert seen == [(r.json()["id"], True)]
