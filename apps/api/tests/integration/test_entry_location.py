@@ -10,6 +10,7 @@ from decimal import Decimal
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import text
+from sqlalchemy import text as text_sql
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -758,3 +759,104 @@ class TestEntryOutSaysWhoCanEdit:
         seen = (await client.get(f"/v1/entries/{entry['id']}", headers=viewer_auth)).json()
 
         assert (own["can_edit"], seen["can_edit"]) == (True, False)
+
+
+# ---------------------------------------------------------------------------
+# Final review I2/I3: overlapping jobs and row locks
+# ---------------------------------------------------------------------------
+
+
+class TestJobsThatOverlap:
+    async def test_an_unchanged_place_is_not_rewritten(self, client, db_session):
+        _, _, entry = await _entry_in_diary(db_session, home=HOME)
+        entry_id = entry.id
+        await _refresh(db_session, entry)
+        first = (await _reload(db_session, entry_id)).updated_at
+
+        await _refresh(db_session, await _reload(db_session, entry_id))
+
+        assert (await _reload(db_session, entry_id)).updated_at == first
+
+    async def test_a_place_the_parent_sets_mid_run_is_kept(
+        self, client, db_session, sync_engine
+    ):
+        _, _, entry = await _entry_in_diary(db_session)
+        await make_event(db_session, entry=entry, payload={"summary": "x",
+                         "location": "Mukilteo Library, Mukilteo, WA"})  # fmt: skip
+        await db_session.commit()
+        entry_id = entry.id
+
+        async def _parent_saves_while_we_geocode(text):
+            # Another request commits the parent's own place while this job is geocoding.
+            with sync_engine.begin() as conn:
+                conn.execute(text_sql("SET LOCAL lock_timeout = '2s'"))
+                conn.execute(
+                    text_sql(
+                        "UPDATE entries SET location_name = 'Everett, Washington', lat = :lat,"
+                        " lon = :lon, location_source = 'parent' WHERE id = :id"
+                    ),
+                    {"lat": HOME[0], "lon": HOME[1], "id": str(entry_id)},
+                )
+            return MUKILTEO
+
+        stored = await _refresh(db_session, entry, geocode=_parent_saves_while_we_geocode)
+
+        assert (stored.location_source, stored.location_name) == ("parent", "Everett, Washington")
+        assert _coords(stored) == (round(HOME[0], 5), round(HOME[1], 5))
+
+    async def test_the_entry_is_not_locked_while_weather_is_fetched(
+        self, client, db_session, sync_engine
+    ):
+        _, _, entry = await _entry_in_diary(db_session, home=HOME)
+        entry_id = entry.id
+        seen = {}
+
+        async def _a_save_arrives_during_the_fetch(lat, lon, day):
+            try:
+                with sync_engine.begin() as conn:
+                    conn.execute(text_sql("SET LOCAL lock_timeout = '2s'"))
+                    conn.execute(
+                        text_sql("UPDATE entries SET title = 'Saved meanwhile' WHERE id = :id"),
+                        {"id": str(entry_id)},
+                    )
+                seen["saved"] = True
+            except Exception as exc:  # lock timeout: the job held the row
+                seen["saved"] = type(exc).__name__
+            return WEATHER
+
+        await _refresh(db_session, entry, weather=_a_save_arrives_during_the_fetch)
+
+        assert seen == {"saved": True}
+
+    async def test_weather_for_a_place_that_changed_meanwhile_is_dropped(
+        self, client, db_session, sync_engine
+    ):
+        _, _, entry = await _entry_in_diary(db_session, home=HOME)
+        entry_id = entry.id
+
+        seen = {}
+
+        async def _place_moves_during_the_fetch(lat, lon, day):
+            # Another job commits a new place (and would fetch its own weather).
+            try:
+                with sync_engine.begin() as conn:
+                    conn.execute(text_sql("SET LOCAL lock_timeout = '2s'"))
+                    conn.execute(
+                        text_sql(
+                            "UPDATE entries SET lat = :lat, lon = :lon, location_source = 'photo',"
+                            " location_name = NULL WHERE id = :id"
+                        ),
+                        {"lat": PHOTO[0], "lon": PHOTO[1], "id": str(entry_id)},
+                    )
+                seen["moved"] = True
+            except Exception as exc:  # lock timeout: the job held the row
+                seen["moved"] = type(exc).__name__
+            return WEATHER
+
+        await _refresh(db_session, entry, weather=_place_moves_during_the_fetch)
+
+        rows = (
+            await db_session.execute(select(Enrichment).where(Enrichment.entry_id == entry_id))
+        ).scalars().all()
+        assert seen == {"moved": True}
+        assert rows == []
