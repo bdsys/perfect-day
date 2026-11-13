@@ -199,7 +199,8 @@ def make_display_jpeg(data: bytes, mime: str) -> bytes | None:
     """A full-size JPEG of a HEIC/HEIF photo, for browsers that cannot show HEIC.
 
     Returns None for types browsers already display. The JPEG is built without
-    any EXIF (only the colour profile is kept), so it carries no location and is safe to show to anyone.
+    any EXIF (only the colour profile is kept), so it carries no location and is
+    safe to show to anyone.
     Raises ValueError on undecodable input.
     """
     if mime not in _NEEDS_DISPLAY_COPY:
