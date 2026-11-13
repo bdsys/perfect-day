@@ -205,11 +205,10 @@ def make_display_jpeg(data: bytes, mime: str) -> bytes | None:
     try:
         with Image.open(BytesIO(data)) as img:
             img.load()
-            img = ImageOps.exif_transpose(img) or img
-            if img.mode != "RGB":
-                img = img.convert("RGB")
+            upright = ImageOps.exif_transpose(img) or img
+            rgb = upright if upright.mode == "RGB" else upright.convert("RGB")
             out = BytesIO()
-            img.save(out, format="JPEG", quality=DISPLAY_QUALITY)
+            rgb.save(out, format="JPEG", quality=DISPLAY_QUALITY)
             return out.getvalue()
     except Exception as e:
         raise ValueError("unreadable_image") from e

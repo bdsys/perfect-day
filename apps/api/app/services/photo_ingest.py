@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from datetime import UTC, datetime
+from functools import partial
 from typing import Literal
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -111,7 +112,7 @@ async def ingest_photo(
     except Exception:
         for key in stored:  # don't leave orphans behind a failed row
             try:
-                await loop.run_in_executor(None, lambda k=key: delete_object(k))
+                await loop.run_in_executor(None, partial(delete_object, key))
             except Exception:  # noqa: BLE001, S110 — the orphan sweeper is the backstop
                 pass
         raise

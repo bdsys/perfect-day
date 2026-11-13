@@ -870,7 +870,7 @@ async def _process_photo_import(
         return
     try:
         process_photo_import.apply_async(
-            args=[import_id_str],
+            args=(import_id_str,),
             kwargs={"list_attempt": nxt.list_attempt, "poll_s": nxt.poll_s},
             countdown=nxt.countdown,
         )

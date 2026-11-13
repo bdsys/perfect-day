@@ -130,7 +130,7 @@ async def create_photo_import(
 
     try:
         process_photo_import.apply_async(
-            args=[str(imp.id)],
+            args=(str(imp.id),),
             kwargs={"poll_s": session.poll_interval_s},
             countdown=poll_countdown(session.poll_interval_s),
         )

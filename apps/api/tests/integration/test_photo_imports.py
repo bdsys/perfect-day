@@ -261,7 +261,7 @@ async def test_create_import_returns_picker_uri_and_queues_task(client, db_sessi
     assert "ya29" not in r.text
 
     queued.assert_called_once()
-    assert queued.call_args.kwargs["args"] == [body["id"]]
+    assert queued.call_args.kwargs["args"] == (body["id"],)
     assert queued.call_args.kwargs["countdown"] == POLL_S
 
     row = await _import_row(db_session, body["id"])

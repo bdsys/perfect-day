@@ -277,7 +277,7 @@ For local testing, create and use `perfect-day-dev`.
 1. In the left sidebar: **APIs & Services → Library**.
 2. Search for and enable each of the following:
    - **Google Calendar API**
-   - *(Phase 2, skip for now)* Google Photos Library API
+   - **Google Photos Picker API** (needed for "Add from Google Photos" on an entry). See [Get started with the Picker API](https://developers.google.com/photos/picker/guides/get-started-picker). The old Photos Library API cannot read a person's photos any more, so do not enable it for this.
 
 ---
 
@@ -289,7 +289,7 @@ For local testing, create and use `perfect-day-dev`.
    - App name: `Perfect Day (dev)`
    - User support email: your Google account email
    - Developer contact email: same
-4. Click **Save and Continue** through Scopes (add none here — they're requested at runtime).
+4. Click **Save and Continue** through Scopes. Calendar needs none here (it is requested at runtime). For Google Photos, add the Picker scope `https://www.googleapis.com/auth/photospicker.mediaitems.readonly` to the consent screen's scopes (the Picker guide above lists it).
 5. On the **Test users** step, add your own Google account email address.  
    *(This keeps the app in "testing" mode — only listed test users can authorize. You won't need to go through Google's verification process for local dev.)*
 6. **Save and Continue** → **Back to Dashboard**.
@@ -317,6 +317,8 @@ Open `apps/api/.env` and set:
 GOOGLE_CLIENT_ID=<your Client ID from step 4>
 GOOGLE_CLIENT_SECRET=<your Client secret from step 4>
 ```
+
+**Connecting Google from a phone.** The cookie that ties a Google connect to your browser (`pd_google_connect`) is always `Secure`. Browsers only keep a `Secure` cookie on HTTPS or on `localhost`. So Google connect from a phone on your LAN, or from any other plain-http address, fails with `reason=browser_mismatch`. Use HTTPS for that test (for example the Cloudflare-fronted dev domain). Photo upload from a phone does not need this; only the Google connect does.
 
 ---
 

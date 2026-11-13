@@ -361,7 +361,7 @@ async def _google_callback(
                 web_base, return_to, google="wrong_account", expected=existing.google_email or ""
             )
         account_matches = True
-    if account_matches:
+    if account_matches and existing is not None:
         granted_scopes = list(dict.fromkeys([*granted_scopes, *(existing.scopes_granted or [])]))
 
     expires_at = datetime.now(tz=UTC).replace(microsecond=0)

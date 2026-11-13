@@ -14,9 +14,10 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import cast
 
 import structlog
-from sqlalchemy import select, update
+from sqlalchemy import CursorResult, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import EntryPhoto, OAuthToken, Photo, PhotoImport, User
@@ -191,7 +192,7 @@ async def _poll(
     )
     await db.commit()
     await db.refresh(imp)
-    if claimed.rowcount == 1:
+    if cast(CursorResult, claimed).rowcount == 1:
         return _CopyNow(session.poll_interval_s)
     if imp.status == "cancelled":
         await delete_session_quietly(db, imp)
@@ -209,6 +210,10 @@ async def _copy(
 
     entry_id = imp.entry_id
     user = await db.get(User, imp.user_id)
+    if user is None:
+        await _set_status(db, imp, "failed")
+        await delete_session_quietly(db, imp)
+        return None
     try:
         # The picker may have been open for a while: the parent must still edit the entry.
         await _get_entry_or_404(entry_id, user, db, require_editor=True)
