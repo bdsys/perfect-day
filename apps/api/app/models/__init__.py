@@ -473,6 +473,7 @@ class PhotoImport(TimestampMixin, Base):
             "status IN ('waiting','copying','done','failed','cancelled','expired','needs_reconnect')",
             name="ck_photo_imports_status",
         ),
+        Index("ix_photo_imports_entry_user", "entry_id", "user_id"),
     )
 
 
