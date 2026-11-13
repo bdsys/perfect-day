@@ -8,7 +8,12 @@ from sqlalchemy import func, select
 
 from app.core.photo_crypto import PURPOSE_FULL, PURPOSE_THUMB, iter_decrypt_stream, unwrap_dek
 from app.models import Photo
-from tests.integration.photo_helpers import read_fixture, register_and_login, upload_photo
+from tests.integration.photo_helpers import (
+    jpeg_with_exif,
+    read_fixture,
+    register_and_login,
+    upload_photo,
+)
 
 
 def _objects(s3_client, bucket):
@@ -45,37 +50,96 @@ async def test_upload_stores_only_ciphertext(client, db_session, s3_client, phot
 @pytest.mark.asyncio
 async def test_upload_reads_exif_time_and_gps(client):
     headers = await register_and_login(client, "exif@example.com")
-    body = read_fixture("sample.jpg")
-    r = await client.post("/v1/photos", files={"file": ("a.jpg", body)}, headers=headers)
+    body = jpeg_with_exif()
+    r = await client.post(
+        "/v1/photos", content=body, headers={**headers, "Content-Type": "image/jpeg"}
+    )
     assert r.status_code == 201, r.text
     out = r.json()
-    from app.services.photos import parse_exif
-
-    expected = parse_exif(body)
     assert out["mime_type"] == "image/jpeg"
     assert out["bytes"] == len(body)
     assert out["has_thumbnail"] is True
-    assert out["taken_at"] is not None or expected["taken_at"] is None
-    assert (out["lat"] is None) == (expected["lat"] is None)
-    if expected["lat"] is not None:
-        assert out["lat"] == pytest.approx(expected["lat"], abs=1e-5)
-        assert out["lon"] == pytest.approx(expected["lon"], abs=1e-5)
+    assert out["taken_at"].startswith("2025-08-14T13:45:00")
+    assert out["lat"] == pytest.approx(37.7749, abs=1e-4)
+    assert out["lon"] == pytest.approx(-122.4194, abs=1e-4)
 
 
 @pytest.mark.asyncio
-async def test_oversize_rejected_without_storing(
+async def test_taken_at_fallback_used_when_no_exif_time(client, db_session):  # client wires S3
+    from datetime import UTC, datetime
+
+    from app.services.photo_ingest import ingest_photo
+    from tests.fixtures.factories import make_user
+
+    user = await make_user(db_session)
+    fallback = datetime(2024, 3, 2, 10, 0, tzinfo=UTC)
+    photo = await ingest_photo(
+        db_session,
+        owner=user,
+        data=read_fixture("sample.jpg"),
+        source="google_photos",
+        external_id="g1",
+        taken_at_fallback=fallback,
+    )
+    assert photo.taken_at == fallback
+    assert photo.external_id == "g1" and photo.source == "google_photos"
+
+
+class _Counting:
+    """Async body that records how many chunks were pulled."""
+
+    def __init__(self, n_chunks, size=400):
+        self.n_chunks, self.size, self.pulled = n_chunks, size, 0
+
+    async def __aiter__(self):
+        for i in range(self.n_chunks):
+            self.pulled += 1
+            yield (b"\xff\xd8\xff" if i == 0 else b"") + b"0" * self.size
+
+
+async def _count_rows(db_session):
+    return (await db_session.execute(select(func.count()).select_from(Photo))).scalar_one()
+
+
+@pytest.mark.asyncio
+async def test_oversize_without_content_length_stops_reading(
     client, db_session, s3_client, photos_bucket, monkeypatch
 ):
     monkeypatch.setattr("app.routers.v1.photos.MAX_BYTES", 1000)
     headers = await register_and_login(client, "big@example.com")
     before = set(_objects(s3_client, photos_bucket))
+    body = _Counting(n_chunks=200)
     r = await client.post(
-        "/v1/photos", files={"file": ("a.jpg", b"\xff\xd8\xff" + b"0" * 998)}, headers=headers
+        "/v1/photos", content=body, headers={**headers, "Content-Type": "image/jpeg"}
     )
     assert r.status_code == 413, r.text
     assert r.json()["error"]["message"] == "size_exceeds_limit"
+    assert body.pulled < 200, "the body must not be read to the end"
     assert set(_objects(s3_client, photos_bucket)) == before
-    assert (await db_session.execute(select(func.count()).select_from(Photo))).scalar_one() == 0
+    assert await _count_rows(db_session) == 0
+
+
+@pytest.mark.asyncio
+async def test_oversize_content_length_rejected_before_reading(client, db_session, monkeypatch):
+    monkeypatch.setattr("app.routers.v1.photos.MAX_BYTES", 1000)
+    headers = await register_and_login(client, "big2@example.com")
+    body = _Counting(n_chunks=5)
+    r = await client.post(
+        "/v1/photos",
+        content=body,
+        headers={**headers, "Content-Type": "image/jpeg", "Content-Length": "2000"},
+    )
+    assert r.status_code == 413, r.text
+    assert body.pulled <= 1
+    assert await _count_rows(db_session) == 0
+
+
+@pytest.mark.asyncio
+async def test_unauthenticated_upload_401_without_reading_body(client):
+    body = _Counting(n_chunks=50)
+    r = await client.post("/v1/photos", content=body, headers={"Content-Type": "image/jpeg"})
+    assert r.status_code in (401, 403)
+    assert body.pulled < 50
 
 
 @pytest.mark.asyncio
@@ -83,7 +147,9 @@ async def test_non_image_rejected_415(client, s3_client, photos_bucket):
     headers = await register_and_login(client, "pdf@example.com")
     before = set(_objects(s3_client, photos_bucket))
     r = await client.post(
-        "/v1/photos", files={"file": ("a.pdf", b"%PDF-1.4 not an image")}, headers=headers
+        "/v1/photos",
+        content=b"%PDF-1.4 not an image",
+        headers={**headers, "Content-Type": "application/pdf"},
     )
     assert r.status_code == 415, r.text
     assert set(_objects(s3_client, photos_bucket)) == before
@@ -91,5 +157,7 @@ async def test_non_image_rejected_415(client, s3_client, photos_bucket):
 
 @pytest.mark.asyncio
 async def test_upload_requires_auth(client):
-    r = await client.post("/v1/photos", files={"file": ("a.jpg", read_fixture("sample.jpg"))})
+    r = await client.post(
+        "/v1/photos", content=read_fixture("sample.jpg"), headers={"Content-Type": "image/jpeg"}
+    )
     assert r.status_code in (401, 403)

@@ -7,7 +7,7 @@ import uuid
 from datetime import UTC, date, datetime
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi import status as http_status
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict
@@ -67,28 +67,29 @@ def _photo_out(photo) -> PhotoOut:
     )
 
 
-_CHUNK = 1024 * 1024
-
-
 @router.post("/photos", response_model=PhotoOut, status_code=201)
 async def upload_photo(
-    file: UploadFile,
+    request: Request,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> PhotoOut:
-    """Receive the image, encrypt it, then store it: nothing is ever written in plaintext."""
-    chunks: list[bytes] = []
-    total = 0
-    while chunk := await file.read(_CHUNK):
-        total += len(chunk)
-        if total > MAX_BYTES:
+    """Store the image sent as the raw request body, encrypted.
+
+    The handler takes no body parameter on purpose: a multipart/form parameter
+    makes the framework read the whole body (spooling it to disk in plaintext)
+    before auth or the size cap could run. Here auth runs first, and the body is
+    read in memory only until it passes MAX_BYTES.
+    """
+    declared = request.headers.get("content-length")
+    if declared is not None and declared.isdigit() and int(declared) > MAX_BYTES:
+        raise HTTPException(status_code=413, detail="size_exceeds_limit")
+    data = bytearray()
+    async for chunk in request.stream():
+        data += chunk
+        if len(data) > MAX_BYTES:
             raise HTTPException(status_code=413, detail="size_exceeds_limit")
-        chunks.append(chunk)
-    data = b"".join(chunks)
-    if not data:
-        raise HTTPException(status_code=415, detail="unsupported_mime")
     try:
-        photo = await ingest_photo(db, owner=user, data=data, source="upload")
+        photo = await ingest_photo(db, owner=user, data=bytes(data), source="upload")
     except UnsupportedPhoto:
         raise HTTPException(status_code=415, detail="unsupported_mime") from None
     return _photo_out(photo)
