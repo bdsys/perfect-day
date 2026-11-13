@@ -185,9 +185,32 @@ export interface Diary {
   scan_interval_minutes: number
   lat: number | null
   lon: number | null
+  /** The home place's name, from the city search (item 24). */
+  location_name: string | null
   deleted_at: string | null
   hard_delete_after: string | null
   created_at: string
+}
+
+/** A place from the city search (GET /v1/geocode). */
+export interface GeocodeResult {
+  name: string
+  admin1: string | null
+  country: string | null
+  lat: number
+  lon: number
+  timezone: string | null
+  /** "Mukilteo, Washington, United States" */
+  label: string
+}
+
+/** Where an entry happened. Coordinates are null unless you own the diary. */
+export interface EntryLocation {
+  /** null for a photo's GPS: there is no town name for it */
+  name: string | null
+  lat: number | null
+  lon: number | null
+  source: 'parent' | 'photo' | 'event' | 'home'
 }
 
 export interface Integration {
@@ -273,6 +296,16 @@ export interface Entry {
   photos: Photo[]
   enrichments: Enrichment[]
   suggestion: Suggestion | null
+  location: EntryLocation | null
+  /** IANA time zone for this entry's event times and date; null = the diary's */
+  tz_override: string | null
+  /** The caller may edit this entry (not a viewer) */
+  can_edit: boolean
+}
+
+/** What PATCH /v1/entries/{id} accepts. location: null = use the automatic place. */
+export type EntryPatch = Partial<Pick<Entry, 'title' | 'body_markdown' | 'entry_date' | 'entry_end_date' | 'tz_override'>> & {
+  location?: { name: string; lat: number; lon: number } | null
 }
 
 export interface ScanConfig {
@@ -426,6 +459,7 @@ export const api = {
       scan_enabled?: boolean
       lat?: number | null
       lon?: number | null
+      location_name?: string | null
     }): Promise<Diary> {
       return apiFetch(`/v1/diaries/${id}`, { method: 'PATCH', body: JSON.stringify(data) })
     },
@@ -507,7 +541,7 @@ export const api = {
     async get(id: string): Promise<Entry> {
       return apiFetch(`/v1/entries/${id}`)
     },
-    async patch(id: string, data: Partial<Entry>): Promise<Entry> {
+    async patch(id: string, data: EntryPatch): Promise<Entry> {
       return apiFetch(`/v1/entries/${id}`, { method: 'PATCH', body: JSON.stringify(data) })
     },
     async delete(id: string): Promise<void> {
@@ -533,6 +567,13 @@ export const api = {
     },
     async dismissSuggestion(id: string): Promise<Entry> {
       return apiFetch(`/v1/entries/${id}/suggestion`, { method: 'DELETE' })
+    },
+  },
+
+  geocode: {
+    /** City search. Throws ApiError with status 503 when search is down. */
+    async search(q: string): Promise<GeocodeResult[]> {
+      return apiFetch(`/v1/geocode?${new URLSearchParams({ q }).toString()}`)
     },
   },
 

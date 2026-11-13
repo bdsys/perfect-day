@@ -1,5 +1,6 @@
 import type { Enrichment } from '@/lib/api'
 import { weatherIconFor } from '@/lib/weatherIcon'
+import { OpenMeteoCredit } from './OpenMeteoCredit'
 
 interface Props {
   enrichments: Enrichment[]
@@ -59,6 +60,7 @@ export function WeatherBadge({ enrichments }: Props) {
           </span>
         )
       })}
+      <OpenMeteoCredit />
     </div>
   )
 }

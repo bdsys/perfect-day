@@ -57,3 +57,11 @@ describe('WeatherBadge', () => {
     expect(screen.getByLabelText('Weather')).toBeTruthy()
   })
 })
+
+describe('WeatherBadge credit', () => {
+  it('links to Open-Meteo, as its licence requires', () => {
+    render(<WeatherBadge enrichments={[mkEnrichment('2026-05-05', 0, 14, 22)]} />)
+    const credit = screen.getByRole('link', { name: 'Location and weather: Open-Meteo' })
+    expect(credit).toHaveAttribute('href', 'https://open-meteo.com/')
+  })
+})

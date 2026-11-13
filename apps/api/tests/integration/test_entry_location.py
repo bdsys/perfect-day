@@ -734,3 +734,27 @@ class TestDiaryHomePlace:
             await client.patch(f"/v1/diaries/{diary['id']}", json={"name": "New"}, headers=auth)
 
         assert queued == []
+
+
+class TestEntryOutSaysWhoCanEdit:
+    """The entry page hides Edit location from viewers (Task 7 ruling)."""
+
+    async def test_owner_can_edit_and_viewer_cannot(self, client, db_session):
+        owner_auth, diary, entry = await _api_entry(client, "t7-can@example.com")
+        await client.post(f"/v1/entries/{entry['id']}/publish", headers=owner_auth)
+        r = await client.post(
+            "/v1/auth/register", json={"email": "t7-cannot@example.com", "password": "Password1!"}
+        )
+        viewer_auth = {"Authorization": f"Bearer {r.json()['access_token']}"}
+        viewer = (
+            await db_session.execute(select(User).where(User.email == "t7-cannot@example.com"))
+        ).scalar_one()
+        db_session.add(
+            DiaryPermission(diary_id=_uuid.UUID(diary["id"]), user_id=viewer.id, role="viewer")
+        )
+        await db_session.commit()
+
+        own = (await client.get(f"/v1/entries/{entry['id']}", headers=owner_auth)).json()
+        seen = (await client.get(f"/v1/entries/{entry['id']}", headers=viewer_auth)).json()
+
+        assert (own["can_edit"], seen["can_edit"]) == (True, False)

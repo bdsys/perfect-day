@@ -168,6 +168,7 @@ class EntryOut(BaseModel):
     suggestion: SuggestionOut | None = None
     location: LocationOut | None = None
     tz_override: str | None = None
+    can_edit: bool = False  # the caller may edit this entry (not a viewer)
 
     model_config = {"from_attributes": True}
 
@@ -281,6 +282,7 @@ def _entry_out_from_orm(
             else None
         ),
         tz_override=entry.tz_override,
+        can_edit=can_edit,
     )
 
 

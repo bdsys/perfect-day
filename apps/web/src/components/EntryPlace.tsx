@@ -1,0 +1,116 @@
+'use client'
+
+import { useState } from 'react'
+import { api, type Entry, type GeocodeResult } from '@/lib/api'
+import { OpenMeteoCredit } from './OpenMeteoCredit'
+import { PlaceSearch } from './PlaceSearch'
+
+interface Props {
+  entry: Entry
+  onUpdated: (entry: Entry) => void
+}
+
+/** "Mukilteo, Washington" in the US, "Paris, France" elsewhere — as the API names places. */
+function placeName(place: GeocodeResult): string {
+  const region = place.country === 'United States' ? place.admin1 : place.country
+  return [place.name, region].filter(Boolean).join(', ')
+}
+
+function timeZones(current: string | null): string[] {
+  const intl = Intl as unknown as { supportedValuesOf?: (key: string) => string[] }
+  const zones = intl.supportedValuesOf?.('timeZone') ?? []
+  return current && !zones.includes(current) ? [current, ...zones] : zones
+}
+
+/**
+ * Where the entry happened, and (for editors) changing it, plus the
+ * rarely-needed per-entry time zone under "Advanced" (item 24).
+ */
+export function EntryPlace({ entry, onUpdated }: Props) {
+  const [editingPlace, setEditingPlace] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const hasWeather = (entry.enrichments ?? []).some((e) => e.kind === 'weather')
+
+  async function save(body: Parameters<typeof api.entries.patch>[1]) {
+    setBusy(true)
+    setError('')
+    try {
+      onUpdated(await api.entries.patch(entry.id, body))
+      setEditingPlace(false)
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Could not save')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div style={{ margin: '0.25rem 0 0.75rem', fontSize: '0.875rem', color: 'var(--text-muted)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+        {entry.location && (
+          <span data-testid="entry-place">
+            📍 {entry.location.name ?? 'From a photo'}
+          </span>
+        )}
+        {entry.location && !hasWeather && <OpenMeteoCredit />}
+        {entry.can_edit && (
+          <button
+            type="button"
+            className="btn btn-secondary"
+            style={{ fontSize: '0.8rem', padding: '0.2rem 0.6rem' }}
+            onClick={() => setEditingPlace((v) => !v)}
+            disabled={busy}
+          >
+            Edit location
+          </button>
+        )}
+      </div>
+
+      {editingPlace && (
+        <div className="card" style={{ marginTop: '0.5rem' }}>
+          <PlaceSearch
+            label="Location"
+            onSelect={(place) => save({ location: { name: placeName(place), lat: place.lat, lon: place.lon } })}
+          />
+          {entry.location?.source === 'parent' && (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              style={{ marginTop: '0.5rem' }}
+              onClick={() => save({ location: null })}
+              disabled={busy}
+            >
+              Use automatic location
+            </button>
+          )}
+        </div>
+      )}
+
+      {entry.can_edit && (
+        <details style={{ marginTop: '0.5rem' }}>
+          <summary style={{ cursor: 'pointer' }}>Advanced</summary>
+          <div className="form-field" style={{ marginTop: '0.5rem' }}>
+            <label className="form-label" htmlFor="entry-time-zone">Time zone</label>
+            <select
+              id="entry-time-zone"
+              value={entry.tz_override ?? ''}
+              onChange={(e) => save({ tz_override: e.target.value || null })}
+              disabled={busy}
+            >
+              <option value="">Diary time zone</option>
+              {timeZones(entry.tz_override).map((zone) => (
+                <option key={zone} value={zone}>{zone}</option>
+              ))}
+            </select>
+            <p style={{ fontSize: '0.8rem', marginTop: '0.25rem' }}>
+              For a day in another time zone: event times show in that zone, and the date follows them.
+            </p>
+          </div>
+        </details>
+      )}
+
+      {error && <p className="error-message" style={{ marginTop: '0.5rem' }}>{error}</p>}
+    </div>
+  )
+}
