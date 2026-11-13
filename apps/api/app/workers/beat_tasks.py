@@ -95,6 +95,13 @@ async def _process_hard_deletes() -> None:
             log.exception("hard_delete_user_failed", user_id=str(user_id))
 
 
+@celery_app.task(name="app.workers.beat_tasks.sweep_stuck_photo_imports")
+def sweep_stuck_photo_imports() -> None:
+    from app.workers.photo_imports import sweep_stuck_imports
+
+    run_sync(sweep_stuck_imports())
+
+
 @celery_app.task(name="app.workers.beat_tasks.sweep_orphaned_photos")
 def sweep_orphaned_photos() -> None:
     run_sync(_sweep_orphaned_photos())

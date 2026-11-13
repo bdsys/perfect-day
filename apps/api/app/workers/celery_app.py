@@ -48,6 +48,10 @@ def create_celery() -> Celery:
                 # whenever beat restarts, so frequent deploys would starve it.
                 "schedule": crontab(minute=0, hour=6, day_of_week="mon"),
             },
+            "sweep-stuck-photo-imports": {
+                "task": "app.workers.beat_tasks.sweep_stuck_photo_imports",
+                "schedule": timedelta(minutes=10),
+            },
             "sweep-orphaned-photos": {
                 "task": "app.workers.beat_tasks.sweep_orphaned_photos",
                 "schedule": timedelta(hours=6),

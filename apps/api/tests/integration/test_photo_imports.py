@@ -624,6 +624,22 @@ async def test_cancel_stops_polling(client, db_session):
 
 
 @pytest.mark.asyncio
+async def test_cancel_while_copying_cancels(client, db_session):
+    auth, entry = await _owner_with_entry(client, db_session, "pi-cancel-copy")
+    imp = await _start(client, auth, entry["id"], FakeGoogle())
+    await db_session.execute(
+        update(PhotoImport).where(PhotoImport.id == uuid.UUID(imp["id"])).values(status="copying")
+    )
+    await db_session.commit()
+
+    r = await client.post(f"/v1/photo-imports/{imp['id']}/cancel", headers=auth)
+
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "cancelled"
+    assert (await _import_row(db_session, imp["id"])).status == "cancelled"
+
+
+@pytest.mark.asyncio
 async def test_cancel_after_done_changes_nothing(client, db_session):
     auth, entry = await _owner_with_entry(client, db_session, "pi-cancel-done")
     fake = FakeGoogle([_photo(1, read_fixture("sample.jpg"))])

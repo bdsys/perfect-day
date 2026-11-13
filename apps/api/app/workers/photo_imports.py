@@ -13,11 +13,11 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import cast
 
 import structlog
-from sqlalchemy import CursorResult, select, update
+from sqlalchemy import CursorResult, and_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import EntryPhoto, OAuthToken, Photo, PhotoImport, User
@@ -35,6 +35,8 @@ MIN_POLL_S = 1.0
 MAX_POLL_S = 60.0
 LIST_RETRIES = 3  # Ruling P1: retries after the first try, then "failed"
 ACTIVE = ("waiting", "copying")
+WAITING_GRACE = timedelta(minutes=5)  # past expires_at, the worker's own expiry gets first go
+COPYING_IDLE = timedelta(minutes=30)  # no per-item commit for this long: the chain died
 
 
 @dataclass(frozen=True)
@@ -324,3 +326,37 @@ async def _attach(db: AsyncSession, entry_id: uuid.UUID, photo_id: uuid.UUID) ->
     db.add(EntryPhoto(entry_id=entry_id, photo_id=photo_id))
     await db.flush()
     return True
+
+
+async def sweep_stuck_imports() -> int:
+    """End imports whose worker chain died, so the parent is never stuck on one.
+
+    A ``waiting`` import long past its expiry becomes ``expired``; a ``copying``
+    import with no progress (updated_at bumps on every per-item commit) becomes
+    ``failed``. Each is a guarded UPDATE, so a status a live worker just set is
+    never overwritten. No network calls; logs carry counts only. Returns how
+    many imports were ended.
+    """
+    from app.workers.utils import db_session
+
+    now = datetime.now(tz=UTC)
+    async with db_session() as db:
+        expired = await db.execute(
+            update(PhotoImport)
+            .where(
+                PhotoImport.status == "waiting",
+                PhotoImport.expires_at.is_not(None),
+                PhotoImport.expires_at < now - WAITING_GRACE,
+            )
+            .values(status="expired")
+        )
+        failed = await db.execute(
+            update(PhotoImport)
+            .where(and_(PhotoImport.status == "copying", PhotoImport.updated_at < now - COPYING_IDLE))
+            .values(status="failed")
+        )
+        await db.commit()
+    n_expired = cast(CursorResult, expired).rowcount
+    n_failed = cast(CursorResult, failed).rowcount
+    log.info("photo_import_sweep", expired=n_expired, failed=n_failed)
+    return n_expired + n_failed

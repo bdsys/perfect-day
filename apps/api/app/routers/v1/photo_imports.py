@@ -17,7 +17,7 @@ from datetime import UTC, datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi import status as http_status
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user
@@ -193,9 +193,14 @@ async def cancel_photo_import(
     The worker deletes the Google session on its next run.
     """
     imp = await _own_import(import_id, user, db)
-    if imp.status in ("waiting", "copying"):
-        imp.status = "cancelled"
-        await db.commit()
+    # Guarded: a worker (or the sweep) that just ended the import keeps its status.
+    await db.execute(
+        update(PhotoImport)
+        .where(PhotoImport.id == imp.id, PhotoImport.status.in_(("waiting", "copying")))
+        .values(status="cancelled")
+    )
+    await db.commit()
+    await db.refresh(imp)
     return _out(imp)
 
 
