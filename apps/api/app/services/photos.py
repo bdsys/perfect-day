@@ -146,19 +146,23 @@ def strip_location(data: bytes, mime: str) -> bytes:
         with Image.open(BytesIO(data)) as img:
             img.load()
             fmt = img.format or "JPEG"
+            # A colour profile carries no location: keep it so wide-gamut photos stay vivid.
+            icc = img.info.get("icc_profile")
+            icc_kw = {"icc_profile": icc} if icc else {}
             out = BytesIO()
             if fmt == "JPEG":
                 exif = img.getexif()
                 exif.pop(0x8825, None)
                 img.info.pop("xmp", None)
                 img.info.pop("XML:com.adobe.xmp", None)
-                img.save(out, "JPEG", quality="keep", exif=exif)
+                img.save(out, "JPEG", quality="keep", exif=exif, **icc_kw)
             else:
                 # Savers (pillow-heif, PNG, WebP) copy metadata out of img.info;
                 # clear everything that can carry a location.
+                # The profile is handed back explicitly below.
                 for k in ("exif", "xmp", "XML:com.adobe.xmp", "icc_profile"):
                     img.info.pop(k, None)
-                img.save(out, fmt)
+                img.save(out, fmt, **icc_kw)
             return out.getvalue()
     except Exception as exc:
         raise ValueError("unreadable_image") from exc
@@ -195,7 +199,7 @@ def make_display_jpeg(data: bytes, mime: str) -> bytes | None:
     """A full-size JPEG of a HEIC/HEIF photo, for browsers that cannot show HEIC.
 
     Returns None for types browsers already display. The JPEG is built without
-    any EXIF, so it carries no location and is safe to show to anyone.
+    any EXIF (only the colour profile is kept), so it carries no location and is safe to show to anyone.
     Raises ValueError on undecodable input.
     """
     if mime not in _NEEDS_DISPLAY_COPY:
@@ -205,10 +209,11 @@ def make_display_jpeg(data: bytes, mime: str) -> bytes | None:
     try:
         with Image.open(BytesIO(data)) as img:
             img.load()
+            icc = img.info.get("icc_profile")  # colour only: no location in it
             upright = ImageOps.exif_transpose(img) or img
             rgb = upright if upright.mode == "RGB" else upright.convert("RGB")
             out = BytesIO()
-            rgb.save(out, format="JPEG", quality=DISPLAY_QUALITY)
+            rgb.save(out, format="JPEG", quality=DISPLAY_QUALITY, icc_profile=icc)
             return out.getvalue()
     except Exception as e:
         raise ValueError("unreadable_image") from e
