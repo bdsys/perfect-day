@@ -80,15 +80,19 @@ class TestScanReportsTheCalendar:
         assert _codes(run) == ["calendar_disconnected"]
         assert "Reconnect" in run.errors[0]["message"]
 
-    async def test_a_connection_without_calendar_permission_is_reported_as_disconnected(
+    async def test_a_photos_only_connection_scans_quietly(
         self, client: AsyncClient, db_session: AsyncSession
     ):
-        diary = await _diary_with_google(db_session, scopes_granted=[])
+        # Since C-19 a token without calendar can only come from a photos-only
+        # connect; that person never had a calendar to lose.
+        diary = await _diary_with_google(
+            db_session, scopes_granted=["photospicker.mediaitems.readonly"]
+        )
 
         run = await _scan(diary)
 
-        assert run.status == "partial"
-        assert _codes(run) == ["calendar_disconnected"]
+        assert run.status == "success"
+        assert run.errors is None
 
     async def test_google_revoking_the_grant_during_the_scan_is_reported_as_disconnected(
         self, client: AsyncClient, db_session: AsyncSession
@@ -205,7 +209,11 @@ async def _state(client: AsyncClient, auth: dict) -> str:
 
 
 async def _callback(
-    client: AsyncClient, state: str, *, granted: str, access_token: str = "ya29.new"  # noqa: S107
+    client: AsyncClient,
+    state: str,
+    *,
+    granted: str,
+    access_token: str = "ya29.new",  # noqa: S107
 ):
     """Google returns to the callback having granted the *granted* scope string."""
     token_response = {
@@ -394,13 +402,17 @@ class TestScanConfigReportsTheOwnersCalendar:
 
         assert (await _scan_config(client, diary, auth))["calendar"] == "lost"
 
-    async def test_owner_without_calendar_permission(
+    async def test_owner_with_a_photos_only_connection_has_no_calendar(
         self, client: AsyncClient, db_session: AsyncSession
     ):
         auth, diary = await _owner_and_diary(client, "sc-noscope@example.com")
-        await _give_google(db_session, "sc-noscope@example.com", scopes_granted=[])
+        await _give_google(
+            db_session,
+            "sc-noscope@example.com",
+            scopes_granted=["photospicker.mediaitems.readonly"],
+        )
 
-        assert (await _scan_config(client, diary, auth))["calendar"] == "lost"
+        assert (await _scan_config(client, diary, auth))["calendar"] == "none"
 
     async def test_co_parent_sees_the_owners_connection_and_cannot_scan(
         self, client: AsyncClient, db_session: AsyncSession
