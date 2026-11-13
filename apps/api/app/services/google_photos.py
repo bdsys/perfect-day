@@ -114,7 +114,7 @@ def _item(data: dict) -> PickedItem:
 
 def _check(resp: httpx.Response) -> None:
     code = resp.status_code
-    if code < 400:
+    if 200 <= code < 300:
         return
     if code in (401, 403):
         raise GoogleAuthError(f"google photos {code}")
@@ -123,14 +123,28 @@ def _check(resp: httpx.Response) -> None:
     raise GoogleError(f"google photos {code}")
 
 
+async def _require_https(request: httpx.Request) -> None:
+    """Refuse any hop (including a redirect) that is not TLS: these are a child's photos."""
+    if request.url.scheme != "https":
+        raise GoogleError("download redirected to a non-https url")
+
+
 class GooglePhotosClient:
     def __init__(self, access_token: str, transport: httpx.AsyncBaseTransport | None = None):
         self._headers = {"Authorization": f"Bearer {access_token}"}
         self._transport = transport
 
-    def _client(self, timeout: httpx.Timeout = API_TIMEOUT) -> httpx.AsyncClient:
+    def _client(
+        self, timeout: httpx.Timeout = API_TIMEOUT, *, follow_redirects: bool = False
+    ) -> httpx.AsyncClient:
+        # httpx drops the Authorization header on a redirect to another origin
+        # (httpx/_client.py, Client._redirect_headers), so following is safe.
         return httpx.AsyncClient(
-            transport=self._transport, timeout=timeout, headers=self._headers
+            transport=self._transport,
+            timeout=timeout,
+            headers=self._headers,
+            follow_redirects=follow_redirects,
+            event_hooks={"request": [_require_https]} if follow_redirects else None,
         )
 
     async def _request(self, method: str, url: str, **kwargs) -> httpx.Response:
@@ -177,7 +191,7 @@ class GooglePhotosClient:
             raise GoogleError("base url is not https")
         buf = bytearray()
         try:
-            async with self._client(DOWNLOAD_TIMEOUT) as client:
+            async with self._client(DOWNLOAD_TIMEOUT, follow_redirects=True) as client:
                 async with client.stream("GET", f"{item.base_url}=d") as resp:
                     _check(resp)
                     declared = resp.headers.get("content-length")

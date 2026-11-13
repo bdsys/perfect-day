@@ -11,6 +11,7 @@ import pytest
 from app.services.google_photos import (
     BASE_URL,
     GoogleAuthError,
+    GoogleError,
     GooglePhotosClient,
     GoogleUnavailable,
     PhotoTooLarge,
@@ -197,3 +198,42 @@ async def test_delete_session_sends_delete():
 
     await _client(handler).delete_session("sess-1")
     assert seen == {"method": "DELETE", "url": f"{BASE_URL}/sessions/sess-1"}
+
+
+async def test_download_follows_redirect_without_sending_the_token_to_the_other_host():
+    seen: list[tuple[str, str | None]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.url.host, request.headers.get("authorization")))
+        if request.url.host == "lh3.googleusercontent.com":
+            return httpx.Response(302, headers={"location": "https://cdn.example.net/blob/xyz"})
+        return httpx.Response(200, content=b"jpeg-bytes")
+
+    item = PickedItem("item-1", "PHOTO", None, "https://lh3.googleusercontent.com/b", None, "a.jpg")
+    data = await _client(handler).download(item)
+
+    assert data == b"jpeg-bytes"
+    assert seen == [
+        ("lh3.googleusercontent.com", "Bearer ya29.token"),
+        ("cdn.example.net", None),  # the bearer token never reaches the second host
+    ]
+
+
+async def test_download_never_follows_a_redirect_to_plain_http():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.scheme == "https":
+            return httpx.Response(302, headers={"location": "http://cdn.example.net/blob"})
+        raise AssertionError("a plain-http request was made")
+
+    item = PickedItem("item-1", "PHOTO", None, "https://lh3.googleusercontent.com/b", None, "a.jpg")
+    with pytest.raises(GoogleError):
+        await _client(handler).download(item)
+
+
+@pytest.mark.parametrize("status", [301, 302, 303, 307, 308])
+async def test_bare_redirect_from_an_api_call_is_an_error(status):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status, headers={"location": "https://elsewhere.example.net/x"})
+
+    with pytest.raises(GoogleError):
+        await _client(handler).get_session("sess-1")
