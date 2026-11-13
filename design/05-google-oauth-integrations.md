@@ -1,5 +1,7 @@
 # Google OAuth + Calendar + Photos Integration
 
+> **Google Photos changed on 31 March 2025.** The full-library scope `photoslibrary.readonly` was removed; apps can only read photos they created (<https://developers.google.com/photos/support/updates>). The Photos grant and the scan-time photo filtering below **cannot be built**. Web photo adding uses the parent's own uploads, plus possibly the Google Photos Picker API (the parent picks photos each time). Automatic photos move to the mobile app's camera roll: see [`11-mobile-app.md`](11-mobile-app.md) M-1. Decision: Andrew, 2026-11-13.
+
 ## Three flows, separated
 
 OAuth scopes for login vs Calendar vs Photos are separated. Login uses minimum scopes; Calendar and Photos are requested only when the user opts into the integration on a diary.
@@ -8,7 +10,7 @@ OAuth scopes for login vs Calendar vs Photos are separated. Login uses minimum s
 |---|---|---|
 | **Login** | Sign-in / sign-up | `openid email profile` |
 | **Calendar grant** | Per diary, when user enables Calendar integration | `calendar.readonly` |
-| **Photos grant** | Per diary, when user enables Photos integration | `photoslibrary.readonly` |
+| ~~**Photos grant**~~ | ~~Per diary, when user enables Photos integration~~ | ~~`photoslibrary.readonly`~~ — removed by Google 2025-03-31; see the note above |
 
 Combined grant supported when the user enables both at once — single consent screen with both scopes. User can still partial-grant by unchecking one on the consent screen.
 
@@ -104,6 +106,8 @@ PoC default: **primary calendar only.** Diary settings UI lists all calendars fr
 
 ## Photos filtering (per-diary)
 
+**Superseded (2026-11-13):** depends on the removed scope; see the note at the top.
+
 **No album selection — date-range filtering only.** Worker pulls photos taken within ±3 days of any Entry's date range.
 
 Privacy/cost mitigations:
@@ -135,7 +139,7 @@ Separate dev and prod projects from day one. Avoids dev calls eating prod quota;
 ## Decisions locked
 
 - Calendar selection: primary by default; per-diary checkbox UI via `diary_calendar_filters`.
-- Photos: date-range filter only; metadata-first; 90-day default backfill cap.
+- ~~Photos: date-range filter only; metadata-first; 90-day default backfill cap.~~ Superseded 2026-11-13: Google removed library access.
 - Facebook: login only. No `oauth_tokens` row.
 - Spotify: skipped. Stubs only.
 - Separate dev/prod Google Cloud projects from day one.

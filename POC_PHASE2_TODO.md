@@ -11,7 +11,7 @@ Items must be built in wave order. Within a wave, items are independent and can 
 ### Re-entry — do before resuming feature work
 | # | Feature | Status |
 |---|---|---|
-| 25 | Full code review of everything shipped so far (Phase 1 + Phase 2 items 13, 15, 16, 17, 19, 22, 23) | **review done; fixes on `chore/code-review-2026-11`, `make test-all` green 2026-11-11, not yet committed or merged** |
+| 25 | Full code review of everything shipped so far (Phase 1 + Phase 2 items 13, 15, 16, 17, 19, 22, 23) | **done** — review fixes merged; open findings tracked in `design/code-review-2026-11.md` |
 
 Added 2026-11-11 after a five-month gap. Findings, what was fixed and what is still open are in [`design/code-review-2026-11.md`](design/code-review-2026-11.md). Before starting items 24, 14 and 18: commit and merge the fix branch.
 
@@ -44,14 +44,14 @@ Build 22 first within Wave A — it introduces the LLM provider abstraction that
 | 16 | Weather enrichment (Open-Meteo) | **done** |
 | 19 | Diary create wizard + edit settings | **done** |
 | 23 | Manual entry creation form (popover) | **done** |
-| 24 | Per-entry location & time (lat/lon + tz_override) | **built** on `feat/24-per-entry-location` — spec `docs/superpowers/specs/2026-11-12-per-entry-location-design.md` |
+| 24 | Per-entry location & time (lat/lon + tz_override) | **done** — PR #48, merged 2026-11-12; spec `docs/superpowers/specs/2026-11-12-per-entry-location-design.md` |
 
 16's backfill extension requires 17 done first.
 
 ### Wave C — requires Wave B complete
 | # | Feature | Status |
 |---|---|---|
-| 14 | Google Photos grant + scan | pending |
+| 14 | Fast photo adding on drafts (was "Google Photos grant + scan") | pending — needs design. Google removed library access on 2025-03-31; automatic photos moved to the mobile app (`design/11-mobile-app.md` M-1) |
 | 18 | Tier enforcement | pending |
 
 Build 14 before 18. 18 must gate photo uploads (needs 13) and worker auto-entries (touches `tasks.py` after 14/15/17 settle).
@@ -78,7 +78,7 @@ What's already in the codebase vs. what needs to be built. Verified by direct co
 | 15 | Multi-day entries | `entry_end_date` column, API/CRUD accepts it, TZ helper | Worker grouping logic for events spanning midnight; timeline UI for multi-day entries |
 | 13 | MinIO + photo upload | AES-GCM helpers (`core/security.py:87-101`), `Photo`/`EntryPhoto`/`DiaryPhoto` models | S3 client wiring, `upload-url`/`finalize` endpoints, per-photo DEK encryption, decrypt-and-stream download |
 | 16 | Weather enrichment | `open_meteo.py` client, `enrichments.py` orchestrator, migration 0009, Diary lat/lon, citation validator extended | **done** — all code shipped; `make test-all` green |
-| 14 | Google Photos | OAuth scaffolding reusable from Calendar (same `oauth_tokens` table, encryption, partial-grant pattern) | Photos scope + grant flow, `ingest_photo` worker, metadata-first filter, `entry_photos` attachment, backfill extension |
+| 14 | Fast photo adding on drafts | Photo upload and `entry_photos` attachment (item 13); photo GPS sets the entry's place (item 24) | Redesigned 2026-11-13: the Google Photos scan can't be built (library access removed 2025-03-31). Needs a design: quick phone upload on drafts, maybe the Picker API |
 | 18 | Tier enforcement | `services/tier.py` with `enforce_entry_tier_limit`; wired into manual-entry router paths | Not called from worker auto-entry path (`workers/tasks.py`); not gating photo uploads; 403 + structured error in UI |
 | 19 | Diary create wizard + edit settings | `PATCH /v1/diaries/{id}` endpoint + `DiaryPatch` schema; `subject_name`/`subject_relation` already in `DiaryOut` | **done** — merged in PR #38 (2026-06-10). `/diaries/new` and `/diaries/[diaryId]/settings` pages, `api.diaries.patch()`, `voice_override`/`tone_hint` on `DiaryCreate`/`DiaryOut`, Playwright spec `diary-create-settings.spec.ts`. |
 | 23 | Manual entry form | `"New entry"` button + `handleNewEntry` (hardcodes today); `.popover` CSS class; backend `EntryCreate` accepts `entry_end_date` | **done** — Widen `entries.create` type to include `entry_end_date`; popover form with date/end_date/title inputs; client-side end>=start validation; new Playwright spec. Plan: `docs/superpowers/plans/2026-05-28-manual-entry-form.md` |

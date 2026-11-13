@@ -57,6 +57,8 @@ Perfect Day is architected from day one for "diary of someone you love": subject
 
 Day One connects Spotify/Strava via IFTTT — this *appends a line* saying "you listened to X." We *generate a narrative paragraph* from Calendar, Photos, weather, and music combined. That's a different order of magnitude.
 
+**Caveat (2026-11-13):** Google removed third-party access to the Google Photos library on 2025-03-31, so on the web, photos come from the parent (upload, or the Google Photos Picker). Automatic photos need the mobile app reading the phone's camera roll: see `design/11-mobile-app.md` M-1.
+
 ### 4. AI is expensive and weak at Day One
 
 Gold is $74.99/yr — their priciest tier — and the AI is assistive prompts and summaries. We can provide generative auto-entry at our mid-tier and use it as the primary reason to upgrade.
@@ -92,7 +94,7 @@ Replaces the Free / Tier 1 / Tier 2 structure in `docs/archive/OPUS_INITIAL_PLAN
 | Manual entries | Unlimited | Unlimited | Unlimited |
 | **AI auto-generated drafts** | **5/month** | Unlimited | Unlimited |
 | Photos per entry | 1 | Unlimited | Unlimited |
-| Calendar + Photos integration | Yes | Yes | Yes |
+| Calendar + Photos integration (automatic photos need the mobile app, `design/11-mobile-app.md`) | Yes | Yes | Yes |
 | Weather enrichment | Yes | Yes | Yes |
 | Music enrichment (Spotify/Apple Music) | No | Yes | Yes |
 | Voice-note → narrative | No | Yes | Yes |

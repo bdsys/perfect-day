@@ -39,7 +39,7 @@ The "make the diary actually useful" phase. Photos, multi-day entries, weather, 
 | # | Feature | Notes |
 |---|---|---|
 | 13 | **MinIO + photo upload** | `upload-url`, `finalize`, AES-GCM encryption, decrypt-and-stream download. |
-| 14 | **Google Photos grant + scan** | Requires MinIO. Metadata-first filter, `ingest_photo`, `entry_photos` attachment. As part of this, extend backfill (item 17) to cover the `google_photos` source with the spec'd 90-day default cap. |
+| 14 | **Fast photo adding on drafts** (was "Google Photos grant + scan") | Google removed full-library access on 2025-03-31, so the scan can't be built. Now: parents add photos from their phone to calendar-made drafts in a few taps; the Google Photos Picker API is a possible second button. Automatic photos move to the mobile app ([`11-mobile-app.md`](11-mobile-app.md) M-1). Decision: Andrew, 2026-11-13. Needs its own design. |
 | 15 | **Multi-day entry support** | `entry_end_date`, multi-day grouping in worker, timeline display. |
 | 16 | **Weather enrichment (Open-Meteo)** | No API key. Unlimited calls. Historical data going back decades — critical for backfill. Writes to `enrichments` table. As part of this, extend backfill (item 17) to enrich each chunk with weather. |
 | 17 | **Backfill — slice 1 (Calendar-only, spec-compliant)** | Endpoint, `BackfillRun` table, and basic worker already exist. This slice fixes three gaps from the current implementation (see `design/06-scan-worker.md`): switch request body to `{from_date, to_date, sources}`, add weekly chunking with 2s sleep between chunks, acquire `scan_lock:{diary_id}` so backfill and regular scans serialize, and add `DELETE /v1/diaries/{id}/scan/backfill/{runId}` with chunk-boundary cancellation. Photos and weather sources are added with items 14 and 16, not here. |
@@ -86,12 +86,12 @@ See also [`COMPETITION.md`](../COMPETITION.md) for the full competitive-parity t
 | Spotify enrichment | Stub OAuth endpoints | Add full integration when Tier 2 is defined |
 | Export (PDF/JPG/PNG) | Breadcrumb API routes | Add `render_export` Celery task |
 | Social sharing (OG cards) | Breadcrumb API routes | Add `share_tokens` table + Next.js SSR share route |
-| Expo mobile app | Same API surface | Start after Phase 2 web is stable |
+| Expo mobile app | Same API surface | Start after Phase 2 web is stable. Requirements in [`11-mobile-app.md`](11-mobile-app.md); its M-1 (automatic photos from the camera roll) is now the only route to automatic photos. |
 | Stripe / billing | `users.stripe_customer_id` placeholder | Add Stripe webhooks + billing portal in v1.x |
 | Data export (GDPR portability) | — | Add `GET /v1/auth/me/export` before public launch |
 | Entry search (full-text) | Breadcrumb API route | `pg_trgm` or `pgvector` index on `entries.body_markdown` |
 | Comments / reactions | Breadcrumb API routes | Explicit non-goals; add if user research warrants |
-| Photo-only auto entries | Worker logic only | Minor change once Photos integration is stable |
+| Photo-only auto entries | Worker logic only | Depends on automatic photos, which now come from the mobile app (`11-mobile-app.md` M-1) |
 | Auto-backfill on first OAuth connect | Worker logic | Not in `design/06-scan-worker.md`. Today the first scan only pulls 90 days back; for the "diary of a child's life" use case we may want to offer (or auto-run) a longer initial backfill. Needs a design decision before building. |
 
 ---
