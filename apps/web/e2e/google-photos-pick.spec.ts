@@ -67,27 +67,28 @@ test('pick, wait, see the notice and photos, dismiss, and it stays gone after re
 
   let pickDone = false
   let dismissed = false
+  let started = false
+  let listGets = 0
   await page.route(`${API}/v1/entries/${ENTRY_ID}`, (r) =>
     r.fulfill(json(entry(pickDone ? ['p1', 'p2'] : []))),
   )
   await page.route(`${API}/v1/entries/${ENTRY_ID}/photo-imports`, (r) => {
     if (r.request().method() === 'POST') {
+      started = true
       return r.fulfill(json({ id: IMPORT_ID, picker_uri: 'https://photos.google.com/picker/abc', status: 'waiting' }, 201))
     }
+    // The page polls this list. After the start it reports waiting, then copying, then done.
+    if (started) {
+      listGets += 1
+      if (listGets >= 3) pickDone = true
+    }
+    const status = pickDone ? 'done' : listGets >= 2 ? 'copying' : 'waiting'
     return r.fulfill(json(
-      pickDone && !dismissed
-        ? [{ id: IMPORT_ID, entry_id: ENTRY_ID, status: 'done', added_count: 2, skipped_videos: 1, failed_names: [] }]
+      started && !dismissed
+        ? [{ id: IMPORT_ID, entry_id: ENTRY_ID, status,
+             added_count: pickDone ? 2 : 0, skipped_videos: pickDone ? 1 : 0, failed_names: [] }]
         : [],
     ))
-  })
-  let polls = 0
-  await page.route(`${API}/v1/photo-imports/${IMPORT_ID}`, (r) => {
-    polls += 1
-    if (polls >= 2) pickDone = true
-    return r.fulfill(json({
-      id: IMPORT_ID, entry_id: ENTRY_ID, status: pickDone ? 'done' : 'copying',
-      added_count: pickDone ? 2 : 0, skipped_videos: pickDone ? 1 : 0, failed_names: [],
-    }))
   })
   await page.route(`${API}/v1/photo-imports/${IMPORT_ID}/dismiss`, (r) => {
     dismissed = true
@@ -101,6 +102,10 @@ test('pick, wait, see the notice and photos, dismiss, and it stays gone after re
   await expect(page.getByText('Waiting for you to finish in Google Photos…')).toBeVisible()
   expect(await page.evaluate(() => (window as unknown as { __tab: { location: { href: string } } }).__tab.location.href))
     .toBe('https://photos.google.com/picker/abc/autoclose')
+
+  // Close the panel mid-wait: the page still tracks the import and shows the outcome.
+  await page.getByRole('button', { name: 'Add photos' }).click()
+  await expect(page.getByText('Waiting for you to finish in Google Photos…')).toBeVisible()
 
   await expect(page.getByText('2 photos added from Google Photos · 1 video skipped')).toBeVisible({ timeout: 20_000 })
   await expect(page.getByRole('button', { name: 'Remove photo from entry' })).toHaveCount(2)

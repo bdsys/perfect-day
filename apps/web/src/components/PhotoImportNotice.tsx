@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type PhotoImport } from "../lib/api";
 import { navigateTo } from "../lib/navigate";
 
@@ -8,7 +8,14 @@ interface Props {
   /** Change this to reload the list (e.g. after an import finishes). */
   refreshKey?: number;
   onDismiss?: () => void;
+  /** An import that was in flight has reached a final state: refresh the entry. */
+  onFinished?: () => void;
+  /** True while any import is waiting or copying. */
+  onInFlightChange?: (inFlight: boolean) => void;
 }
+
+const POLL_MS = 3000;
+const isInFlight = (i: PhotoImport) => i.status === "waiting" || i.status === "copying";
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
@@ -37,24 +44,58 @@ export function importMessage(imp: PhotoImport): string | null {
   }
 }
 
-export function PhotoImportNotice({ entryId, refreshKey = 0, onDismiss }: Props) {
+export function PhotoImportNotice({ entryId, refreshKey = 0, onDismiss, onFinished, onInFlightChange }: Props) {
   const [imports, setImports] = useState<PhotoImport[]>([]);
   const [error, setError] = useState<string | null>(null);
 
+  const onFinishedRef = useRef(onFinished);
+  onFinishedRef.current = onFinished;
+  const onInFlightRef = useRef(onInFlightChange);
+  onInFlightRef.current = onInFlightChange;
+  const inFlightIds = useRef<Set<string>>(new Set());
+  const aliveRef = useRef(true);
   useEffect(() => {
-    let cancelled = false;
-    api.photoImports
-      .listForEntry(entryId)
-      .then((l) => {
-        if (!cancelled) setImports(l);
-      })
-      .catch(() => {
-        /* a notice that can't load is not worth an error on the entry */
-      });
+    aliveRef.current = true;
     return () => {
-      cancelled = true;
+      aliveRef.current = false;
     };
-  }, [entryId, refreshKey]);
+  }, []);
+
+  const load = useCallback(async () => {
+    try {
+      const list = await api.photoImports.listForEntry(entryId);
+      if (!aliveRef.current) return;
+      const now = new Set(list.filter(isInFlight).map((i) => i.id));
+      const finished = [...inFlightIds.current].some((id) => !now.has(id));
+      inFlightIds.current = now;
+      setImports(list);
+      onInFlightRef.current?.(now.size > 0);
+      if (finished) onFinishedRef.current?.();
+    } catch {
+      /* a notice that can't load is not worth an error on the entry */
+    }
+  }, [entryId]);
+
+  useEffect(() => {
+    void load();
+  }, [load, refreshKey]);
+
+  const anyInFlight = imports.some(isInFlight);
+  useEffect(() => {
+    if (!anyInFlight) return;
+    const id = setInterval(() => void load(), POLL_MS);
+    return () => clearInterval(id);
+  }, [anyInFlight, load]);
+
+  async function cancel(id: string) {
+    setError(null);
+    try {
+      await api.photoImports.cancel(id);
+    } catch {
+      setError("Couldn't cancel. Try again.");
+    }
+    void load();
+  }
 
   async function dismiss(id: string) {
     setError(null);
@@ -77,22 +118,35 @@ export function PhotoImportNotice({ entryId, refreshKey = 0, onDismiss }: Props)
     }
   }
 
-  const shown = imports.filter((i) => importMessage(i) !== null);
+  const shown = imports.filter((i) => isInFlight(i) || importMessage(i) !== null);
   if (shown.length === 0) return null;
 
   return (
     <div style={{ display: "grid", gap: "0.5rem", margin: "0.75rem 0" }}>
       {shown.map((imp) => (
         <div key={imp.id} className="card" role="status" style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
-          <span style={{ flex: 1 }}>{importMessage(imp)}</span>
+          <span style={{ flex: 1 }}>
+            {imp.status === "waiting"
+              ? "Waiting for you to finish in Google Photos…"
+              : imp.status === "copying"
+                ? "Copying photos from Google Photos…"
+                : importMessage(imp)}
+          </span>
+          {imp.status === "waiting" && (
+            <button type="button" className="btn btn-secondary" onClick={() => void cancel(imp.id)}>
+              Cancel
+            </button>
+          )}
           {imp.status === "needs_reconnect" && (
             <button type="button" className="btn btn-secondary" onClick={() => void reconnect()}>
               Reconnect Google Photos
             </button>
           )}
-          <button type="button" className="btn btn-secondary" onClick={() => void dismiss(imp.id)}>
-            Dismiss
-          </button>
+          {!isInFlight(imp) && (
+            <button type="button" className="btn btn-secondary" onClick={() => void dismiss(imp.id)}>
+              Dismiss
+            </button>
+          )}
         </div>
       ))}
       {error && <p role="alert" className="error-message">{error}</p>}

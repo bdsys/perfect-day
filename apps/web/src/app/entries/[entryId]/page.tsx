@@ -84,6 +84,7 @@ function EntryDetailPageInner() {
   const [answeringSuggestion, setAnsweringSuggestion] = useState(false)
 
   const [noticeKey, setNoticeKey] = useState(0)
+  const [importInFlight, setImportInFlight] = useState(false)
   const googleMsg = googleStatusMessage({
     status: searchParams.get('google'),
     missing: searchParams.get('missing'),
@@ -280,7 +281,6 @@ function EntryDetailPageInner() {
   }
 
   const refreshAfterImport = useCallback(() => {
-    setNoticeKey((k) => k + 1)
     api.entries.get(entryId).then(setEntry).catch(() => {})
   }, [entryId])
 
@@ -329,7 +329,7 @@ function EntryDetailPageInner() {
           <AddPhotos
             entry={entry}
             onChanged={setEntry}
-            googlePhotos={<GooglePhotosPick entry={entry} onDone={refreshAfterImport} />}
+            googlePhotos={<GooglePhotosPick entry={entry} inFlight={importInFlight} onStarted={() => setNoticeKey((k) => k + 1)} />}
           />
         )}
 
@@ -469,7 +469,7 @@ function EntryDetailPageInner() {
               />
             )}
 
-            {entry.can_edit && <PhotoImportNotice entryId={entry.id} refreshKey={noticeKey} />}
+            {entry.can_edit && <PhotoImportNotice entryId={entry.id} refreshKey={noticeKey} onFinished={refreshAfterImport} onInFlightChange={setImportInFlight} />}
 
             {/* Photo strip */}
             {entry.photos && entry.photos.length > 0 && (
