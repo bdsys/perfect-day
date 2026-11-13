@@ -157,3 +157,94 @@ async def test_library_near_date_orders_closest_first(client, db_session):
     assert [p["id"] for p in r.json()] == [
         str(near.id), str(mid.id), str(far.id), str(undated.id)
     ]
+
+
+# ---------------------------------------------------------------------------
+# Negative cases: each clause of the _readable_photo predicate is pinned by a
+# photo that must NOT be readable by someone who otherwise could read it.
+# ---------------------------------------------------------------------------
+
+
+async def _sql(db_session, statement: str, **params):
+    from sqlalchemy import text
+
+    await db_session.execute(text(statement), params)
+    await db_session.commit()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["thumb", "full"])
+@pytest.mark.parametrize(
+    "breakage",
+    [
+        "entry_soft_deleted",
+        "diary_soft_deleted",
+        "photo_soft_deleted",
+        "photo_not_finalized",
+    ],
+)
+async def test_owner_cannot_read_photo_that_is_not_live(client, db_session, breakage, kind):
+    # The owner can normally read this photo (editor uploaded it onto the owner's entry).
+    auth, pid, _ = await _setup(client, db_session, f"neg-{breakage}-{kind}", published=True)
+    r = await client.get(f"/v1/photos/{pid}?kind={kind}", headers=auth["owner"])
+    assert r.status_code == 200, r.text  # control: readable before it is broken
+
+    statements = {
+        "entry_soft_deleted": "UPDATE entries SET deleted_at = now()",
+        "diary_soft_deleted": "UPDATE diaries SET deleted_at = now()",
+        "photo_soft_deleted": "UPDATE photos SET deleted_at = now() WHERE id = :pid",
+        "photo_not_finalized": "UPDATE photos SET finalized_at = NULL WHERE id = :pid",
+    }
+    await _sql(db_session, statements[breakage], pid=uuid.UUID(pid))
+
+    r = await client.get(f"/v1/photos/{pid}?kind={kind}", headers=auth["owner"])
+    assert r.status_code == 404, r.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["thumb", "full"])
+async def test_member_of_another_diary_cannot_read_photo(client, db_session, kind):
+    _, pid, _ = await _setup(client, db_session, f"xdiary-{kind}", published=True)
+    other_owner = await _register(client, f"xdiary-other-{kind}@example.com")
+    other_diary = (
+        await client.post("/v1/diaries", json={"name": "B", "timezone": "UTC"}, headers=other_owner)
+    ).json()
+    # An editor elsewhere: a predicate that ignored which diary the role belongs to would pass.
+    editor = await _register(client, f"xdiary-ed-{kind}@example.com")
+    await _grant(db_session, other_diary["id"], f"xdiary-ed-{kind}@example.com", "editor")
+
+    for who in (other_owner, editor):
+        r = await client.get(f"/v1/photos/{pid}?kind={kind}", headers=who)
+        assert r.status_code == 404, r.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["thumb", "full"])
+async def test_viewer_of_published_entry_cannot_read_photo_only_on_other_diarys_draft(
+    client, db_session, kind
+):
+    prefix = f"vdraft-{kind}"
+    auth, _, _ = await _setup(client, db_session, prefix, published=True)  # diary A, published
+    viewer = auth["viewer"]
+    # Diary B: the same viewer may view it, but the only entry holding the photo is a draft.
+    owner_b = await _register(client, f"{prefix}-owner-b@example.com")  # free tier: one diary each
+    diary_b = (
+        await client.post("/v1/diaries", json={"name": "B", "timezone": "UTC"}, headers=owner_b)
+    ).json()
+    await _grant(db_session, diary_b["id"], f"{prefix}-editor@example.com", "editor")
+    await _grant(db_session, diary_b["id"], f"{prefix}-viewer@example.com", "viewer")
+    draft_b = (
+        await client.post(
+            f"/v1/diaries/{diary_b['id']}/entries",
+            json={"entry_date": "2026-05-17"},
+            headers=owner_b,
+        )
+    ).json()
+    only_b = await upload_photo(client, auth["editor"], read_fixture("sample.jpg"))
+    r = await client.post(
+        f"/v1/entries/{draft_b['id']}/photos", json={"photo_id": only_b}, headers=auth["editor"]
+    )
+    assert r.status_code == 201, r.text
+
+    r = await client.get(f"/v1/photos/{only_b}?kind={kind}", headers=viewer)
+    assert r.status_code == 404, r.text
