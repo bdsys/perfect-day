@@ -29,6 +29,8 @@ export function GooglePhotosPick({ entry, inFlight, onStarted }: Props) {
   const [phase, setPhase] = useState<Phase>("loading");
   const [starting, setStarting] = useState(false);
   const startingRef = useRef(false);
+  const [connecting, setConnecting] = useState(false);
+  const connectingRef = useRef(false);
   const [fallbackUrl, setFallbackUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [offerConnect, setOfferConnect] = useState(false);
@@ -51,11 +53,16 @@ export function GooglePhotosPick({ entry, inFlight, onStarted }: Props) {
   }, []);
 
   async function connect() {
+    if (connectingRef.current) return; // two authorize calls would leave the wrong connect cookie
+    connectingRef.current = true;
+    setConnecting(true);
     setError(null);
     try {
       const { url } = await api.integrations.getGoogleAuthUrl("photos", `/entries/${entry.id}`);
       navigateTo(url);
     } catch {
+      connectingRef.current = false;
+      setConnecting(false);
       setError("Couldn't start Google. Try again.");
     }
   }
@@ -98,7 +105,7 @@ export function GooglePhotosPick({ entry, inFlight, onStarted }: Props) {
   if (phase === "not_connected") {
     return (
       <div>
-        <button type="button" className="btn btn-secondary" onClick={() => void connect()}>
+        <button type="button" className="btn btn-secondary" onClick={() => void connect()} disabled={connecting}>
           Connect Google Photos
         </button>
         {error && <p role="alert" className="error-message">{error}</p>}
@@ -126,7 +133,7 @@ export function GooglePhotosPick({ entry, inFlight, onStarted }: Props) {
       </button>
       {error && <p role="alert" className="error-message">{error}</p>}
       {offerConnect && (
-        <button type="button" className="btn btn-secondary" onClick={() => void connect()}>
+        <button type="button" className="btn btn-secondary" onClick={() => void connect()} disabled={connecting}>
           Connect Google Photos
         </button>
       )}

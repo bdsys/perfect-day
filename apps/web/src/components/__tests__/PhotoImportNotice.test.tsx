@@ -82,6 +82,25 @@ describe('PhotoImportNotice', () => {
     expect(await screen.findByText('Copying photos from Google Photos…')).toBeInTheDocument()
   })
 
+  it('copying offers Cancel, so a stuck copy never traps the entry', async () => {
+    listForEntry.mockResolvedValue([imp({ status: 'copying' })])
+    ;(api.photoImports.cancel as jest.Mock).mockResolvedValue(undefined)
+    render(<PhotoImportNotice entryId="e1" onFinished={jest.fn()} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(api.photoImports.cancel).toHaveBeenCalledWith('i1'))
+  })
+
+  it('two quick taps on Reconnect give one authorize call', async () => {
+    listForEntry.mockResolvedValue([imp({ status: 'needs_reconnect' })])
+    authUrl.mockReturnValue(new Promise(() => {}))
+    render(<PhotoImportNotice entryId="e1" onFinished={jest.fn()} onDismiss={jest.fn()} />)
+    const btn = await screen.findByRole('button', { name: 'Reconnect Google Photos' })
+    fireEvent.click(btn)
+    fireEvent.click(btn)
+    expect(authUrl).toHaveBeenCalledTimes(1)
+    expect(btn).toBeDisabled()
+  })
+
   it('cancel on the waiting line calls cancel', async () => {
     listForEntry.mockResolvedValue([imp({ status: 'waiting' })])
     ;(api.photoImports.cancel as jest.Mock).mockResolvedValue(undefined)

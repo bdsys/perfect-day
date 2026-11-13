@@ -47,6 +47,8 @@ export function importMessage(imp: PhotoImport): string | null {
 export function PhotoImportNotice({ entryId, refreshKey = 0, onDismiss, onFinished, onInFlightChange }: Props) {
   const [imports, setImports] = useState<PhotoImport[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [reconnecting, setReconnecting] = useState(false);
+  const reconnectingRef = useRef(false);
 
   const onFinishedRef = useRef(onFinished);
   onFinishedRef.current = onFinished;
@@ -109,11 +111,16 @@ export function PhotoImportNotice({ entryId, refreshKey = 0, onDismiss, onFinish
   }
 
   async function reconnect() {
+    if (reconnectingRef.current) return; // two authorize calls would leave the wrong connect cookie
+    reconnectingRef.current = true;
+    setReconnecting(true);
     setError(null);
     try {
       const { url } = await api.integrations.getGoogleAuthUrl("photos", `/entries/${entryId}`);
       navigateTo(url);
     } catch {
+      reconnectingRef.current = false;
+      setReconnecting(false);
       setError("Couldn't start Google. Try again.");
     }
   }
@@ -132,13 +139,13 @@ export function PhotoImportNotice({ entryId, refreshKey = 0, onDismiss, onFinish
                 ? "Copying photos from Google Photos…"
                 : importMessage(imp)}
           </span>
-          {imp.status === "waiting" && (
+          {isInFlight(imp) && (
             <button type="button" className="btn btn-secondary" onClick={() => void cancel(imp.id)}>
               Cancel
             </button>
           )}
           {imp.status === "needs_reconnect" && (
-            <button type="button" className="btn btn-secondary" onClick={() => void reconnect()}>
+            <button type="button" className="btn btn-secondary" onClick={() => void reconnect()} disabled={reconnecting}>
               Reconnect Google Photos
             </button>
           )}

@@ -42,6 +42,17 @@ describe('GooglePhotosPick', () => {
     expect(authUrl).toHaveBeenCalledWith('photos', '/entries/e1')
   })
 
+  it('two quick taps on Connect give one authorize call', async () => {
+    list.mockResolvedValue([{ ...connected[0], photos: false }])
+    authUrl.mockReturnValue(new Promise(() => {}))
+    render(<GooglePhotosPick entry={entry} inFlight={false} onStarted={jest.fn()} />)
+    const btn = await screen.findByRole('button', { name: 'Connect Google Photos' })
+    fireEvent.click(btn)
+    fireEvent.click(btn)
+    expect(authUrl).toHaveBeenCalledTimes(1)
+    expect(btn).toBeDisabled()
+  })
+
   it('opens the tab inside the click before any await', async () => {
     list.mockResolvedValue(connected)
     create.mockReturnValue(new Promise(() => {})) // never resolves
