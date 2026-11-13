@@ -5,15 +5,7 @@ import { api } from "../../lib/api";
 jest.mock("../../lib/api");
 
 function makeUploadMocks() {
-  (api.photos.requestUploadUrl as jest.Mock).mockResolvedValue({
-    photo_id: "p1",
-    upload_url: "https://example/upload",
-    upload_key: "tmp/u/p1",
-    expires_in: 900,
-    required_headers: {},
-  });
-  (api.photos.uploadFile as jest.Mock).mockResolvedValue(undefined);
-  (api.photos.finalize as jest.Mock).mockResolvedValue({
+  (api.photos.upload as jest.Mock).mockResolvedValue({
     id: "p1",
     mime_type: "image/jpeg",
     bytes: 100,

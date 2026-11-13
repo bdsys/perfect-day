@@ -3,10 +3,10 @@
 import { Suspense, useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
-import { api, type Entry, type EventItem, type Photo } from '@/lib/api'
+import { api, type Entry, type EventItem } from '@/lib/api'
 import { PhotoThumbnail } from '@/components/PhotoThumbnail'
 import { PhotoLightbox } from '@/components/PhotoLightbox'
-import { PhotoUploadButton } from '@/components/PhotoUploadButton'
+import { AddPhotos } from '@/components/AddPhotos'
 import { useAuth } from '@/lib/auth-context'
 import { StatusPanel } from '@/components/StatusPanel'
 import { usePolling } from '@/lib/usePolling'
@@ -81,8 +81,6 @@ function EntryDetailPageInner() {
   const [answeringSuggestion, setAnsweringSuggestion] = useState(false)
 
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null)
-  const [showAttachPicker, setShowAttachPicker] = useState(false)
-  const [libraryPhotos, setLibraryPhotos] = useState<Photo[]>([])
   const [removingIds, setRemovingIds] = useState<Set<string>>(new Set())
 
   useEffect(() => {
@@ -282,20 +280,6 @@ function EntryDetailPageInner() {
     }
   }
 
-  async function handlePickerUpload(p: Photo) {
-    try {
-      await api.photos.attachToEntry(entry!.id, p.id)
-      const refreshed = await api.entries.get(entry!.id)
-      setEntry(refreshed)
-      const lib = await api.photos.listForUser()
-      const attachedIds = new Set(refreshed.photos?.map((ph) => ph.id) ?? [])
-      setLibraryPhotos(lib.filter((ph) => !attachedIds.has(ph.id)))
-      setShowAttachPicker(false)
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to attach uploaded photo')
-    }
-  }
-
   if (authLoading || loading) return <div className="loading">Loading…</div>
   if (!user) return null
   if (!entry) return <div className="container" style={{ paddingTop: '1.5rem' }}><p className="error-message">{error || 'Entry not found.'}</p></div>
@@ -319,6 +303,7 @@ function EntryDetailPageInner() {
           <WeatherBadge enrichments={entry.enrichments ?? []} />
         </div>
         {!editing && <EntryPlace entry={entry} onUpdated={setEntry} />}
+        {!editing && entry.can_edit && <AddPhotos entry={entry} onChanged={setEntry} />}
 
         {editing ? (
           <div className="card" style={{ marginTop: '1rem' }}>
@@ -496,58 +481,6 @@ function EntryDetailPageInner() {
                 </ul>
               </section>
             )}
-
-            {/* Attach from library */}
-            <div>
-              <button
-                onClick={async () => {
-                  try {
-                    if (!showAttachPicker) {
-                      const lib = await api.photos.listForUser()
-                      const attachedIds = new Set(entry.photos?.map(p => p.id) ?? [])
-                      setLibraryPhotos(lib.filter(p => !attachedIds.has(p.id)))
-                    }
-                    setShowAttachPicker(s => !s)
-                  } catch (e: unknown) {
-                    setError(e instanceof Error ? e.message : 'Failed to load photo library')
-                  }
-                }}
-              >
-                Attach photo
-              </button>
-              {showAttachPicker && (
-                <div>
-                  <div style={{ marginBottom: "0.5rem" }}>
-                    <PhotoUploadButton onUploaded={handlePickerUpload} label="Upload new" />
-                  </div>
-                  {libraryPhotos.length === 0 ? (
-                    <p>No photos in library yet.</p>
-                  ) : (
-                    <ul className="photo-grid">
-                      {libraryPhotos.map(p => (
-                        <li key={p.id}>
-                          <PhotoThumbnail
-                            photoId={p.id}
-                            alt=""
-                            onClick={async () => {
-                              try {
-                                await api.photos.attachToEntry(entry.id, p.id)
-                                const refreshed = await api.entries.get(entry.id)
-                                setEntry(refreshed)
-                                setShowAttachPicker(false)
-                              } catch (e: unknown) {
-                                setError(e instanceof Error ? e.message : 'Failed to attach photo')
-                              }
-                            }}
-                            className="thumbnail"
-                          />
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              )}
-            </div>
 
             {lightboxIndex !== null && entry.photos && (
               <PhotoLightbox

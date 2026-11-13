@@ -1,5 +1,6 @@
 import { test, expect, request as playwrightRequest } from "@playwright/test";
 import path from "node:path";
+import fs from "node:fs";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 const email = "e2e-photos@example.com";
@@ -100,7 +101,7 @@ test.describe("Photo library (/photos)", () => {
     ]);
     await fileChooser.setFiles(FIXTURE);
 
-    // Wait for thumbnail — presigned-URL upload + finalize + decrypt + render.
+    // Wait for thumbnail — upload + decrypt + render.
     const thumb = page.locator('img[class*="thumbnail"]').first();
     await expect(thumb).toBeVisible({ timeout: 20_000 });
 
@@ -171,7 +172,7 @@ test.describe("Photo library (/photos)", () => {
 });
 
 test.describe("Inline upload from entry", () => {
-  test("upload new photo via entry attach picker → photo attached to entry", async ({ page }) => {
+  test("Add photos with two files at once → both attached to entry", async ({ page }) => {
     const { diaryId, token } = sharedState;
 
     // Create a fresh entry via the API so we have a clean starting state.
@@ -193,20 +194,18 @@ test.describe("Inline upload from entry", () => {
     await page.goto(`/entries/${entry.id}`);
     await page.waitForURL(`**/entries/${entry.id}`, { timeout: 10_000 });
 
-    // Open the attach picker.
-    await page.getByRole("button", { name: /attach photo/i }).click();
-
-    // The "Upload new" button inside the picker opens a file chooser.
-    const [fileChooser] = await Promise.all([
-      page.waitForEvent("filechooser"),
-      page.getByRole("button", { name: /upload new/i }).click(),
+    // Open the Add photos panel and pick two files at once from "this phone".
+    await page.getByRole("button", { name: /add photos/i }).click();
+    const original = fs.readFileSync(FIXTURE);
+    await page.locator('input[type="file"][multiple]').setInputFiles([
+      { name: "one.jpg", mimeType: "image/jpeg", buffer: original },
+      // Trailing bytes after the JPEG end marker make this a distinct file.
+      { name: "two.jpg", mimeType: "image/jpeg", buffer: Buffer.concat([original, Buffer.from("two")]) },
     ]);
-    await fileChooser.setFiles(FIXTURE);
 
-    // After upload + finalize + attach, a thumbnail should appear in the entry's
-    // attached photos strip.
-    const attachedThumb = page.locator('img[class*="thumbnail"]').first();
-    await expect(attachedThumb).toBeVisible({ timeout: 20_000 });
+    // After upload + attach, both thumbnails appear in the entry's photos strip.
+    const strip = page.locator("section").filter({ hasText: /^photos/i }).locator("ul.photo-grid");
+    await expect(strip.locator("li")).toHaveCount(2, { timeout: 30_000 });
   });
 
   test("remove photo from entry → photo disappears from strip", async ({ page }) => {
@@ -227,18 +226,14 @@ test.describe("Inline upload from entry", () => {
 
     await loginViaUI(page);
 
-    // Navigate to the entry and open the attach picker.
+    // Navigate to the entry.
     await page.goto(`/entries/${entry.id}`);
     await page.waitForURL(`**/entries/${entry.id}`, { timeout: 10_000 });
 
-    await page.getByRole("button", { name: /attach photo/i }).click();
+    await page.getByRole("button", { name: /add photos/i }).click();
 
-    // Upload a new photo via the picker so it gets attached to this entry.
-    const [fileChooser] = await Promise.all([
-      page.waitForEvent("filechooser"),
-      page.getByRole("button", { name: /upload new/i }).click(),
-    ]);
-    await fileChooser.setFiles(FIXTURE);
+    // Upload a photo from "this phone" so it gets attached to this entry.
+    await page.locator('input[type="file"][multiple]').setInputFiles(FIXTURE);
 
     // Wait for the photo strip to appear with the attached thumbnail.
     const photosSection = page.locator("section").filter({ hasText: /photos/i });
