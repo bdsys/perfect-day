@@ -287,7 +287,11 @@ async def google_callback(
     # live connection, so Calendar is never swapped out.
     account_matches = False
     if existing is not None and existing.revoked_at is None:
-        if (existing.google_email or "").lower() != (identity["email"] or "").lower():
+        stored = (existing.google_email or "").lower()
+        # A stored NULL email (older rows) accepts the consenting account and
+        # records it below. Otherwise the consenting email must be present
+        # and match; a missing one is never treated as a match.
+        if stored and stored != (identity["email"] or "").lower():
             return _redirect(
                 web_base, return_to, google="wrong_account", expected=existing.google_email or ""
             )

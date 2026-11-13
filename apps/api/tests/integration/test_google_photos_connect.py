@@ -48,7 +48,7 @@ async def _callback(
     state: str,
     *,
     granted: str,
-    email: str = "p@gmail.com",
+    email: str | None = "p@gmail.com",
     access_token: str = "ya29.new",  # noqa: S107
 ):
     token_response = {
@@ -56,7 +56,7 @@ async def _callback(
         "refresh_token": "1//refresh",
         "expires_in": 3600,
         "scope": granted,
-        "id_token": _id_token(email),
+        "id_token": _id_token(email) if email else None,
     }
     with patch(
         "httpx.AsyncClient.post", AsyncMock(return_value=httpx.Response(200, json=token_response))
@@ -227,3 +227,52 @@ async def test_old_library_scope_removed_by_migration(
     await db_session.commit()
 
     assert (await _token(db_session, "ph-mig@example.com")).scopes_granted == ["calendar.readonly"]
+
+
+async def test_stored_null_email_accepts_and_records_account(
+    client: AsyncClient, db_session: AsyncSession
+):
+    auth = await _register(client, "ph-null@example.com")
+    await _connect_calendar(client, auth)
+    token = await _token(db_session, "ph-null@example.com")
+    token.google_email = None
+    token.google_name = None
+    await db_session.commit()
+
+    q = await _authorize(client, auth, "scopes=photos")
+    assert "login_hint" not in q
+    r = await _callback(client, q["state"], granted=SCOPE_PICKER, email="New@Gmail.com")
+
+    assert _location(r)[1] == {"google": "connected"}
+    token = await _token(db_session, "ph-null@example.com")
+    assert token.google_email == "New@Gmail.com"
+    assert token.google_name == "P"
+    assert set(token.scopes_granted) == {"calendar.readonly", PICKER}
+
+
+async def test_missing_consent_email_refused_when_stored_email_exists(
+    client: AsyncClient, db_session: AsyncSession
+):
+    auth = await _register(client, "ph-noid@example.com")
+    await _connect_calendar(client, auth)
+    before = await _token(db_session, "ph-noid@example.com")
+    snap = (before.access_token_ciphertext, list(before.scopes_granted), before.google_email)
+
+    q = await _authorize(client, auth, "scopes=photos")
+    r = await _callback(client, q["state"], granted=SCOPE_PICKER, email=None)
+
+    assert _location(r)[1] == {"google": "wrong_account", "expected": "p@gmail.com"}
+    after = await _token(db_session, "ph-noid@example.com")
+    assert (after.access_token_ciphertext, list(after.scopes_granted), after.google_email) == snap
+
+
+async def test_email_match_is_case_insensitive(client: AsyncClient, db_session: AsyncSession):
+    auth = await _register(client, "ph-case@example.com")
+    await _connect_calendar(client, auth)
+
+    q = await _authorize(client, auth, "scopes=photos")
+    r = await _callback(client, q["state"], granted=SCOPE_PICKER, email="P@GMAIL.com")
+
+    assert _location(r)[1] == {"google": "connected"}
+    token = await _token(db_session, "ph-case@example.com")
+    assert set(token.scopes_granted) == {"calendar.readonly", PICKER}
