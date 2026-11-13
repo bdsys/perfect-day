@@ -378,6 +378,13 @@ async def attach_photo_to_entry(
     elif body.position is not None:
         existing.position = body.position
 
+    if existing is None:
+        # A photo may carry GPS: the entry's place (and weather) may change.
+        # Commit first so the worker sees the new link.
+        await db.commit()
+        from app.workers.tasks import queue_location_refresh
+
+        queue_location_refresh(entry_id)
     return _photo_out(photo)
 
 
@@ -404,6 +411,10 @@ async def detach_photo_from_entry(
     ep = result.scalar_one_or_none()
     if ep is not None:
         await db.delete(ep)
+        await db.commit()  # so the worker sees the link gone
+        from app.workers.tasks import queue_location_refresh
+
+        queue_location_refresh(entry_id)
 
 
 # ---------------------------------------------------------------------------

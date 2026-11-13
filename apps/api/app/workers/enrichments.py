@@ -60,6 +60,8 @@ def _resolve_lat_lon(entry: Any) -> tuple[float, float] | None:
     """Return (lat, lon) for the entry.
 
     Priority:
+    0. The entry's own place (entry.lat / entry.lon, item 24), already chosen
+       from the parent, a photo, an event or the home place.
     1. First photo in entry.photos that has non-None lat/lon (EXIF data).
     2. entry.diary.lat / entry.diary.lon (diary home location).
     3. None if neither source has coordinates.
@@ -69,6 +71,10 @@ def _resolve_lat_lon(entry: Any) -> tuple[float, float] | None:
     ``enrich_entry_weather``, pass a view object with
     ``photos = [ep.photo for ep in entry.entry_photos]``.
     """
+    lat, lon = getattr(entry, "lat", None), getattr(entry, "lon", None)
+    if lat is not None and lon is not None:
+        return (float(lat), float(lon))
+
     photos = getattr(entry, "photos", [])
     for photo in photos:
         if photo.lat is not None and photo.lon is not None:
@@ -129,6 +135,8 @@ async def enrich_entry_weather(
         id=entry.id,
         entry_date=entry.entry_date,
         entry_end_date=entry.entry_end_date,
+        lat=entry.lat,
+        lon=entry.lon,
         photos=[ep.photo for ep in entry.entry_photos if ep.photo is not None],
         diary=entry.diary,
     )
