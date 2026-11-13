@@ -332,6 +332,17 @@ async def delete_photo(
         raise HTTPException(status_code=404, detail="not_found")
     photo.deleted_at = datetime.now(tz=UTC)
 
+    # Entries that used it may have taken their place from its GPS (item 24).
+    entry_ids = (
+        await db.execute(select(EntryPhoto.entry_id).where(EntryPhoto.photo_id == photo_id))
+    ).scalars().all()
+    if entry_ids:
+        await db.commit()  # so the worker sees the photo gone
+        from app.workers.tasks import queue_location_refresh
+
+        for entry_id in entry_ids:
+            queue_location_refresh(entry_id)
+
 
 # ---------------------------------------------------------------------------
 # Task 15: Entry photo attach/detach
@@ -378,6 +389,13 @@ async def attach_photo_to_entry(
     elif body.position is not None:
         existing.position = body.position
 
+    if existing is None:
+        # A photo may carry GPS: the entry's place (and weather) may change.
+        # Commit first so the worker sees the new link.
+        await db.commit()
+        from app.workers.tasks import queue_location_refresh
+
+        queue_location_refresh(entry_id)
     return _photo_out(photo)
 
 
@@ -404,6 +422,10 @@ async def detach_photo_from_entry(
     ep = result.scalar_one_or_none()
     if ep is not None:
         await db.delete(ep)
+        await db.commit()  # so the worker sees the link gone
+        from app.workers.tasks import queue_location_refresh
+
+        queue_location_refresh(entry_id)
 
 
 # ---------------------------------------------------------------------------

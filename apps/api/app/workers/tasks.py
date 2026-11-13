@@ -627,7 +627,7 @@ def generate_entry_draft(self, entry_id: str, trigger: str = "background") -> No
 
 
 async def _generate_entry_draft(entry_id_str: str, trigger: str = "background") -> None:
-    from app.workers.enrichments import enrich_entry_weather
+    from app.services.entry_location import update_place_and_weather
     from app.workers.llm import generate_draft_for_entry
     from app.workers.utils import db_session
 
@@ -638,8 +638,9 @@ async def _generate_entry_draft(entry_id_str: str, trigger: str = "background") 
     )
     entry_uuid = uuid.UUID(entry_id_str)
     try:
+        # Work out where the entry happened first, so the weather is for that place.
         async with db_session() as db:
-            await enrich_entry_weather(entry_uuid, db)
+            await update_place_and_weather(entry_uuid, db)
     except Exception as exc:  # never block draft on weather failure
         log.warning(
             "enrichment_weather_skipped_due_to_error",
@@ -647,6 +648,70 @@ async def _generate_entry_draft(entry_id_str: str, trigger: str = "background") 
             error=str(exc),
         )
     await generate_draft_for_entry(entry_uuid, trigger=why)
+
+
+# ---------------------------------------------------------------------------
+# refresh_entry_location (item 24)
+# ---------------------------------------------------------------------------
+
+
+@celery_app.task(
+    name="app.workers.tasks.refresh_entry_location",
+    bind=True,
+    max_retries=3,
+    default_retry_delay=10,
+)
+def refresh_entry_location(self, entry_id: str, refetch_weather: bool = False) -> None:
+    """Work out an entry's place again and make its weather match.
+
+    Queued when photos are added or removed, and when a person changes the
+    entry's place, time zone or dates (*refetch_weather*).
+    """
+    run_sync(_refresh_entry_location(entry_id, refetch_weather=refetch_weather))
+
+
+async def _refresh_entry_location(entry_id_str: str, *, refetch_weather: bool = False) -> None:
+    from app.services.entry_location import update_place_and_weather
+    from app.workers.utils import db_session
+
+    async with db_session() as db:
+        await update_place_and_weather(
+            uuid.UUID(entry_id_str), db, refetch_weather=refetch_weather
+        )
+
+
+@celery_app.task(name="app.workers.tasks.refresh_diary_locations", bind=True, max_retries=3)
+def refresh_diary_locations(self, diary_id: str) -> None:
+    """The diary's home place changed: refresh entries that have no place of their own."""
+    run_sync(_refresh_diary_locations(diary_id))
+
+
+async def _refresh_diary_locations(diary_id_str: str) -> None:
+    from sqlalchemy import or_, select
+
+    from app.models import Entry
+    from app.workers.utils import db_session
+
+    async with db_session() as db:
+        entry_ids = (
+            await db.execute(
+                select(Entry.id).where(
+                    Entry.diary_id == uuid.UUID(diary_id_str),
+                    Entry.deleted_at.is_(None),
+                    or_(Entry.location_source.is_(None), Entry.location_source == "home"),
+                )
+            )
+        ).scalars().all()
+    for entry_id in entry_ids:
+        queue_location_refresh(entry_id)
+
+
+def queue_location_refresh(entry_id: uuid.UUID | str, *, refetch_weather: bool = False) -> None:
+    """Queue refresh_entry_location; a queue outage is logged, never raised to the caller."""
+    try:
+        refresh_entry_location.delay(str(entry_id), refetch_weather=refetch_weather)
+    except Exception:
+        log.exception("refresh_entry_location_queue_failed", entry_id=str(entry_id))
 
 
 # ---------------------------------------------------------------------------

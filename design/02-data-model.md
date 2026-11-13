@@ -105,6 +105,11 @@ Display URLs: `diary.perfectday.andrewlass.com/d/{slug}/entries/{entry_date}`. I
 - `created_by` text NOT NULL  *(`auto | manual`)*
 - `published_at` timestamptz NULL
 - `deleted_at` timestamptz NULL
+- `location_name` text NULL, `lat` / `lon` numeric(9,6) NULL  *(where the entry happened; item 24)*
+- `location_source` text NULL  *(CHECK: `parent | photo | event | home`. First match wins: the parent's choice, a photo's GPS, the calendar event's location text, the diary's home place. A `parent` place is never replaced automatically. See [the item 24 spec](../docs/superpowers/specs/2026-11-12-per-entry-location-design.md).)*
+- `tz_override` text NULL  *(IANA zone; when set, the entry's event times are shown in it and its dates follow its events there. NULL = `diaries.timezone`.)*
+
+Coordinates in API responses go to the diary owner only; co-parents and viewers get the place name (a photo's GPS can pinpoint a home or a school).
 
 INDEX on (`diary_id`, `entry_date` DESC) for timeline. Timeline order: `entry_date` DESC, then `created_at` DESC. Multi-day entries display under their `entry_date` with the range.
 

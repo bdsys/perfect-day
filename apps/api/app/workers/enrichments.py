@@ -60,6 +60,8 @@ def _resolve_lat_lon(entry: Any) -> tuple[float, float] | None:
     """Return (lat, lon) for the entry.
 
     Priority:
+    0. The entry's own place (entry.lat / entry.lon, item 24), already chosen
+       from the parent, a photo, an event or the home place.
     1. First photo in entry.photos that has non-None lat/lon (EXIF data).
     2. entry.diary.lat / entry.diary.lon (diary home location).
     3. None if neither source has coordinates.
@@ -69,6 +71,10 @@ def _resolve_lat_lon(entry: Any) -> tuple[float, float] | None:
     ``enrich_entry_weather``, pass a view object with
     ``photos = [ep.photo for ep in entry.entry_photos]``.
     """
+    lat, lon = getattr(entry, "lat", None), getattr(entry, "lon", None)
+    if lat is not None and lon is not None:
+        return (float(lat), float(lon))
+
     photos = getattr(entry, "photos", [])
     for photo in photos:
         if photo.lat is not None and photo.lon is not None:
@@ -102,10 +108,18 @@ async def _existing_dates(db: AsyncSession, entry_id: uuid.UUID) -> set[date]:
 # ---------------------------------------------------------------------------
 
 
+_ANY_PLACE: Any = object()
+
+
 async def enrich_entry_weather(
-    entry_id: uuid.UUID, db: AsyncSession
+    entry_id: uuid.UUID, db: AsyncSession, *, expected_coords: Any = _ANY_PLACE
 ) -> tuple[int, int, int]:
     """Fetch and store weather enrichments for every day an entry covers.
+
+    *expected_coords*: the entry's (lat, lon) the caller worked out, rounded
+    to 6 places. The weather is stored only if the entry still has them once
+    it has been fetched; otherwise another job moved the place meanwhile and
+    fetches its own (item 24, final review I2).
 
     Returns:
         (inserted, skipped_existing, failed_or_no_location)
@@ -129,6 +143,8 @@ async def enrich_entry_weather(
         id=entry.id,
         entry_date=entry.entry_date,
         entry_end_date=entry.entry_end_date,
+        lat=entry.lat,
+        lon=entry.lon,
         photos=[ep.photo for ep in entry.entry_photos if ep.photo is not None],
         diary=entry.diary,
     )
@@ -149,6 +165,8 @@ async def enrich_entry_weather(
     skipped = 0
     failed = 0
 
+    # Fetch every day first; nothing is written while Open-Meteo answers.
+    fetched: list[tuple[date, dict[str, Any]]] = []
     for day in _iter_entry_dates(view):
         if day in already_done:
             skipped += 1
@@ -162,7 +180,27 @@ async def enrich_entry_weather(
             )
             failed += 1
             continue
+        fetched.append((day, payload))
 
+    if expected_coords is not _ANY_PLACE and fetched:
+        now_at = (
+            await db.execute(
+                select(Entry.lat, Entry.lon)
+                .where(Entry.id == entry_id)
+                .with_for_update(key_share=True)
+            )
+        ).one_or_none()
+        current = (
+            None
+            if now_at is None or now_at.lat is None or now_at.lon is None
+            else (round(float(now_at.lat), 6), round(float(now_at.lon), 6))
+        )
+        if current != expected_coords:
+            log.info("enrich_entry_weather_place_moved", extra={"entry_id": str(entry_id)})
+            await db.rollback()
+            return (0, skipped, failed + len(fetched))
+
+    for day, payload in fetched:
         # captured_for_at stored as midnight UTC for the target date.
         captured_for_at = datetime(day.year, day.month, day.day, tzinfo=UTC)
 

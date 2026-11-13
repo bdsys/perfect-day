@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { PlaceSearch } from './PlaceSearch'
 
 export interface DiaryFormValues {
   name: string
@@ -10,6 +11,10 @@ export interface DiaryFormValues {
   voice_override: string | null
   scan_interval_minutes: number
   timezone: string
+  /** Home place (edit mode). Sent only when the parent changes it; null clears it. */
+  location_name?: string | null
+  lat?: number | null
+  lon?: number | null
 }
 
 interface DiaryFormProps {
@@ -58,6 +63,11 @@ export function DiaryForm({ mode, initialValues, saving, onSave }: DiaryFormProp
     initialValues?.timezone ?? defaultTimezone()
   )
   const [showAdvanced, setShowAdvanced] = useState(false)
+  // undefined = unchanged; null = removed
+  const [home, setHome] = useState<{ location_name: string; lat: number; lon: number } | null | undefined>(
+    undefined,
+  )
+  const homeName = home === undefined ? (initialValues?.location_name ?? null) : home?.location_name ?? null
 
   function handleSave() {
     if (!name.trim()) return
@@ -71,6 +81,11 @@ export function DiaryForm({ mode, initialValues, saving, onSave }: DiaryFormProp
       voice_override: voiceOverride || null,
       scan_interval_minutes: scanInterval,
       timezone,
+      ...(home === undefined
+        ? {}
+        : home === null
+        ? { location_name: null, lat: null, lon: null }
+        : home),
     })
   }
 
@@ -139,6 +154,32 @@ export function DiaryForm({ mode, initialValues, saving, onSave }: DiaryFormProp
           placeholder="warm, narrative"
         />
       </div>
+
+      {mode === 'edit' && (
+        <div className="form-field">
+          <span className="form-label">Home location</span>
+          <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', margin: '0 0 0.25rem' }}>
+            {homeName ?? 'Not set'} — used for weather when an entry has no place of its own.
+          </p>
+          <PlaceSearch
+            label="Home location"
+            onSelect={(place) =>
+              setHome({
+                location_name: [place.name, place.country === 'United States' ? place.admin1 : place.country]
+                  .filter(Boolean)
+                  .join(', '),
+                lat: place.lat,
+                lon: place.lon,
+              })
+            }
+          />
+          {homeName && (
+            <button type="button" className="btn btn-secondary" style={{ marginTop: '0.25rem' }} onClick={() => setHome(null)}>
+              Remove home location
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Advanced disclosure */}
       <div style={{ marginTop: '0.5rem' }}>

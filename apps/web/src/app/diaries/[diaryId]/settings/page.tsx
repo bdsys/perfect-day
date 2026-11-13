@@ -72,6 +72,7 @@ export default function DiarySettingsPage() {
     voice_override: diary.voice_override,
     scan_interval_minutes: diary.scan_interval_minutes,
     timezone: diary.timezone,
+    location_name: diary.location_name,
   }
 
   return (

@@ -44,7 +44,7 @@ Build 22 first within Wave A — it introduces the LLM provider abstraction that
 | 16 | Weather enrichment (Open-Meteo) | **done** |
 | 19 | Diary create wizard + edit settings | **done** |
 | 23 | Manual entry creation form (popover) | **done** |
-| 24 | Per-entry location & time (lat/lon + tz_override) | pending |
+| 24 | Per-entry location & time (lat/lon + tz_override) | **built** on `feat/24-per-entry-location` — spec `docs/superpowers/specs/2026-11-12-per-entry-location-design.md` |
 
 16's backfill extension requires 17 done first.
 
@@ -82,7 +82,7 @@ What's already in the codebase vs. what needs to be built. Verified by direct co
 | 18 | Tier enforcement | `services/tier.py` with `enforce_entry_tier_limit`; wired into manual-entry router paths | Not called from worker auto-entry path (`workers/tasks.py`); not gating photo uploads; 403 + structured error in UI |
 | 19 | Diary create wizard + edit settings | `PATCH /v1/diaries/{id}` endpoint + `DiaryPatch` schema; `subject_name`/`subject_relation` already in `DiaryOut` | **done** — merged in PR #38 (2026-06-10). `/diaries/new` and `/diaries/[diaryId]/settings` pages, `api.diaries.patch()`, `voice_override`/`tone_hint` on `DiaryCreate`/`DiaryOut`, Playwright spec `diary-create-settings.spec.ts`. |
 | 23 | Manual entry form | `"New entry"` button + `handleNewEntry` (hardcodes today); `.popover` CSS class; backend `EntryCreate` accepts `entry_end_date` | **done** — Widen `entries.create` type to include `entry_end_date`; popover form with date/end_date/title inputs; client-side end>=start validation; new Playwright spec. Plan: `docs/superpowers/plans/2026-05-28-manual-entry-form.md` |
-| 24 | Per-entry location & time | `Photo.lat/lon` columns (existing); `_resolve_lat_lon` in `workers/enrichments.py` (photo EXIF → diary fallback) | Add `entries.lat`, `entries.lon`, `entries.tz_override` via Alembic migration; update `_resolve_lat_lon` to check entry first; expose fields in `EntryCreate`/`EntryPatch`/`EntryOut`; Open-Meteo Geocoding city-search field on manual entry form; per-entry `tz_override` used for weather time window. Depends on 16 + 23 (done). Unblocks P-6 (map view). |
+| 24 | Per-entry location & time | Built 2026-11-12. The May scaffold notes are superseded by the spec (`docs/superpowers/specs/2026-11-12-per-entry-location-design.md`) and the plan (`docs/superpowers/plans/2026-11-12-per-entry-location.md`). Unblocks P-6 (map view). |
 
 ### Item 25 — code review scope
 

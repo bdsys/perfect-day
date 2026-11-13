@@ -74,7 +74,7 @@ All endpoints prefixed `/v1/`. JSON. Auth via `Authorization: Bearer <jwt>` unle
 | GET | `/v1/diaries/{id}/entries` | Timeline. `?status=&from=&to=&cursor=&limit=`. Visibility filtered by role. |
 | POST | `/v1/diaries/{id}/entries` | Manual entry. Tier check. |
 | GET | `/v1/entries/{id}` | Full entry incl. events, photos, enrichments. |
-| PATCH | `/v1/entries/{id}` | Edit title/body/dates/photos. Editor or owner. |
+| PATCH | `/v1/entries/{id}` | Edit title/body/dates, `location` (`{name, lat, lon}`, or `null` = automatic) and `tz_override` (IANA name or `null`). Editor or owner. A place, date or time zone change queues `refresh_entry_location` so weather follows. |
 | POST | `/v1/entries/{id}/publish` | Draft → published. |
 | POST | `/v1/entries/{id}/unpublish` | Back to draft. |
 | DELETE | `/v1/entries/{id}` | Soft delete. |
@@ -83,6 +83,9 @@ All endpoints prefixed `/v1/`. JSON. Auth via `Authorization: Bearer <jwt>` unle
 | POST | `/v1/entries/{id}/merge` | Reserved/optional for PoC. |
 | POST | `/v1/entries/{id}/photos` | Attach photos. |
 | DELETE | `/v1/entries/{id}/photos/{photoId}` | Detach. |
+| GET | `/v1/geocode?q=` | City search for the place boxes (2–100 chars, up to 5 results). Proxies Open-Meteo; 503 `geocoding_unavailable` when it is down. Signed-in users. |
+
+`EntryOut` carries `location` (`{name, lat, lon, source}`; `lat`/`lon` are null unless the caller owns the diary), `tz_override` and `can_edit`. `PATCH /v1/diaries/{id}` accepts `location_name` with `lat`/`lon` (both or neither) for the home place.
 
 ## Photos
 

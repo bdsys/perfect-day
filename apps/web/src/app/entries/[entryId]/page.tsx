@@ -13,13 +13,20 @@ import { usePolling } from '@/lib/usePolling'
 import { formatDateRange } from '@/lib/date'
 import { WeatherBadge } from '@/components/WeatherBadge'
 import { SuggestionBox } from '@/components/SuggestionBox'
+import { EntryPlace } from '@/components/EntryPlace'
 
-function formatEventTime(event: EventItem): string {
+/** An event's time. With *timeZone* (the entry's own zone), times are shown there, with its name. */
+function formatEventTime(event: EventItem, timeZone?: string): string {
+  const opts: Intl.DateTimeFormatOptions = { hour: '2-digit', minute: '2-digit', ...(timeZone ? { timeZone } : {}) }
+  const zoneName = timeZone
+    ? ` ${new Intl.DateTimeFormat(undefined, { timeZone, timeZoneName: 'short' }).formatToParts(new Date()).find((p) => p.type === 'timeZoneName')?.value ?? timeZone}`
+    : ''
+
   const start = event.start?.dateTime ?? event.start?.date ?? ''
   const end = event.end?.dateTime ?? event.end?.date ?? ''
 
   if (!start && !end) {
-    return event.occurred_at ? new Date(event.occurred_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) : 'Unknown time'
+    return event.occurred_at ? new Date(event.occurred_at).toLocaleTimeString(undefined, opts) + zoneName : 'Unknown time'
   }
 
   // All-day event
@@ -27,11 +34,11 @@ function formatEventTime(event: EventItem): string {
     return 'All day'
   }
 
-  const startTime = new Date(start).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
-  if (!end || event.end?.date) return startTime
+  const startTime = new Date(start).toLocaleTimeString(undefined, opts)
+  if (!end || event.end?.date) return startTime + zoneName
 
-  const endTime = new Date(end).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
-  return `${startTime}–${endTime}`
+  const endTime = new Date(end).toLocaleTimeString(undefined, opts)
+  return `${startTime}–${endTime}${zoneName}`
 }
 
 export default function EntryDetailPage() {
@@ -191,10 +198,12 @@ function EntryDetailPageInner() {
     if (!entry) return
     try {
       const updated = await api.entries.get(entry.id)
-      // Prefer terminating on last_generation.created_at change; fall back to updated_at
+      // Prefer terminating on last_generation.created_at change. Without a
+      // generation record, wait for text: the draft job works out the entry's
+      // place first (item 24), which changes updated_at before any draft exists.
       const genChanged = updated.last_generation != null
         ? updated.last_generation.created_at !== regenStartedGenAt
-        : updated.updated_at !== regenStartedAt
+        : updated.updated_at !== regenStartedAt && !!updated.body_markdown
 
       if (genChanged) {
         setEntry(updated)
@@ -309,6 +318,7 @@ function EntryDetailPageInner() {
           <span style={{ fontSize: '0.875rem', color: 'var(--text-muted)' }}>{formatDateRange(entry.entry_date, entry.entry_end_date)}</span>
           <WeatherBadge enrichments={entry.enrichments ?? []} />
         </div>
+        {!editing && <EntryPlace entry={entry} onUpdated={setEntry} />}
 
         {editing ? (
           <div className="card" style={{ marginTop: '1rem' }}>
@@ -557,7 +567,7 @@ function EntryDetailPageInner() {
                   {entry.events.map((event) => (
                     <li key={event.id} style={{ padding: '0.4rem 0', borderTop: '1px solid #eee' }}>
                       <div style={{ fontWeight: '500' }}>
-                        {formatEventTime(event)} — {event.summary || '(no title)'}
+                        {formatEventTime(event, entry.tz_override ?? undefined)} — {event.summary || '(no title)'}
                       </div>
                       {event.location && (
                         <div style={{ fontSize: '0.8rem', color: '#888' }}>{event.location}</div>

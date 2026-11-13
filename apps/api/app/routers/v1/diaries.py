@@ -70,6 +70,8 @@ class DiaryPatch(BaseModel):
     notifications_muted: bool | None = None
     lat: Annotated[float | None, Field(ge=-90, le=90)] = None
     lon: Annotated[float | None, Field(ge=-180, le=180)] = None
+    # The home place's name, from the city search (item 24).
+    location_name: Annotated[str, Field(max_length=200)] | None = None
 
 
 class DiaryOut(BaseModel):
@@ -85,6 +87,7 @@ class DiaryOut(BaseModel):
     scan_interval_minutes: int
     lat: float | None = None
     lon: float | None = None
+    location_name: str | None = None
     deleted_at: datetime | None
     hard_delete_after: datetime | None
     created_at: datetime
@@ -131,7 +134,10 @@ async def _get_diary_or_404(
 
 # Columns a PATCH may set to NULL. An explicit null for any other field is
 # ignored, because those columns are NOT NULL.
-_CLEARABLE_DIARY_FIELDS = frozenset({"lat", "lon", "voice_override", "subject_name"})
+_CLEARABLE_DIARY_FIELDS = frozenset(
+    {"lat", "lon", "location_name", "voice_override", "subject_name"}
+)
+_HOME_PLACE_FIELDS = ("lat", "lon", "location_name")
 
 
 def _diary_updates(body: DiaryPatch) -> dict:
@@ -267,11 +273,31 @@ async def patch_diary(
 ) -> Diary:
     diary, _ = await _get_diary_or_404(diary_id, user, db, require_owner=True)
 
+    home_before = tuple(getattr(diary, f) for f in _HOME_PLACE_FIELDS)
     for field, value in _diary_updates(body).items():
         setattr(diary, field, value)
 
+    # A home place has both coordinates or neither; without them it has no name.
+    if (diary.lat is None) != (diary.lon is None):
+        raise HTTPException(status_code=422, detail="incomplete_location")
+    if diary.lat is None:
+        diary.location_name = None
+
     await db.flush()
     await db.refresh(diary)
+    if tuple(getattr(diary, f) for f in _HOME_PLACE_FIELDS) != home_before:
+        # Entries without a place of their own follow the home place (item 24).
+        await db.commit()  # so the worker sees it; sessions keep objects loaded on commit
+        from app.workers.tasks import refresh_diary_locations
+
+        try:
+            refresh_diary_locations.delay(str(diary.id))
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).exception(
+                "refresh_diary_locations_queue_failed diary=%s", diary.id
+            )
     return diary
 
 
