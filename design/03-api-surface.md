@@ -85,7 +85,7 @@ All endpoints prefixed `/v1/`. JSON. Auth via `Authorization: Bearer <jwt>` unle
 | DELETE | `/v1/entries/{id}/photos/{photoId}` | Detach. |
 | GET | `/v1/geocode?q=` | City search for the place boxes (2–100 chars, up to 5 results). Proxies Open-Meteo; 503 `geocoding_unavailable` when it is down. Signed-in users. |
 
-`EntryOut` carries `location` (`{name, lat, lon, source}`; `lat`/`lon` are null unless the caller owns the diary), `tz_override` and `can_edit`. `PATCH /v1/diaries/{id}` accepts `location_name` with `lat`/`lon` (both or neither) for the home place.
+`EntryOut` carries `location` (`{name, lat, lon, source}`; `lat`/`lon` are null unless the caller owns the diary), `tz_override` and `can_edit`. Each of its `events` has empty `location` and `attendees` unless the caller owns the diary (S-13). `PATCH /v1/diaries/{id}` accepts `location_name` with `lat`/`lon` (both or neither) for the home place.
 
 ## Photos
 

@@ -275,8 +275,11 @@ async def preview_rule(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> PreviewOut:
-    """Preview how many events a condition would match over the last 90 days."""
-    await _get_diary_or_404(diary_id, user, db)
+    """Preview how many events a condition would match over the last 90 days.
+
+    Only the diary owner gets each sample's location text (S-13).
+    """
+    _, role = await _get_diary_or_404(diary_id, user, db)
 
     try:
         _validate_condition(body.condition)
@@ -304,7 +307,7 @@ async def preview_rule(
         {
             "summary": (event.payload or {}).get("summary", ""),
             "occurred_at": event.occurred_at.isoformat() if event.occurred_at else None,
-            "location": (event.payload or {}).get("location", ""),
+            "location": (event.payload or {}).get("location", "") if role is None else "",
         }
         for event in matched[:10]
     ]

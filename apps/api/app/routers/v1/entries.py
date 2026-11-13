@@ -178,7 +178,9 @@ class EntryOut(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _event_out_from_orm(event: Event) -> EventOut:
+def _event_out_from_orm(event: Event, *, exact_places: bool = False) -> EventOut:
+    """*exact_places*: the caller is the diary owner. Anyone else gets no
+    location text (often a street address) and no attendees (S-13)."""
     p = event.payload or {}
     return EventOut(
         id=event.id,
@@ -186,10 +188,10 @@ def _event_out_from_orm(event: Event) -> EventOut:
         occurred_at=event.occurred_at,
         summary=p.get("summary", ""),
         description=p.get("description", ""),
-        location=p.get("location", ""),
+        location=p.get("location", "") if exact_places else "",
         start=p.get("start", {}),
         end=p.get("end", {}),
-        attendees=p.get("attendees", []),
+        attendees=p.get("attendees", []) if exact_places else [],
         status=p.get("status", ""),
     )
 
@@ -200,13 +202,14 @@ def _entry_out_from_orm(
     """The API view of *entry*. A pending AI suggestion is shown only to editors.
 
     *exact_places*: the caller is the diary owner. Only then do the entry's
-    place and its photos carry coordinates; for anyone else they are None,
-    because a photo's GPS can pinpoint a home or a school.
+    place and its photos carry coordinates, and its events their location
+    text and attendees; for anyone else they are empty, because a photo's GPS
+    or an event's address can pinpoint a home or a school (S-12, S-13).
     """
     from app.routers.v1.photos import _photo_out
 
     events_out = sorted(
-        [_event_out_from_orm(e) for e in entry.events],
+        [_event_out_from_orm(e, exact_places=exact_places) for e in entry.events],
         key=lambda e: e.occurred_at or datetime.min.replace(tzinfo=UTC),
     )
     rule_matches_out = [
