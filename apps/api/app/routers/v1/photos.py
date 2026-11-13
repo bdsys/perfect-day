@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
 from datetime import UTC, date, datetime
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi import status as http_status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import and_, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -38,8 +39,10 @@ from app.services.photos import (
     presign_put_url,
     put_object_bytes,
     stream_object,
+    strip_location,
 )
 
+logger = logging.getLogger(__name__)
 router = APIRouter(tags=["photos"])
 
 
@@ -327,6 +330,33 @@ async def get_photo(
     if photo.dek_ciphertext is None:
         raise HTTPException(status_code=409, detail="not_finalized")
     dek = unwrap_dek(photo.dek_ciphertext, photo.user_id)
+
+    if purpose == PURPOSE_FULL and photo.user_id != user.id:
+        # Family sees the picture, not where it was taken (S-12).
+        def _read_all() -> bytes:
+            s3_body = stream_object(key)
+
+            def exact_read(n: int) -> bytes:
+                buf = b""
+                while len(buf) < n:
+                    chunk = s3_body.read(n - len(buf))
+                    if not chunk:
+                        break
+                    buf += chunk
+                return buf
+
+            return b"".join(iter_decrypt_stream(exact_read, dek, purpose))
+
+        loop = asyncio.get_event_loop()
+        data = await loop.run_in_executor(None, _read_all)
+        try:
+            data = await loop.run_in_executor(
+                None, lambda: strip_location(data, photo.mime_type or "")
+            )
+        except ValueError:
+            logger.warning("photo %s could not be re-saved without location", photo.id)
+            raise HTTPException(status_code=409, detail="unreadable_photo")
+        return Response(data, media_type=media_type)
 
     def _stream():
         s3_body = stream_object(key)

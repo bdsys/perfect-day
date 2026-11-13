@@ -134,6 +134,31 @@ except ImportError:
     pass
 
 
+def strip_location(data: bytes, mime: str) -> bytes:
+    """Return the image with its GPS location removed (other EXIF is kept for JPEG).
+
+    JPEG: re-saved at the original quality with the EXIF minus the GPS IFD.
+    Other types: re-saved in the same format without metadata.
+    Raises ValueError if the bytes are not a readable image.
+    """
+    from PIL import Image
+
+    try:
+        with Image.open(BytesIO(data)) as img:
+            img.load()
+            fmt = img.format or "JPEG"
+            out = BytesIO()
+            if fmt == "JPEG":
+                exif = img.getexif()
+                exif.pop(0x8825, None)
+                img.save(out, "JPEG", quality="keep", exif=exif)
+            else:
+                img.save(out, fmt)
+            return out.getvalue()
+    except Exception as exc:
+        raise ValueError("unreadable_image") from exc
+
+
 def generate_thumbnail(image_bytes: bytes, mime: str) -> bytes:
     """Decode → EXIF-rotate → resize ≤512 px longest edge → JPEG q=80.
 
