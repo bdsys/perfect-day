@@ -16,6 +16,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import OAuthToken, User
+from tests.integration.google_helpers import connect_cookie_for
 
 SCOPE_CALENDAR = "https://www.googleapis.com/auth/calendar.readonly"
 SCOPE_PICKER = "https://www.googleapis.com/auth/photospicker.mediaitems.readonly"
@@ -64,6 +65,7 @@ async def _callback(
         return await client.get(
             "/v1/integrations/google/callback",
             params={"code": "c", "state": state, "scope": granted},
+            headers=connect_cookie_for(state),
             follow_redirects=False,
         )
 

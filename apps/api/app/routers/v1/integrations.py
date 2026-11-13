@@ -4,13 +4,14 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import secrets
 import uuid
 from datetime import UTC, datetime
 from urllib.parse import urlencode
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -20,13 +21,17 @@ from app.core.auth import get_current_user
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.dependencies import get_redis
-from app.core.security import encrypt_oauth_token
+from app.core.security import decrypt_oauth_token, encrypt_oauth_token
 from app.models import OAuthToken, User
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
+logger = logging.getLogger(__name__)
 
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"  # noqa: S105
+GOOGLE_REVOKE_URL = "https://oauth2.googleapis.com/revoke"
+CONNECT_COOKIE = "pd_google_connect"
+CONNECT_COOKIE_PATH = "/v1/integrations/google/callback"
 
 SCOPE_CALENDAR = "https://www.googleapis.com/auth/calendar.readonly"
 SCOPE_PHOTOS = "https://www.googleapis.com/auth/photospicker.mediaitems.readonly"
@@ -79,6 +84,20 @@ def _safe_return_to(value: str | None) -> str:
 def _redirect(web_base: str, return_to: str, **query: str) -> RedirectResponse:
     sep = "&" if "?" in return_to else "?"
     return RedirectResponse(f"{web_base}{return_to}{sep}{urlencode(query)}")
+
+
+def _nonce_digest(nonce: str) -> str:
+    return hashlib.sha256(nonce.encode()).hexdigest()
+
+
+def _clear_connect_cookie(response: Response) -> None:
+    response.delete_cookie(
+        CONNECT_COOKIE,
+        path=CONNECT_COOKIE_PATH,
+        secure=True,
+        httponly=True,
+        samesite="lax",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -148,6 +167,7 @@ async def list_integrations(
 
 @router.get("/google/authorize")
 async def google_authorize(
+    response: Response,
     scopes: str = Query("calendar", description="comma-separated: calendar,photos"),
     return_to: str | None = Query(None),
     user: User = Depends(get_current_user),
@@ -176,6 +196,18 @@ async def google_authorize(
 
     # Store nonce in Redis (single-use, 10-min TTL)
     await r.setex(f"oauth_nonce:{nonce}", NONCE_TTL, "1")
+
+    # Tie the flow to this browser: the callback must present the same cookie,
+    # so a link sent to someone else cannot attach their Google to this account.
+    response.set_cookie(
+        key=CONNECT_COOKIE,
+        value=_nonce_digest(nonce),
+        httponly=True,
+        samesite="lax",
+        secure=True,
+        max_age=NONCE_TTL,
+        path=CONNECT_COOKIE_PATH,
+    )
 
     params = {
         "client_id": settings.google_client_id,
@@ -207,6 +239,32 @@ async def google_callback(
     scope: str | None = Query(None),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> RedirectResponse:
+    """Whatever happens, the one-shot browser cookie is deleted in the reply."""
+
+    def done(r: RedirectResponse) -> RedirectResponse:
+        _clear_connect_cookie(r)
+        return r
+
+    try:
+        return done(await _google_callback(request, code, state, error, scope, db))
+    except HTTPException as exc:
+        cleared = Response()
+        _clear_connect_cookie(cleared)
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail=exc.detail,
+            headers={"set-cookie": cleared.headers["set-cookie"]},
+        ) from exc
+
+
+async def _google_callback(
+    request: Request,
+    code: str | None,
+    state: str | None,
+    error: str | None,
+    scope: str | None,
+    db: AsyncSession,
+) -> RedirectResponse:
     settings = get_settings()
     r = get_redis()
 
@@ -227,6 +285,13 @@ async def google_callback(
 
     payload = _verify_state(state, settings.secret_key)
     nonce = payload.get("nonce", "")
+
+    # The browser finishing consent must be the one that started it. Checked
+    # before the nonce is consumed, so a wrong browser cannot burn the real
+    # user's single-use nonce.
+    presented = request.cookies.get(CONNECT_COOKIE, "")
+    if not hmac.compare_digest(presented, _nonce_digest(nonce)):
+        return _redirect(web_base, return_to, google="failed", reason="browser_mismatch")
 
     # Single-use nonce check
     deleted = await r.delete(f"oauth_nonce:{nonce}")
@@ -344,5 +409,22 @@ async def revoke_google(
         select(OAuthToken).where(OAuthToken.user_id == user.id, OAuthToken.provider == "google")
     )
     token = result.scalar_one_or_none()
-    if token is not None:
-        token.revoked_at = datetime.now(tz=UTC)
+    if token is None:
+        return
+
+    # Revoke the grant at Google, then forget the tokens whatever Google said.
+    try:
+        secret = decrypt_oauth_token(
+            token.refresh_token_ciphertext or token.access_token_ciphertext
+        )
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(GOOGLE_REVOKE_URL, data={"token": secret})
+        if resp.status_code != 200:
+            logger.warning(
+                "Google token revoke failed user_id=%s status=%s", user.id, resp.status_code
+            )
+    except Exception as exc:
+        # Never log the exception text or token: only the user and error type.
+        logger.warning("Google token revoke failed user_id=%s error=%s", user.id, type(exc).__name__)
+    await db.delete(token)
+    await db.commit()
