@@ -77,7 +77,9 @@ async def _status(db_session, import_id: uuid.UUID) -> str:
 async def test_sweep_transitions(client, db_session, status, expires_in, idle, expected):
     from app.workers.photo_imports import sweep_stuck_imports
 
-    import_id = await _make_import(client, db_session, status=status, expires_in=expires_in, idle=idle)
+    import_id = await _make_import(
+        client, db_session, status=status, expires_in=expires_in, idle=idle
+    )
 
     await sweep_stuck_imports()
 
