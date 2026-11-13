@@ -2,58 +2,33 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi import status as http_status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import select
+from sqlalchemy import and_, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user
 from app.core.database import get_db
 from app.core.photo_crypto import (
+    PURPOSE_DISPLAY,
     PURPOSE_FULL,
     PURPOSE_THUMB,
-    encrypt_stream,
-    generate_dek,
     iter_decrypt_stream,
     unwrap_dek,
-    wrap_dek,
 )
-from app.models import EntryPhoto, Photo, User
-from app.services.photos import (
-    ALLOWED_MIME,
-    MAX_BYTES,
-    PRESIGN_TTL_SECONDS,
-    delete_object,
-    detect_mime,
-    generate_thumbnail,
-    get_object_bytes,
-    head_object_size,
-    parse_exif,
-    presign_put_url,
-    put_object_bytes,
-    stream_object,
-)
+from app.models import Diary, DiaryPermission, Entry, EntryPhoto, Photo, User
+from app.services.photo_ingest import UnsupportedPhoto, ingest_photo
+from app.services.photos import MAX_BYTES, stream_object, strip_location
 
+logger = logging.getLogger(__name__)
 router = APIRouter(tags=["photos"])
-
-
-class UploadUrlRequest(BaseModel):
-    declared_mime: str
-    declared_size: int
-
-
-class UploadUrlResponse(BaseModel):
-    photo_id: uuid.UUID
-    upload_url: str
-    upload_key: str
-    expires_in: int
-    required_headers: dict[str, str]
 
 
 class PhotoOut(BaseModel):
@@ -93,141 +68,31 @@ def _photo_out(photo) -> PhotoOut:
     )
 
 
-@router.post("/photos/upload-url", response_model=UploadUrlResponse, status_code=201)
-async def create_upload_url(
-    body: UploadUrlRequest,
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db, scope="function"),
-) -> UploadUrlResponse:
-    if body.declared_mime not in ALLOWED_MIME:
-        raise HTTPException(status_code=415, detail="unsupported_mime")
-    if body.declared_size <= 0 or body.declared_size > MAX_BYTES:
-        raise HTTPException(status_code=413, detail="size_exceeds_limit")
-
-    photo_id = uuid.uuid4()
-    s3_key = f"{user.id}/{photo_id}.enc"
-    tmp_key = f"tmp/{user.id}/{photo_id}"
-
-    photo = Photo(
-        id=photo_id,
-        user_id=user.id,
-        s3_key=s3_key,
-        source="upload",
-    )
-    db.add(photo)
-    await db.flush()
-
-    url = presign_put_url(tmp_key, body.declared_mime, body.declared_size)
-    return UploadUrlResponse(
-        photo_id=photo_id,
-        upload_url=url,
-        upload_key=tmp_key,
-        expires_in=PRESIGN_TTL_SECONDS,
-        required_headers={
-            "Content-Type": body.declared_mime,
-            "Content-Length": str(body.declared_size),
-        },
-    )
-
-
-@router.post("/photos/{photo_id}/finalize", response_model=PhotoOut)
-async def finalize_photo(
-    photo_id: uuid.UUID,
+@router.post("/photos", response_model=PhotoOut, status_code=201)
+async def upload_photo(
+    request: Request,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> PhotoOut:
-    # Look up photo owned by this user
-    result = await db.execute(
-        select(Photo).where(
-            Photo.id == photo_id,
-            Photo.user_id == user.id,
-            Photo.deleted_at.is_(None),
-        )
-    )
-    photo = result.scalar_one_or_none()
-    if photo is None:
-        raise HTTPException(status_code=404, detail="not_found")
+    """Store the image sent as the raw request body, encrypted.
 
-    # Idempotent: already finalized
-    if photo.finalized_at is not None:
-        return _photo_out(photo)
-
-    tmp_key = f"tmp/{user.id}/{photo_id}"
-
-    loop = asyncio.get_event_loop()
-
-    # The declared size is not trustworthy on its own: check what was actually
-    # uploaded before reading it into memory.
-    try:
-        uploaded_size = await loop.run_in_executor(None, lambda: head_object_size(tmp_key))
-    except Exception:
-        raise HTTPException(status_code=422, detail="tmp_not_found")
-    if uploaded_size is None:
-        raise HTTPException(status_code=422, detail="tmp_not_found")
-    if uploaded_size > MAX_BYTES:
-        try:
-            await loop.run_in_executor(None, lambda: delete_object(tmp_key))
-        except Exception:  # noqa: BLE001, S110 — the orphan sweeper removes it later
-            pass
+    The handler takes no body parameter on purpose: a multipart/form parameter
+    makes the framework read the whole body (spooling it to disk in plaintext)
+    before auth or the size cap could run. Here auth runs first, and the body is
+    read in memory only until it passes MAX_BYTES.
+    """
+    declared = request.headers.get("content-length")
+    if declared is not None and declared.isdigit() and int(declared) > MAX_BYTES:
         raise HTTPException(status_code=413, detail="size_exceeds_limit")
-
-    # Fetch plaintext from tmp/
+    data = bytearray()
+    async for chunk in request.stream():
+        data += chunk
+        if len(data) > MAX_BYTES:
+            raise HTTPException(status_code=413, detail="size_exceeds_limit")
     try:
-        plaintext = await loop.run_in_executor(None, lambda: get_object_bytes(tmp_key))
-    except Exception:
-        raise HTTPException(status_code=422, detail="tmp_not_found")
-
-    # Sniff MIME from actual bytes
-    detected = detect_mime(plaintext[:32])
-    if detected not in ALLOWED_MIME:
-        raise HTTPException(status_code=415, detail="unsupported_mime")
-
-    # EXIF
-    exif = parse_exif(plaintext)
-
-    # Thumbnail
-    try:
-        thumb_bytes = await loop.run_in_executor(
-            None, lambda: generate_thumbnail(plaintext, detected)
-        )
-    except ValueError:
-        thumb_bytes = b""  # non-fatal: store without thumbnail
-
-    # Encrypt
-    dek = generate_dek()
-    wrapped_dek = wrap_dek(dek, user.id)
-    enc_full = await loop.run_in_executor(None, lambda: encrypt_stream(plaintext, dek))
-    enc_thumb = (
-        await loop.run_in_executor(
-            None, lambda: encrypt_stream(thumb_bytes, dek, PURPOSE_THUMB)
-        )
-        if thumb_bytes
-        else None
-    )
-
-    # Write to final keys
-    full_key = photo.s3_key  # already set as {user_id}/{photo_id}.enc
-    thumb_key = full_key.replace(".enc", "_thumb.enc")
-    await loop.run_in_executor(None, lambda: put_object_bytes(full_key, enc_full))
-    if enc_thumb:
-        await loop.run_in_executor(None, lambda: put_object_bytes(thumb_key, enc_thumb))
-
-    # Delete tmp (best-effort)
-    try:
-        await loop.run_in_executor(None, lambda: delete_object(tmp_key))
-    except Exception:
-        pass
-
-    # Update row
-    photo.mime_type = detected
-    photo.bytes = len(plaintext)
-    photo.taken_at = exif.get("taken_at")
-    photo.lat = exif.get("lat")
-    photo.lon = exif.get("lon")
-    photo.dek_ciphertext = wrapped_dek
-    photo.thumbnail_s3_key = thumb_key if enc_thumb else None
-    photo.finalized_at = datetime.now(tz=UTC)
-
+        photo = await ingest_photo(db, owner=user, data=bytes(data), source="upload")
+    except UnsupportedPhoto:
+        raise HTTPException(status_code=415, detail="unsupported_mime") from None
     return _photo_out(photo)
 
 
@@ -238,6 +103,7 @@ async def finalize_photo(
 
 @router.get("/photos", response_model=list[PhotoOut])
 async def list_user_photos(
+    near: date | None = None,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> list[PhotoOut]:
@@ -248,33 +114,68 @@ async def list_user_photos(
             Photo.deleted_at.is_(None),
             Photo.finalized_at.is_not(None),
         )
-        .order_by(Photo.created_at.desc())
     )
+    if near is None:
+        q = q.order_by(Photo.created_at.desc())
+    else:
+        # Closest to the entry's date first; photos with no date after those.
+        gap = func.abs(func.date(Photo.taken_at) - near)
+        q = q.order_by(Photo.taken_at.is_(None), gap.asc(), Photo.created_at.desc())
     rows = (await db.execute(q)).scalars().all()
     return [_photo_out(p) for p in rows]
 
 
 # ---------------------------------------------------------------------------
-# Task 12: GET /v1/photos/{id}?kind=full|thumb
+# Task 12: GET /v1/photos/{id}?kind=full|thumb|original
 # ---------------------------------------------------------------------------
+
+
+async def _readable_photo(photo_id: uuid.UUID, user: User, db: AsyncSession) -> Photo | None:
+    """The photo if *user* may read it, else None (design/03 "Photo authorization").
+
+    Readable when the user uploaded it, or when it is attached to a live entry
+    in a live diary the user can read: owner and editors always, viewers only
+    once the entry is published.
+    """
+    role_ok = or_(
+        Diary.owner_user_id == user.id,
+        DiaryPermission.role == "editor",
+        and_(DiaryPermission.role == "viewer", Entry.status == "published"),
+    )
+    shared = exists(
+        select(EntryPhoto.photo_id)
+        .join(Entry, Entry.id == EntryPhoto.entry_id)
+        .join(Diary, Diary.id == Entry.diary_id)
+        .outerjoin(
+            DiaryPermission,
+            and_(DiaryPermission.diary_id == Diary.id, DiaryPermission.user_id == user.id),
+        )
+        .where(
+            EntryPhoto.photo_id == Photo.id,
+            Entry.deleted_at.is_(None),
+            Diary.deleted_at.is_(None),
+            role_ok,
+        )
+    )
+    result = await db.execute(
+        select(Photo).where(
+            Photo.id == photo_id,
+            Photo.deleted_at.is_(None),
+            Photo.finalized_at.is_not(None),
+            or_(Photo.user_id == user.id, shared),
+        )
+    )
+    return result.scalar_one_or_none()
 
 
 @router.get("/photos/{photo_id}")
 async def get_photo(
     photo_id: uuid.UUID,
-    kind: Literal["full", "thumb"] = "full",
+    kind: Literal["full", "thumb", "original"] = "full",
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db, scope="function"),
 ):
-    result = await db.execute(
-        select(Photo).where(
-            Photo.id == photo_id,
-            Photo.user_id == user.id,
-            Photo.deleted_at.is_(None),
-            Photo.finalized_at.is_not(None),
-        )
-    )
-    photo = result.scalar_one_or_none()
+    photo = await _readable_photo(photo_id, user, db)
     if photo is None:
         raise HTTPException(status_code=404, detail="not_found")
 
@@ -283,6 +184,11 @@ async def get_photo(
         key = photo.thumbnail_s3_key
         media_type = "image/jpeg"
         purpose = PURPOSE_THUMB
+    elif kind == "full" and photo.display_s3_key is not None:
+        # JPEG copy of a HEIC photo; made without EXIF, so no location to strip.
+        key = photo.display_s3_key
+        media_type = "image/jpeg"
+        purpose = PURPOSE_DISPLAY
     else:
         key = photo.s3_key
         media_type = photo.mime_type or "application/octet-stream"
@@ -290,7 +196,34 @@ async def get_photo(
 
     if photo.dek_ciphertext is None:
         raise HTTPException(status_code=409, detail="not_finalized")
-    dek = unwrap_dek(photo.dek_ciphertext, user.id)
+    dek = unwrap_dek(photo.dek_ciphertext, photo.user_id)
+
+    if purpose == PURPOSE_FULL and photo.user_id != user.id:
+        # Family sees the picture, not where it was taken (S-12).
+        def _read_all() -> bytes:
+            s3_body = stream_object(key)
+
+            def exact_read(n: int) -> bytes:
+                buf = b""
+                while len(buf) < n:
+                    chunk = s3_body.read(n - len(buf))
+                    if not chunk:
+                        break
+                    buf += chunk
+                return buf
+
+            return b"".join(iter_decrypt_stream(exact_read, dek, purpose))
+
+        loop = asyncio.get_event_loop()
+        data = await loop.run_in_executor(None, _read_all)
+        try:
+            data = await loop.run_in_executor(
+                None, lambda: strip_location(data, photo.mime_type or "")
+            )
+        except ValueError:
+            logger.warning("photo %s could not be re-saved without location", photo.id)
+            raise HTTPException(status_code=409, detail="unreadable_photo")
+        return Response(data, media_type=media_type)
 
     def _stream():
         s3_body = stream_object(key)

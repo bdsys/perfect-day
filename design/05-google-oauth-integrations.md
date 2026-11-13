@@ -1,5 +1,7 @@
 # Google OAuth + Calendar + Photos Integration
 
+> **Google Photos changed on 31 March 2025.** The full-library scope `photoslibrary.readonly` was removed; apps can only read photos they created (<https://developers.google.com/photos/support/updates>). The Photos grant for scanning and the scan-time photo filtering below **cannot be built**. Instead, the Photos grant now uses the **Picker API** scope, and the parent picks photos each time (see "Photos Picker (item 14)" below). Automatic photos move to the mobile app's camera roll: see [`11-mobile-app.md`](11-mobile-app.md) M-1. Decision: Andrew, 2026-11-13.
+
 ## Three flows, separated
 
 OAuth scopes for login vs Calendar vs Photos are separated. Login uses minimum scopes; Calendar and Photos are requested only when the user opts into the integration on a diary.
@@ -8,7 +10,7 @@ OAuth scopes for login vs Calendar vs Photos are separated. Login uses minimum s
 |---|---|---|
 | **Login** | Sign-in / sign-up | `openid email profile` |
 | **Calendar grant** | Per diary, when user enables Calendar integration | `calendar.readonly` |
-| **Photos grant** | Per diary, when user enables Photos integration | `photoslibrary.readonly` |
+| **Photos grant** | When the parent first uses "Add from Google Photos" | `photospicker.mediaitems.readonly` (the old `photoslibrary.readonly` was removed by Google 2025-03-31; migration 0014 drops that string from stored grants) |
 
 Combined grant supported when the user enables both at once — single consent screen with both scopes. User can still partial-grant by unchecking one on the consent screen.
 
@@ -52,7 +54,28 @@ No `oauth_tokens` row is created for login flows — login is a one-time identit
      - ?google=connected         (all requested scopes granted)
      - ?google=partial&missing=photos   (partial grant)
      - ?google=denied            (full denial)
+     - ?google=cancelled         (Cancel pressed on Google's screen)
+     - ?google=wrong_account&expected=<email>   (a different Google account)
+     - ?google=failed&reason=browser_mismatch|nonce_reuse|token_exchange_failed
 ```
+
+## Photos Picker (item 14)
+
+Used by the entry page's "Add photos" panel. Google's picker shows the parent's library; the parent chooses; we copy only those photos. We never see the rest of the library.
+
+**Scope.** `https://www.googleapis.com/auth/photospicker.mediaitems.readonly`, stored in `scopes_granted` as `photospicker.mediaitems.readonly`. Scopes are unioned with what the user already granted, so adding Photos never removes Calendar.
+
+**Return path.** `authorize` takes `return_to` (a same-site path; anything else falls back to the diaries page). It is carried in the HMAC-signed state, and the callback redirects back to it. The parent lands on the entry they started from.
+
+**One Google account.** `authorize` adds `login_hint` with the connected account's email. If the parent consents with a different account, nothing is saved and the redirect is `?google=wrong_account&expected=<email>`. A stored NULL email (older rows) accepts the consenting account and records it.
+
+**Calendar state.** `calendar_state()` (`services/calendar_connection.py`) is `none` when there is no connection or it lacks `calendar.readonly` (for example photos only), `lost` when the calendar connection is revoked, otherwise `connected`. A photos-only grant does not count as a calendar connection.
+
+**S-5: the connect is tied to the browser.** When `authorize` issues the URL it sets the cookie `pd_google_connect` = sha256(nonce): HttpOnly, Secure, SameSite=Lax, Path `/v1/integrations/google/callback`, Max-Age 600. The callback checks the cookie against the nonce in the state before it consumes the nonce, and refuses a missing or different one (`reason=browser_mismatch`). The cookie is cleared on every outcome. A link sent to someone else therefore cannot attach their Google to the sender's account. Because the cookie is always Secure, a non-localhost plain-http origin cannot complete the connect (see `docs/local-dev.md`).
+
+**S-8: disconnect revokes at Google.** `DELETE /v1/integrations/google` POSTs the refresh token (else the access token) to `https://oauth2.googleapis.com/revoke`, then deletes the token row whatever Google answered. A failed revoke is logged without the token.
+
+**Import flow.** `POST /v1/entries/{id}/photo-imports` creates a picker session at Google and returns `picker_uri`; the web app sends the parent there. A Celery task polls the session, copies the picked photos in, and attaches them to the entry. Statuses and endpoints: [`03-api-surface.md`](03-api-surface.md) § Photos. If Google rejects the stored token, the import ends as `needs_reconnect`.
 
 ## Token storage
 
@@ -104,6 +127,8 @@ PoC default: **primary calendar only.** Diary settings UI lists all calendars fr
 
 ## Photos filtering (per-diary)
 
+**Superseded (2026-11-13):** depends on the removed scope; see the note at the top.
+
 **No album selection — date-range filtering only.** Worker pulls photos taken within ±3 days of any Entry's date range.
 
 Privacy/cost mitigations:
@@ -135,7 +160,7 @@ Separate dev and prod projects from day one. Avoids dev calls eating prod quota;
 ## Decisions locked
 
 - Calendar selection: primary by default; per-diary checkbox UI via `diary_calendar_filters`.
-- Photos: date-range filter only; metadata-first; 90-day default backfill cap.
+- ~~Photos: date-range filter only; metadata-first; 90-day default backfill cap.~~ Superseded 2026-11-13: Google removed library access.
 - Facebook: login only. No `oauth_tokens` row.
 - Spotify: skipped. Stubs only.
 - Separate dev/prod Google Cloud projects from day one.

@@ -5,23 +5,16 @@ import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { api, type Diary } from '@/lib/api'
 import { useAuth } from '@/lib/auth-context'
-
-function googleStatusMessage(
-  status: string | null,
-  missing: string | null,
-): { text: string; isError: boolean } | null {
-  if (!status) return null
-  if (status === 'connected') return { text: 'Google Calendar connected successfully.', isError: false }
-  if (status === 'partial' && missing === 'photos') return { text: 'Google Calendar connected. Photos access was not granted (not needed for Phase 1).', isError: false }
-  if (status === 'partial' && missing === 'calendar') return { text: "Calendar access wasn't granted. Click Connect Google Calendar again and tick the Calendar checkbox on Google's screen.", isError: true }
-  if (status === 'cancelled') return { text: 'You cancelled the Google connection. Nothing was changed.', isError: false }
-  if (status === 'failed') return { text: 'Google connection failed. Please try again.', isError: true }
-  return null
-}
+import { googleStatusMessage } from '@/lib/googleStatus'
 
 function GoogleStatusBanner() {
   const searchParams = useSearchParams()
-  const msg = googleStatusMessage(searchParams.get('google'), searchParams.get('missing'))
+  const msg = googleStatusMessage({
+    status: searchParams.get('google'),
+    missing: searchParams.get('missing'),
+    reason: searchParams.get('reason'),
+    expected: searchParams.get('expected'),
+  })
   if (!msg) return null
   return (
     <p className={msg.isError ? 'error-message' : 'success-message'} style={{ marginBottom: '1rem' }}>

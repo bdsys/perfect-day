@@ -16,6 +16,7 @@ All planning deliverables for the PoC. These are authoritative — use them as t
 | [08-security-privacy.md](08-security-privacy.md) | Photo encryption, JWT lifecycle, deletion flows, GDPR posture |
 | [09-poc-scope.md](09-poc-scope.md) | Phase 1 / 2 / 3 build order; resource estimates in `deploy/nuc.md` |
 | [10-open-questions.md](10-open-questions.md) | All OQ-1 through OQ-11 resolved decisions |
+| [11-mobile-app.md](11-mobile-app.md) | Expo app requirements (not started); automatic photos from the camera roll |
 
 ## Topic docs (6 docs)
 

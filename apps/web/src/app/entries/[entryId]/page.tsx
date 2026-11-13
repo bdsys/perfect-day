@@ -3,10 +3,10 @@
 import { Suspense, useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
-import { api, type Entry, type EventItem, type Photo } from '@/lib/api'
+import { api, type Entry, type EventItem } from '@/lib/api'
 import { PhotoThumbnail } from '@/components/PhotoThumbnail'
 import { PhotoLightbox } from '@/components/PhotoLightbox'
-import { PhotoUploadButton } from '@/components/PhotoUploadButton'
+import { AddPhotos } from '@/components/AddPhotos'
 import { useAuth } from '@/lib/auth-context'
 import { StatusPanel } from '@/components/StatusPanel'
 import { usePolling } from '@/lib/usePolling'
@@ -14,6 +14,9 @@ import { formatDateRange } from '@/lib/date'
 import { WeatherBadge } from '@/components/WeatherBadge'
 import { SuggestionBox } from '@/components/SuggestionBox'
 import { EntryPlace } from '@/components/EntryPlace'
+import { GooglePhotosPick } from '@/components/GooglePhotosPick'
+import { PhotoImportNotice } from '@/components/PhotoImportNotice'
+import { googleStatusMessage } from '@/lib/googleStatus'
 
 /** An event's time. With *timeZone* (the entry's own zone), times are shown there, with its name. */
 function formatEventTime(event: EventItem, timeZone?: string): string {
@@ -80,9 +83,17 @@ function EntryDetailPageInner() {
   const [deleting, setDeleting] = useState(false)
   const [answeringSuggestion, setAnsweringSuggestion] = useState(false)
 
+  const [noticeKey, setNoticeKey] = useState(0)
+  const [importInFlight, setImportInFlight] = useState(false)
+  const googleMsg = googleStatusMessage({
+    status: searchParams.get('google'),
+    missing: searchParams.get('missing'),
+    reason: searchParams.get('reason'),
+    expected: searchParams.get('expected'),
+    page: 'entry',
+  })
+
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null)
-  const [showAttachPicker, setShowAttachPicker] = useState(false)
-  const [libraryPhotos, setLibraryPhotos] = useState<Photo[]>([])
   const [removingIds, setRemovingIds] = useState<Set<string>>(new Set())
 
   useEffect(() => {
@@ -269,6 +280,10 @@ function EntryDetailPageInner() {
     }
   }
 
+  const refreshAfterImport = useCallback(() => {
+    api.entries.get(entryId).then(setEntry).catch(() => {})
+  }, [entryId])
+
   async function handleDelete() {
     if (!entry) return
     if (!confirm('Delete this entry? You can restore it within 30 days.')) return
@@ -279,20 +294,6 @@ function EntryDetailPageInner() {
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Delete failed')
       setDeleting(false)
-    }
-  }
-
-  async function handlePickerUpload(p: Photo) {
-    try {
-      await api.photos.attachToEntry(entry!.id, p.id)
-      const refreshed = await api.entries.get(entry!.id)
-      setEntry(refreshed)
-      const lib = await api.photos.listForUser()
-      const attachedIds = new Set(refreshed.photos?.map((ph) => ph.id) ?? [])
-      setLibraryPhotos(lib.filter((ph) => !attachedIds.has(ph.id)))
-      setShowAttachPicker(false)
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to attach uploaded photo')
     }
   }
 
@@ -312,6 +313,11 @@ function EntryDetailPageInner() {
 
       <div className="container" style={{ paddingTop: '1.5rem', maxWidth: 720 }}>
         {error && <p className="error-message" style={{ marginBottom: '1rem' }}>{error}</p>}
+        {googleMsg && (
+          <p className={googleMsg.isError ? 'error-message' : 'success-message'} style={{ marginBottom: '1rem' }}>
+            {googleMsg.text}
+          </p>
+        )}
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.25rem', flexWrap: 'wrap' }}>
           <span className={`status-badge status-${entry.status}`}>{entry.status}</span>
@@ -319,6 +325,13 @@ function EntryDetailPageInner() {
           <WeatherBadge enrichments={entry.enrichments ?? []} />
         </div>
         {!editing && <EntryPlace entry={entry} onUpdated={setEntry} />}
+        {!editing && entry.can_edit && (
+          <AddPhotos
+            entry={entry}
+            onChanged={setEntry}
+            googlePhotos={<GooglePhotosPick entry={entry} inFlight={importInFlight} onStarted={() => setNoticeKey((k) => k + 1)} />}
+          />
+        )}
 
         {editing ? (
           <div className="card" style={{ marginTop: '1rem' }}>
@@ -456,6 +469,8 @@ function EntryDetailPageInner() {
               />
             )}
 
+            {entry.can_edit && <PhotoImportNotice entryId={entry.id} refreshKey={noticeKey} onFinished={refreshAfterImport} onInFlightChange={setImportInFlight} />}
+
             {/* Photo strip */}
             {entry.photos && entry.photos.length > 0 && (
               <section>
@@ -496,58 +511,6 @@ function EntryDetailPageInner() {
                 </ul>
               </section>
             )}
-
-            {/* Attach from library */}
-            <div>
-              <button
-                onClick={async () => {
-                  try {
-                    if (!showAttachPicker) {
-                      const lib = await api.photos.listForUser()
-                      const attachedIds = new Set(entry.photos?.map(p => p.id) ?? [])
-                      setLibraryPhotos(lib.filter(p => !attachedIds.has(p.id)))
-                    }
-                    setShowAttachPicker(s => !s)
-                  } catch (e: unknown) {
-                    setError(e instanceof Error ? e.message : 'Failed to load photo library')
-                  }
-                }}
-              >
-                Attach photo
-              </button>
-              {showAttachPicker && (
-                <div>
-                  <div style={{ marginBottom: "0.5rem" }}>
-                    <PhotoUploadButton onUploaded={handlePickerUpload} label="Upload new" />
-                  </div>
-                  {libraryPhotos.length === 0 ? (
-                    <p>No photos in library yet.</p>
-                  ) : (
-                    <ul className="photo-grid">
-                      {libraryPhotos.map(p => (
-                        <li key={p.id}>
-                          <PhotoThumbnail
-                            photoId={p.id}
-                            alt=""
-                            onClick={async () => {
-                              try {
-                                await api.photos.attachToEntry(entry.id, p.id)
-                                const refreshed = await api.entries.get(entry.id)
-                                setEntry(refreshed)
-                                setShowAttachPicker(false)
-                              } catch (e: unknown) {
-                                setError(e instanceof Error ? e.message : 'Failed to attach photo')
-                              }
-                            }}
-                            className="thumbnail"
-                          />
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              )}
-            </div>
 
             {lightboxIndex !== null && entry.photos && (
               <PhotoLightbox

@@ -9,9 +9,7 @@ beforeEach(() => {
 
 describe("api.photos", () => {
   it("has all required methods", () => {
-    expect(typeof api.photos.requestUploadUrl).toBe("function");
-    expect(typeof api.photos.uploadFile).toBe("function");
-    expect(typeof api.photos.finalize).toBe("function");
+    expect(typeof api.photos.upload).toBe("function");
     expect(typeof api.photos.get).toBe("function");
     expect(typeof api.photos.delete).toBe("function");
     expect(typeof api.photos.listForUser).toBe("function");
@@ -99,5 +97,66 @@ describe("API error parsing", () => {
       },
     });
     await expect(api.diaries.list()).rejects.toMatchObject({ status: 502, message: "HTTP 502" });
+  });
+});
+
+describe("api.photos.upload", () => {
+  class FakeXHR {
+    static instances: FakeXHR[] = [];
+    headers: Record<string, string> = {};
+    withCredentials = false;
+    status = 0;
+    responseText = "";
+    sent: unknown;
+    upload = {} as { onprogress?: unknown };
+    onload?: () => void;
+    onerror?: () => void;
+    onabort?: () => void;
+    ontimeout?: () => void;
+    open = jest.fn();
+    setRequestHeader(k: string, v: string) { this.headers[k] = v; }
+    send(body: unknown) { this.sent = body; FakeXHR.instances.push(this); }
+    respond(status: number, body: unknown) {
+      this.status = status; this.responseText = JSON.stringify(body); this.onload?.();
+    }
+  }
+  beforeEach(() => {
+    FakeXHR.instances = [];
+    (global as unknown as { XMLHttpRequest: unknown }).XMLHttpRequest = FakeXHR;
+  });
+
+  it("sends the raw file with bearer token, and retries once after a 401 refresh", async () => {
+    const file = new File(["abc"], "a.heic", { type: "image/heic" });
+    global.fetch = jest.fn().mockResolvedValueOnce({
+      ok: true, status: 200, json: async () => ({ access_token: "new-token" }),
+    } as unknown as Response);
+    const p = api.photos.upload(file);
+    const first = FakeXHR.instances[0];
+    expect(first.sent).toBe(file);
+    expect(first.withCredentials).toBe(true);
+    expect(first.headers["Content-Type"]).toBe("image/heic");
+    expect(first.headers["Authorization"]).toBe(`Bearer ${MOCK_TOKEN}`);
+    first.respond(401, {});
+    await new Promise((r) => setTimeout(r, 0));
+    const second = FakeXHR.instances[1];
+    expect(second.headers["Authorization"]).toBe("Bearer new-token");
+    second.respond(201, { id: "p1" });
+    await expect(p).resolves.toEqual({ id: "p1" });
+  });
+
+  it("rejects with the API error code on 413", async () => {
+    const p = api.photos.upload(new File(["a"], "a.jpg", { type: "image/jpeg" }));
+    FakeXHR.instances[0].respond(413, { error: { code: "http_error", message: "size_exceeds_limit" } });
+    await expect(p).rejects.toMatchObject({ status: 413, code: "size_exceeds_limit" });
+  });
+
+  it("settles when the XHR is aborted or times out", async () => {
+    const f = new File(["a"], "a.jpg", { type: "image/jpeg" });
+    const p1 = api.photos.upload(f);
+    FakeXHR.instances[0].onabort?.();
+    await expect(p1).rejects.toThrow("upload network error");
+    const p2 = api.photos.upload(f);
+    FakeXHR.instances[1].ontimeout?.();
+    await expect(p2).rejects.toThrow("upload network error");
   });
 });

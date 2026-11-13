@@ -48,7 +48,7 @@ users ──┬──< social_identities
 - `provider` text NOT NULL  *(`google | spotify`)*  *(Facebook login does not create a row)*
 - `access_token_ciphertext` bytea NOT NULL  *(AES-256-GCM, app-level)*
 - `refresh_token_ciphertext` bytea NULL
-- `scopes_granted` text[] NOT NULL  *(e.g., `['calendar.readonly', 'photoslibrary.readonly']`)*
+- `scopes_granted` text[] NOT NULL  *(e.g., `['calendar.readonly', 'photospicker.mediaitems.readonly']`)*
 - `expires_at` timestamptz NULL
 - `revoked_at` timestamptz NULL
 - UNIQUE (`user_id`, `provider`)
@@ -134,13 +134,29 @@ INDEX on (`diary_id`, `entry_date` DESC) for timeline. Timeline order: `entry_da
 - `lat` numeric(9,6) NULL
 - `lon` numeric(9,6) NULL
 - `source` text NOT NULL  *(`google_photos | upload`)*
-- `external_id` text NULL  *(Google Photos media item id)*
+- `external_id` text NULL  *(Google Photos media item id; the Picker item id for imported photos)*
 - `thumbnail_s3_key` text NULL
+- `display_s3_key` text NULL  *(encrypted JPEG display copy of a HEIC/HEIF photo; served for `kind=full`. NULL for other types.)*
 - `ai_description` text NULL  *(reserved for future vision LLM L3; unused in PoC)*
 - `dek_ciphertext` bytea NULL  *(wrapped DEK for AES-GCM photo encryption; see security doc)*
 - `finalized_at` timestamptz NULL  *(set after upload confirmed; orphan sweeper uses this)*
 - `deleted_at` timestamptz NULL
-- UNIQUE (`source`, `external_id`) WHERE external_id IS NOT NULL
+- UNIQUE (`user_id`, `source`, `external_id`) WHERE external_id IS NOT NULL AND deleted_at IS NULL  *(`ux_photos_user_source_external_id`; per user, because two people may pick the same Google item)*
+
+### `photo_imports`
+*(one Google Photos picker import into an entry; migrations 0013 and 0015)*
+- `id` UUID PK
+- `user_id` UUID FK → users ON DELETE CASCADE
+- `entry_id` UUID FK → entries ON DELETE CASCADE
+- `google_session_id` text NOT NULL  *(the Picker session at Google)*
+- `status` varchar(20) NOT NULL DEFAULT `waiting`  *(CHECK: `waiting | copying | done | failed | cancelled | expired | needs_reconnect`)*
+- `expires_at` timestamptz NULL  *(when the Google session ends)*
+- `added_count` int NOT NULL DEFAULT 0
+- `skipped_videos` int NOT NULL DEFAULT 0
+- `failed_names` jsonb NOT NULL DEFAULT `[]`  *(file names that could not be copied)*
+- `dismissed_at` timestamptz NULL  *(the parent hid the outcome)*
+- `created_at`, `updated_at` timestamptz
+- INDEX `ix_photo_imports_entry_user` (`entry_id`, `user_id`)  *(entry page lists a user's imports; entry delete cascades)*
 
 ### `diary_photos`
 *(many-to-many — diary-level photo membership before entry attachment)*

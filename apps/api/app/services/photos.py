@@ -22,7 +22,6 @@ ALLOWED_MIME: frozenset[str] = frozenset({
 MAX_BYTES: int = 50 * 1024 * 1024
 THUMBNAIL_LONGEST_EDGE: int = 512
 THUMBNAIL_QUALITY: int = 80
-PRESIGN_TTL_SECONDS: int = 900
 
 
 def detect_mime(head: bytes) -> str | None:
@@ -134,6 +133,41 @@ except ImportError:
     pass
 
 
+def strip_location(data: bytes, mime: str) -> bytes:
+    """Return the image with its GPS location removed (other EXIF is kept for JPEG).
+
+    JPEG: re-saved at the original quality with the EXIF minus the GPS IFD.
+    Other types: re-saved in the same format without metadata.
+    Raises ValueError if the bytes are not a readable image.
+    """
+    from PIL import Image
+
+    try:
+        with Image.open(BytesIO(data)) as img:
+            img.load()
+            fmt = img.format or "JPEG"
+            # A colour profile carries no location: keep it so wide-gamut photos stay vivid.
+            icc = img.info.get("icc_profile")
+            icc_kw = {"icc_profile": icc} if icc else {}
+            out = BytesIO()
+            if fmt == "JPEG":
+                exif = img.getexif()
+                exif.pop(0x8825, None)
+                img.info.pop("xmp", None)
+                img.info.pop("XML:com.adobe.xmp", None)
+                img.save(out, "JPEG", quality="keep", exif=exif, **icc_kw)
+            else:
+                # Savers (pillow-heif, PNG, WebP) copy metadata out of img.info;
+                # clear everything that can carry a location.
+                # The profile is handed back explicitly below.
+                for k in ("exif", "xmp", "XML:com.adobe.xmp", "icc_profile"):
+                    img.info.pop(k, None)
+                img.save(out, fmt, **icc_kw)
+            return out.getvalue()
+    except Exception as exc:
+        raise ValueError("unreadable_image") from exc
+
+
 def generate_thumbnail(image_bytes: bytes, mime: str) -> bytes:
     """Decode → EXIF-rotate → resize ≤512 px longest edge → JPEG q=80.
 
@@ -155,6 +189,35 @@ def generate_thumbnail(image_bytes: bytes, mime: str) -> bytes:
         return out.getvalue()
     except (UnidentifiedImageError, OSError) as e:
         raise ValueError(f"undecodable image: {e}") from e
+
+
+DISPLAY_QUALITY: int = 90
+_NEEDS_DISPLAY_COPY = frozenset({"image/heic", "image/heif"})
+
+
+def make_display_jpeg(data: bytes, mime: str) -> bytes | None:
+    """A full-size JPEG of a HEIC/HEIF photo, for browsers that cannot show HEIC.
+
+    Returns None for types browsers already display. The JPEG is built without
+    any EXIF (only the colour profile is kept), so it carries no location and is
+    safe to show to anyone.
+    Raises ValueError on undecodable input.
+    """
+    if mime not in _NEEDS_DISPLAY_COPY:
+        return None
+    from PIL import Image, ImageOps
+
+    try:
+        with Image.open(BytesIO(data)) as img:
+            img.load()
+            icc = img.info.get("icc_profile")  # colour only: no location in it
+            upright = ImageOps.exif_transpose(img) or img
+            rgb = upright if upright.mode == "RGB" else upright.convert("RGB")
+            out = BytesIO()
+            rgb.save(out, format="JPEG", quality=DISPLAY_QUALITY, icc_profile=icc)
+            return out.getvalue()
+    except Exception as e:
+        raise ValueError("unreadable_image") from e
 
 
 # ---------------------------------------------------------------------------
@@ -206,35 +269,3 @@ def stream_object(key: str):
     """Return botocore StreamingBody for *key*. Caller is responsible for closing."""
     from app.core.dependencies import get_s3
     return get_s3().get_object(Bucket=_bucket(), Key=key)["Body"]
-
-
-def presign_put_url(key: str, content_type: str, content_length: int) -> str:
-    """Presigned PUT URL valid for PRESIGN_TTL_SECONDS, bound to exact size + type.
-
-    If s3_public_endpoint_url is set, the internal endpoint host is replaced with the
-    public-facing URL so browser clients can reach MinIO directly.
-    """
-    from urllib.parse import urlparse, urlunparse
-
-    from app.core.config import get_settings
-    from app.core.dependencies import get_s3
-
-    url = get_s3().generate_presigned_url(
-        "put_object",
-        Params={
-            "Bucket": _bucket(),
-            "Key": key,
-            "ContentType": content_type,
-            "ContentLength": content_length,
-        },
-        ExpiresIn=PRESIGN_TTL_SECONDS,
-    )
-
-    settings = get_settings()
-    public = settings.s3_public_endpoint_url.rstrip("/")
-    if public:
-        parsed = urlparse(url)
-        pub_parsed = urlparse(public)
-        url = urlunparse(parsed._replace(scheme=pub_parsed.scheme, netloc=pub_parsed.netloc))
-
-    return url

@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import pytest
 
+from tests.integration.photo_helpers import read_fixture, register_and_login, upload_photo
+
 
 @pytest.mark.asyncio
 async def test_minio_fixture_smoke(s3_client, photos_bucket):
@@ -65,224 +67,6 @@ async def test_stream_object_yields_streaming_body(s3_client, photos_bucket, mon
     assert body.read() == b"abcdef"
 
 
-@pytest.mark.asyncio
-async def test_presign_put_url_round_trip(s3_client, photos_bucket, monkeypatch):
-    import httpx
-
-    from app.core.config import get_settings
-    monkeypatch.setenv("S3_BUCKET_PHOTOS", photos_bucket)
-    get_settings.cache_clear()
-    import app.core.dependencies as deps
-    deps._s3_client = s3_client
-
-    from app.services.photos import presign_put_url
-
-    body = b"hello-presigned-world"
-    url = presign_put_url("tmp/test/abc", "image/jpeg", len(body))
-    assert "Signature=" in url or "X-Amz-Signature" in url
-    resp = httpx.put(
-        url,
-        content=body,
-        headers={"Content-Type": "image/jpeg", "Content-Length": str(len(body))},
-    )
-    assert resp.status_code == 200
-    obj = s3_client.get_object(Bucket=photos_bucket, Key="tmp/test/abc")
-    assert obj["Body"].read() == body
-
-
-@pytest.mark.asyncio
-async def test_presign_put_url_rewrites_public_endpoint(s3_client, photos_bucket, monkeypatch):
-    """presign_put_url replaces scheme+netloc with S3_PUBLIC_ENDPOINT_URL when set."""
-    from urllib.parse import urlparse
-
-    from app.core.config import get_settings
-    monkeypatch.setenv("S3_BUCKET_PHOTOS", photos_bucket)
-    monkeypatch.setenv("S3_PUBLIC_ENDPOINT_URL", "https://photos.example.com")
-    get_settings.cache_clear()
-    import app.core.dependencies as deps
-    deps._s3_client = s3_client
-
-    from app.services.photos import presign_put_url
-
-    try:
-        url = presign_put_url("tmp/rewrite/test.jpg", "image/jpeg", 100)
-        parsed = urlparse(url)
-        assert parsed.scheme == "https"
-        assert parsed.netloc == "photos.example.com"
-        assert photos_bucket in parsed.path
-        assert "X-Amz-Signature" in parsed.query or "Signature=" in parsed.query
-    finally:
-        monkeypatch.delenv("S3_PUBLIC_ENDPOINT_URL", raising=False)
-        get_settings.cache_clear()
-        deps._s3_client = None
-
-
-@pytest.mark.asyncio
-async def test_photos_router_registered(client):
-    """The photos router should be mounted; /v1/photos/upload-url returns 401 without auth."""
-    resp = await client.post(
-        "/v1/photos/upload-url",
-        json={"declared_mime": "image/jpeg", "declared_size": 100},
-    )
-    assert resp.status_code in (401, 403)
-
-
-# ---------------------------------------------------------------------------
-# Task 10: POST /v1/photos/upload-url
-# ---------------------------------------------------------------------------
-
-
-async def _login(client, email="user@example.com"):
-    """Helper: register and return Authorization header."""
-    await client.post("/v1/auth/register", json={"email": email, "password": "Password1!"})
-    r = await client.post("/v1/auth/login", json={"email": email, "password": "Password1!"})
-    return {"Authorization": f"Bearer {r.json()['access_token']}"}
-
-
-@pytest.mark.asyncio
-async def test_upload_url_happy_path(client):
-    headers = await _login(client)
-    r = await client.post(
-        "/v1/photos/upload-url",
-        json={"declared_mime": "image/jpeg", "declared_size": 12345},
-        headers=headers,
-    )
-    assert r.status_code == 201, r.text
-    body = r.json()
-    assert "upload_url" in body
-    assert body["upload_key"].startswith("tmp/")
-    assert body["expires_in"] == 900
-    assert body["required_headers"]["Content-Type"] == "image/jpeg"
-    assert body["required_headers"]["Content-Length"] == "12345"
-
-
-@pytest.mark.asyncio
-async def test_upload_url_rejects_non_whitelisted_mime(client):
-    headers = await _login(client, "u2@example.com")
-    r = await client.post(
-        "/v1/photos/upload-url",
-        json={"declared_mime": "application/pdf", "declared_size": 100},
-        headers=headers,
-    )
-    assert r.status_code == 415
-
-
-@pytest.mark.asyncio
-async def test_upload_url_rejects_oversize(client):
-    headers = await _login(client, "u3@example.com")
-    r = await client.post(
-        "/v1/photos/upload-url",
-        json={"declared_mime": "image/jpeg", "declared_size": 60 * 1024 * 1024},
-        headers=headers,
-    )
-    assert r.status_code == 413
-
-
-# ---------------------------------------------------------------------------
-# Task 11: POST /v1/photos/{id}/finalize
-# ---------------------------------------------------------------------------
-
-
-def _read_fixture(name: str) -> bytes:
-    import pathlib
-    return (pathlib.Path(__file__).parent.parent / "fixtures" / "photos" / name).read_bytes()
-
-
-@pytest.mark.asyncio
-async def test_finalize_happy_path(client, s3_client, photos_bucket):
-    import httpx
-    headers = await _login(client, "fin@example.com")
-    body = _read_fixture("sample.jpg")
-
-    r1 = await client.post(
-        "/v1/photos/upload-url",
-        json={"declared_mime": "image/jpeg", "declared_size": len(body)},
-        headers=headers,
-    )
-    assert r1.status_code == 201
-    payload = r1.json()
-    photo_id = payload["photo_id"]
-
-    httpx.put(
-        payload["upload_url"],
-        content=body,
-        headers={"Content-Type": "image/jpeg", "Content-Length": str(len(body))},
-    ).raise_for_status()
-
-    r2 = await client.post(f"/v1/photos/{photo_id}/finalize", headers=headers)
-    assert r2.status_code == 200, r2.text
-    out = r2.json()
-    assert out["mime_type"] == "image/jpeg"
-    assert out["bytes"] == len(body)
-    assert out["finalized_at"] is not None
-    assert out["has_thumbnail"] is True
-
-    # tmp object gone, .enc and _thumb.enc present
-    objs = s3_client.list_objects_v2(Bucket=photos_bucket).get("Contents", [])
-    keys = {o["Key"] for o in objs}
-    assert any(k.endswith(f"{photo_id}.enc") for k in keys)
-    assert any(k.endswith(f"{photo_id}_thumb.enc") for k in keys)
-    assert not any(k.startswith("tmp/") and photo_id in k for k in keys)
-
-
-@pytest.mark.asyncio
-async def test_finalize_idempotent_returns_200(client):
-    import httpx
-    headers = await _login(client, "fin2@example.com")
-    body = _read_fixture("sample.jpg")
-    r1 = await client.post(
-        "/v1/photos/upload-url",
-        json={"declared_mime": "image/jpeg", "declared_size": len(body)},
-        headers=headers,
-    )
-    pid = r1.json()["photo_id"]
-    httpx.put(
-        r1.json()["upload_url"],
-        content=body,
-        headers={"Content-Type": "image/jpeg", "Content-Length": str(len(body))},
-    ).raise_for_status()
-    assert (await client.post(f"/v1/photos/{pid}/finalize", headers=headers)).status_code == 200
-    r3 = await client.post(f"/v1/photos/{pid}/finalize", headers=headers)
-    assert r3.status_code == 200  # idempotent — already finalized is OK
-
-
-@pytest.mark.asyncio
-async def test_finalize_rejects_wrong_user(client):
-    import httpx
-    headers_a = await _login(client, "fina@example.com")
-    headers_b = await _login(client, "finb@example.com")
-    body = _read_fixture("sample.jpg")
-    r1 = await client.post(
-        "/v1/photos/upload-url",
-        json={"declared_mime": "image/jpeg", "declared_size": len(body)},
-        headers=headers_a,
-    )
-    pid = r1.json()["photo_id"]
-    httpx.put(
-        r1.json()["upload_url"],
-        content=body,
-        headers={"Content-Type": "image/jpeg", "Content-Length": str(len(body))},
-    ).raise_for_status()
-    r2 = await client.post(f"/v1/photos/{pid}/finalize", headers=headers_b)
-    assert r2.status_code == 404  # not visible to other user
-
-
-@pytest.mark.asyncio
-async def test_finalize_rejects_missing_tmp(client):
-    import httpx  # noqa: F401
-    headers = await _login(client, "fin3@example.com")
-    body = _read_fixture("sample.jpg")
-    r1 = await client.post(
-        "/v1/photos/upload-url",
-        json={"declared_mime": "image/jpeg", "declared_size": len(body)},
-        headers=headers,
-    )
-    pid = r1.json()["photo_id"]
-    # Do NOT upload the file — just call finalize
-    r2 = await client.post(f"/v1/photos/{pid}/finalize", headers=headers)
-    assert r2.status_code == 422  # tmp object not found
-
-
 # ---------------------------------------------------------------------------
 # Task 12: GET /v1/photos/{id}?kind=full|thumb
 # ---------------------------------------------------------------------------
@@ -290,22 +74,10 @@ async def test_finalize_rejects_missing_tmp(client):
 
 @pytest.mark.asyncio
 async def test_get_photo_full_round_trip(client, s3_client, photos_bucket):
-    import httpx
-    headers = await _login(client, "get1@example.com")
-    body = _read_fixture("sample.jpg")
+    headers = await register_and_login(client, "get1@example.com")
+    body = read_fixture("sample.jpg")
 
-    r1 = await client.post(
-        "/v1/photos/upload-url",
-        json={"declared_mime": "image/jpeg", "declared_size": len(body)},
-        headers=headers,
-    )
-    pid = r1.json()["photo_id"]
-    httpx.put(
-        r1.json()["upload_url"],
-        content=body,
-        headers={"Content-Type": "image/jpeg", "Content-Length": str(len(body))},
-    ).raise_for_status()
-    await client.post(f"/v1/photos/{pid}/finalize", headers=headers)
+    pid = await upload_photo(client, headers, body)
 
     r2 = await client.get(f"/v1/photos/{pid}", headers=headers)
     assert r2.status_code == 200
@@ -315,22 +87,10 @@ async def test_get_photo_full_round_trip(client, s3_client, photos_bucket):
 
 @pytest.mark.asyncio
 async def test_get_photo_thumb(client):
-    import httpx
-    headers = await _login(client, "get2@example.com")
-    body = _read_fixture("sample.jpg")
+    headers = await register_and_login(client, "get2@example.com")
+    body = read_fixture("sample.jpg")
 
-    r1 = await client.post(
-        "/v1/photos/upload-url",
-        json={"declared_mime": "image/jpeg", "declared_size": len(body)},
-        headers=headers,
-    )
-    pid = r1.json()["photo_id"]
-    httpx.put(
-        r1.json()["upload_url"],
-        content=body,
-        headers={"Content-Type": "image/jpeg", "Content-Length": str(len(body))},
-    ).raise_for_status()
-    await client.post(f"/v1/photos/{pid}/finalize", headers=headers)
+    pid = await upload_photo(client, headers, body)
 
     r2 = await client.get(f"/v1/photos/{pid}?kind=thumb", headers=headers)
     assert r2.status_code == 200
@@ -339,23 +99,11 @@ async def test_get_photo_thumb(client):
 
 @pytest.mark.asyncio
 async def test_get_photo_wrong_user_returns_404(client):
-    import httpx
-    headers_a = await _login(client, "ga@example.com")
-    headers_b = await _login(client, "gb@example.com")
-    body = _read_fixture("sample.jpg")
+    headers_a = await register_and_login(client, "ga@example.com")
+    headers_b = await register_and_login(client, "gb@example.com")
+    body = read_fixture("sample.jpg")
 
-    r1 = await client.post(
-        "/v1/photos/upload-url",
-        json={"declared_mime": "image/jpeg", "declared_size": len(body)},
-        headers=headers_a,
-    )
-    pid = r1.json()["photo_id"]
-    httpx.put(
-        r1.json()["upload_url"],
-        content=body,
-        headers={"Content-Type": "image/jpeg", "Content-Length": str(len(body))},
-    ).raise_for_status()
-    await client.post(f"/v1/photos/{pid}/finalize", headers=headers_a)
+    pid = await upload_photo(client, headers_a, body)
 
     r2 = await client.get(f"/v1/photos/{pid}", headers=headers_b)
     assert r2.status_code == 404
@@ -368,24 +116,9 @@ async def test_get_photo_wrong_user_returns_404(client):
 
 @pytest.mark.asyncio
 async def test_delete_photo_soft_deletes(client):
-    import httpx
-    headers = await _login(client, "del1@example.com")
-    body = _read_fixture("sample.jpg")
-    r1 = await client.post(
-        "/v1/photos/upload-url",
-        json={"declared_mime": "image/jpeg", "declared_size": len(body)},
-        headers=headers,
-    )
-    pid = r1.json()["photo_id"]
-    httpx.put(
-        r1.json()["upload_url"],
-        content=body,
-        headers={
-            "Content-Type": "image/jpeg",
-            "Content-Length": str(len(body)),
-        },
-    ).raise_for_status()
-    await client.post(f"/v1/photos/{pid}/finalize", headers=headers)
+    headers = await register_and_login(client, "del1@example.com")
+    body = read_fixture("sample.jpg")
+    pid = await upload_photo(client, headers, body)
 
     r2 = await client.delete(f"/v1/photos/{pid}", headers=headers)
     assert r2.status_code == 204
@@ -397,25 +130,10 @@ async def test_delete_photo_soft_deletes(client):
 
 @pytest.mark.asyncio
 async def test_delete_photo_wrong_user_returns_404(client):
-    import httpx
-    headers_a = await _login(client, "dela@example.com")
-    headers_b = await _login(client, "delb@example.com")
-    body = _read_fixture("sample.jpg")
-    r1 = await client.post(
-        "/v1/photos/upload-url",
-        json={"declared_mime": "image/jpeg", "declared_size": len(body)},
-        headers=headers_a,
-    )
-    pid = r1.json()["photo_id"]
-    httpx.put(
-        r1.json()["upload_url"],
-        content=body,
-        headers={
-            "Content-Type": "image/jpeg",
-            "Content-Length": str(len(body)),
-        },
-    ).raise_for_status()
-    await client.post(f"/v1/photos/{pid}/finalize", headers=headers_a)
+    headers_a = await register_and_login(client, "dela@example.com")
+    headers_b = await register_and_login(client, "delb@example.com")
+    body = read_fixture("sample.jpg")
+    pid = await upload_photo(client, headers_a, body)
 
     r2 = await client.delete(f"/v1/photos/{pid}", headers=headers_b)
     assert r2.status_code == 404
@@ -428,9 +146,8 @@ async def test_delete_photo_wrong_user_returns_404(client):
 
 @pytest.mark.asyncio
 async def test_attach_detach_entry_photo(client):
-    import httpx
-    headers = await _login(client, "ent1@example.com")
-    body = _read_fixture("sample.jpg")
+    headers = await register_and_login(client, "ent1@example.com")
+    body = read_fixture("sample.jpg")
 
     # Create diary + entry
     r_diary = await client.post(
@@ -449,21 +166,7 @@ async def test_attach_detach_entry_photo(client):
     entry_id = r_entry.json()["id"]
 
     # Upload + finalize photo
-    r1 = await client.post(
-        "/v1/photos/upload-url",
-        json={"declared_mime": "image/jpeg", "declared_size": len(body)},
-        headers=headers,
-    )
-    pid = r1.json()["photo_id"]
-    httpx.put(
-        r1.json()["upload_url"],
-        content=body,
-        headers={
-            "Content-Type": "image/jpeg",
-            "Content-Length": str(len(body)),
-        },
-    ).raise_for_status()
-    await client.post(f"/v1/photos/{pid}/finalize", headers=headers)
+    pid = await upload_photo(client, headers, body)
 
     # Attach with position
     r2 = await client.post(
@@ -481,10 +184,9 @@ async def test_attach_detach_entry_photo(client):
 @pytest.mark.asyncio
 async def test_attach_entry_photo_viewer_returns_403(client):
     """A viewer on a diary cannot attach photos to entries."""
-    import httpx
-    headers_owner = await _login(client, "eown@example.com")
-    headers_viewer = await _login(client, "eview@example.com")
-    body = _read_fixture("sample.jpg")
+    headers_owner = await register_and_login(client, "eown@example.com")
+    headers_viewer = await register_and_login(client, "eview@example.com")
+    body = read_fixture("sample.jpg")
 
     r_diary = await client.post(
         "/v1/diaries",
@@ -501,21 +203,7 @@ async def test_attach_entry_photo_viewer_returns_403(client):
     )
     entry_id = r_entry.json()["id"]
 
-    r1 = await client.post(
-        "/v1/photos/upload-url",
-        json={"declared_mime": "image/jpeg", "declared_size": len(body)},
-        headers=headers_viewer,
-    )
-    pid = r1.json()["photo_id"]
-    httpx.put(
-        r1.json()["upload_url"],
-        content=body,
-        headers={
-            "Content-Type": "image/jpeg",
-            "Content-Length": str(len(body)),
-        },
-    ).raise_for_status()
-    await client.post(f"/v1/photos/{pid}/finalize", headers=headers_viewer)
+    pid = await upload_photo(client, headers_viewer, body)
 
     # Viewer tries to attach — should fail since they don't have access to this diary's entry
     r2 = await client.post(
@@ -533,25 +221,10 @@ async def test_attach_entry_photo_viewer_returns_403(client):
 
 @pytest.mark.asyncio
 async def test_get_photo_metadata(client):
-    import httpx
-    headers = await _login(client, "meta1@example.com")
-    body = _read_fixture("sample.jpg")
+    headers = await register_and_login(client, "meta1@example.com")
+    body = read_fixture("sample.jpg")
 
-    r1 = await client.post(
-        "/v1/photos/upload-url",
-        json={"declared_mime": "image/jpeg", "declared_size": len(body)},
-        headers=headers,
-    )
-    pid = r1.json()["photo_id"]
-    httpx.put(
-        r1.json()["upload_url"],
-        content=body,
-        headers={
-            "Content-Type": "image/jpeg",
-            "Content-Length": str(len(body)),
-        },
-    ).raise_for_status()
-    await client.post(f"/v1/photos/{pid}/finalize", headers=headers)
+    pid = await upload_photo(client, headers, body)
 
     r2 = await client.get(f"/v1/photos/{pid}/metadata", headers=headers)
     assert r2.status_code == 200
@@ -571,9 +244,8 @@ async def test_get_photo_metadata(client):
 async def test_entry_out_includes_attached_photos(client):
     from datetime import date
 
-    import httpx
-    headers = await _login(client, "eout1@example.com")
-    body = _read_fixture("sample.jpg")
+    headers = await register_and_login(client, "eout1@example.com")
+    body = read_fixture("sample.jpg")
 
     r_diary = await client.post(
         "/v1/diaries",
@@ -589,21 +261,7 @@ async def test_entry_out_includes_attached_photos(client):
     )
     entry_id = r_entry.json()["id"]
 
-    r1 = await client.post(
-        "/v1/photos/upload-url",
-        json={"declared_mime": "image/jpeg", "declared_size": len(body)},
-        headers=headers,
-    )
-    pid = r1.json()["photo_id"]
-    httpx.put(
-        r1.json()["upload_url"],
-        content=body,
-        headers={
-            "Content-Type": "image/jpeg",
-            "Content-Length": str(len(body)),
-        },
-    ).raise_for_status()
-    await client.post(f"/v1/photos/{pid}/finalize", headers=headers)
+    pid = await upload_photo(client, headers, body)
     await client.post(
         f"/v1/entries/{entry_id}/photos",
         json={"photo_id": pid, "position": 0},
@@ -623,37 +281,15 @@ async def test_entry_out_includes_attached_photos(client):
 # ---------------------------------------------------------------------------
 
 
-async def _upload_and_finalize(client, headers, body) -> str:
-    """Helper: upload + finalize a photo; returns photo_id as str."""
-    import httpx
-
-    r1 = await client.post(
-        "/v1/photos/upload-url",
-        json={"declared_mime": "image/jpeg", "declared_size": len(body)},
-        headers=headers,
-    )
-    assert r1.status_code == 201, r1.text
-    payload = r1.json()
-    pid = payload["photo_id"]
-    httpx.put(
-        payload["upload_url"],
-        content=body,
-        headers={"Content-Type": "image/jpeg", "Content-Length": str(len(body))},
-    ).raise_for_status()
-    r2 = await client.post(f"/v1/photos/{pid}/finalize", headers=headers)
-    assert r2.status_code == 200, r2.text
-    return pid
-
-
 @pytest.mark.asyncio
 async def test_list_user_photos_ordered(client):
     """GET /v1/photos returns user's finalized photos in created_at DESC order."""
-    headers = await _login(client, "list_order@example.com")
-    body = _read_fixture("sample.jpg")
+    headers = await register_and_login(client, "list_order@example.com")
+    body = read_fixture("sample.jpg")
 
-    pid1 = await _upload_and_finalize(client, headers, body)
-    pid2 = await _upload_and_finalize(client, headers, body)
-    pid3 = await _upload_and_finalize(client, headers, body)
+    pid1 = await upload_photo(client, headers, body)
+    pid2 = await upload_photo(client, headers, body)
+    pid3 = await upload_photo(client, headers, body)
 
     r = await client.get("/v1/photos", headers=headers)
     assert r.status_code == 200, r.text
@@ -671,11 +307,11 @@ async def test_list_user_photos_ordered(client):
 @pytest.mark.asyncio
 async def test_list_user_photos_cross_user_isolation(client):
     """GET /v1/photos does not return another user's photos."""
-    headers_a = await _login(client, "list_iso_a@example.com")
-    headers_b = await _login(client, "list_iso_b@example.com")
-    body = _read_fixture("sample.jpg")
+    headers_a = await register_and_login(client, "list_iso_a@example.com")
+    headers_b = await register_and_login(client, "list_iso_b@example.com")
+    body = read_fixture("sample.jpg")
 
-    await _upload_and_finalize(client, headers_a, body)
+    await upload_photo(client, headers_a, body)
 
     # Verify user A's upload succeeded before checking isolation
     r_a = await client.get("/v1/photos", headers=headers_a)
@@ -691,10 +327,10 @@ async def test_list_user_photos_cross_user_isolation(client):
 @pytest.mark.asyncio
 async def test_list_user_photos_excludes_deleted(client):
     """GET /v1/photos excludes soft-deleted photos."""
-    headers = await _login(client, "list_del@example.com")
-    body = _read_fixture("sample.jpg")
+    headers = await register_and_login(client, "list_del@example.com")
+    body = read_fixture("sample.jpg")
 
-    pid = await _upload_and_finalize(client, headers, body)
+    pid = await upload_photo(client, headers, body)
 
     r_del = await client.delete(f"/v1/photos/{pid}", headers=headers)
     assert r_del.status_code == 204
@@ -706,20 +342,20 @@ async def test_list_user_photos_excludes_deleted(client):
 
 
 @pytest.mark.asyncio
-async def test_list_user_photos_excludes_unfinalized(client):
+async def test_list_user_photos_excludes_unfinalized(client, db_session):
     """GET /v1/photos excludes photos that have not been finalized."""
-    headers = await _login(client, "list_unfin@example.com")
-    body = _read_fixture("sample.jpg")
+    from sqlalchemy import select
 
-    # Request upload URL but do NOT call finalize
-    r1 = await client.post(
-        "/v1/photos/upload-url",
-        json={"declared_mime": "image/jpeg", "declared_size": len(body)},
-        headers=headers,
-    )
-    assert r1.status_code == 201, r1.text
+    from app.models import User
+    from tests.fixtures.factories import make_photo
+
+    headers = await register_and_login(client, "list_unfin@example.com")
+    user = (
+        await db_session.execute(select(User).where(User.email == "list_unfin@example.com"))
+    ).scalar_one()
+    await make_photo(db_session, user=user, finalized=False)
+    await db_session.commit()
 
     r = await client.get("/v1/photos", headers=headers)
     assert r.status_code == 200, r.text
-    photos = r.json()
-    assert len(photos) == 0
+    assert r.json() == []

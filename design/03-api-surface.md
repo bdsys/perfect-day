@@ -91,24 +91,48 @@ All endpoints prefixed `/v1/`. JSON. Auth via `Authorization: Bearer <jwt>` unle
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/v1/photos` | User's photo library. Filters: `?diary_id=&from=&to=&attached=`. |
-| POST | `/v1/photos/upload-url` | Pre-signed MinIO PUT URL + photo id. Client uploads directly. |
-| POST | `/v1/photos/{id}/finalize` | Confirm upload. Worker reads EXIF, generates thumbnail. |
-| GET | `/v1/photos/{id}` | Metadata + decrypt-and-stream download. |
-| GET | `/v1/photos/{id}/thumbnail` | Decrypt-and-stream thumbnail. |
-| DELETE | `/v1/photos/{id}` | Soft delete. |
+| POST | `/v1/photos` | Upload one photo. The body is the raw image bytes (not multipart); `Content-Type` is the image type or `application/octet-stream`. Returns the photo (201). 413 `size_exceeds_limit` over 50 MiB, 415 `unsupported_mime`. |
+| GET | `/v1/photos` | The caller's own photo library, newest first. `?near=YYYY-MM-DD` sorts by closeness of the photo's date to that day (photos with no date last). |
+| GET | `/v1/photos/{id}?kind=full\|thumb\|original` | Decrypt-and-stream the image. `full` is the default. |
+| GET | `/v1/photos/{id}/metadata` | Photo metadata. |
+| DELETE | `/v1/photos/{id}` | Soft delete (uploader only). |
+| POST | `/v1/entries/{id}/photos` | Attach photos to an entry. |
+| DELETE | `/v1/entries/{id}/photos/{photoId}` | Detach. |
 
-Upload pattern: signed URLs to `media.diary.perfectday.andrewlass.com`. The edge proxy restricts to PUT only, rate-limited. Object keys non-guessable: `{user_id}/{uuid}.enc`. **Downloads always proxied through the API** — no MinIO signed URLs for reads.
+The old `upload-url` and `finalize` endpoints and the browser-to-MinIO upload are gone (S-7). The API reads the body itself: auth runs first, a `Content-Length` over 50 MiB is refused up front, and the cap is also enforced while the body streams in. The image is held in memory only, never written to disk, and is encrypted (per-photo key) before it reaches MinIO. Object keys are non-guessable: `{user_id}/{uuid}.enc`. **Downloads always proxied through the API** — no MinIO signed URLs for reads.
 
-Orphan sweeper runs every 6h via Celery beat; deletes `photos` rows where `finalized_at IS NULL AND created_at < now() - interval '24 hours'` plus the MinIO objects.
+`kind`:
+- `full` — the display image. For HEIC/HEIF photos this is an encrypted JPEG copy made at upload (`photos.display_s3_key`), so browsers can show it. A beat sweep makes the copy for any HEIC photo that lacks one.
+- `thumb` — the thumbnail, falling back to the full image when there is none.
+- `original` — the stored file as uploaded.
+
+Anyone other than the uploader gets the full-size bytes with the location (GPS) removed (S-12). The uploader gets the file as stored.
+
+### Google Photos picker (photo imports)
+
+The parent picks photos in Google's own picker; the worker copies them into the entry. Needs the Google Photos grant (see [`05-google-oauth-integrations.md`](05-google-oauth-integrations.md)). Editors and the owner only.
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/v1/entries/{id}/photo-imports` | Start a picker session at Google. Returns `{id, picker_uri, status}` (201). 409 `photos_not_connected`, 503 `google_unavailable` or `queue_unavailable`, 502 `google_error`. Up to 50 items per pick. |
+| GET | `/v1/entries/{id}/photo-imports` | The caller's own imports into the entry that they have not dismissed, newest first. |
+| GET | `/v1/photo-imports/{id}` | One import: `{id, entry_id, status, added_count, skipped_videos, failed_names}`. |
+| POST | `/v1/photo-imports/{id}/cancel` | Stop waiting for, or copying, a pick. Photos already added stay. A finished import is unchanged. |
+| POST | `/v1/photo-imports/{id}/dismiss` | Hide the import's outcome from the entry (204). |
+
+`status` is one of `waiting`, `copying`, `done`, `failed`, `cancelled`, `expired`, `needs_reconnect`. The Celery task `process_photo_import` polls Google, copies the picked photos in (videos are skipped and counted), attaches them to the entry and deletes the Google session.
+
+Orphan sweeper runs every 6h via Celery beat. It deletes `photos` rows where `finalized_at IS NULL AND created_at < now() - interval '24 hours'`, any stray `tmp/` objects older than 24 hours (left from the old upload flow), and then makes missing HEIC display copies.
 
 ### Photo authorization
 
-A caller may read photo P (full-size via `GET /v1/photos/{id}` or thumbnail via `GET /v1/photos/{id}/thumbnail`) iff one of the following is true:
+A caller may read photo P (any `kind`) iff one of the following is true. Built and tested (C-22, `test_shared_photos.py`).
 
-- **(a) Owner:** `photo.user_id = caller.id`
-- **(b) Shared viewer:** the photo is attached via `entry_photos` to an entry E where `E.status = 'published'`, `E.deleted_at IS NULL`, the diary is not soft-deleted, and the caller has any role (owner / editor / viewer) on that diary.
-- **Draft entries:** only owners and editors of the diary may read photos attached exclusively to draft entries.
+- **(a) Uploader:** `photo.user_id = caller.id`
+- **(b) Owner or editor of a diary the photo is on:** the photo is attached via `entry_photos` to an entry E where `E.deleted_at IS NULL`, the diary is not soft-deleted, and the caller owns the diary or has the `editor` role. Draft and published entries both count.
+- **(c) Viewer:** same as (b), but only when `E.status = 'published'`.
+
+Everyone but the uploader gets the location stripped. The bytes are decrypted with the uploader's key. Anyone else gets 404.
 
 Photos attached to a deleted diary are inaccessible even to the photo owner until the cross-diary check confirms no other diary links them (in which case the photo row and MinIO object are deleted by `process_hard_deletes`).
 

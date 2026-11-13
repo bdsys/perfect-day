@@ -72,6 +72,19 @@ export async function parseApiError(res: { status: number; json: () => Promise<u
   return new ApiError(res.status, fallback)
 }
 
+/** Refresh the access token via the refresh cookie. True when a new token was stored. */
+async function refreshAccessToken(): Promise<boolean> {
+  try {
+    const res = await fetch(`${API_BASE}/v1/auth/refresh`, { method: 'POST', credentials: 'include' })
+    if (res.ok) {
+      setAccessToken(((await res.json()) as TokenPair).access_token)
+      return true
+    }
+  } catch {}
+  _accessToken = null
+  return false
+}
+
 async function apiFetchBlob(path: string, retryOn401 = true): Promise<Blob> {
   const headers: HeadersInit = {}
   if (_accessToken) {
@@ -164,14 +177,6 @@ export type Photo = {
   has_thumbnail: boolean
 }
 
-export type UploadUrl = {
-  photo_id: string
-  upload_url: string
-  upload_key: string
-  expires_in: number
-  required_headers: Record<string, string>
-}
-
 export interface Diary {
   id: string
   name: string
@@ -220,6 +225,19 @@ export interface Integration {
   expires_at: string | null
   google_email: string | null
   google_name: string | null
+  photos: boolean
+}
+
+export type PhotoImportStatus =
+  | 'waiting' | 'copying' | 'done' | 'failed' | 'cancelled' | 'expired' | 'needs_reconnect'
+
+export interface PhotoImport {
+  id: string
+  entry_id: string
+  status: PhotoImportStatus
+  added_count: number
+  skipped_videos: number
+  failed_names: string[]
 }
 
 export interface EventItem {
@@ -578,11 +596,31 @@ export const api = {
   },
 
   integrations: {
-    async getGoogleAuthUrl(scopes = 'calendar'): Promise<{ url: string }> {
-      return apiFetch(`/v1/integrations/google/authorize?scopes=${scopes}`)
+    async getGoogleAuthUrl(scopes = 'calendar', returnTo?: string): Promise<{ url: string }> {
+      const q = new URLSearchParams({ scopes })
+      if (returnTo) q.set('return_to', returnTo)
+      return apiFetch(`/v1/integrations/google/authorize?${q.toString()}`)
     },
     async list(): Promise<Integration[]> {
       return apiFetch('/v1/integrations')
+    },
+  },
+
+  photoImports: {
+    async create(entryId: string): Promise<{ id: string; picker_uri: string; status: PhotoImportStatus }> {
+      return apiFetch(`/v1/entries/${entryId}/photo-imports`, { method: 'POST' })
+    },
+    async get(id: string): Promise<PhotoImport> {
+      return apiFetch(`/v1/photo-imports/${id}`)
+    },
+    async cancel(id: string): Promise<void> {
+      await apiFetch(`/v1/photo-imports/${id}/cancel`, { method: 'POST' })
+    },
+    async listForEntry(entryId: string): Promise<PhotoImport[]> {
+      return apiFetch(`/v1/entries/${entryId}/photo-imports`)
+    },
+    async dismiss(id: string): Promise<void> {
+      await apiFetch(`/v1/photo-imports/${id}/dismiss`, { method: 'POST' })
     },
   },
 
@@ -651,30 +689,50 @@ export const api = {
   },
 
   photos: {
-    requestUploadUrl: (body: { declared_mime: string; declared_size: number }) =>
-      apiFetch<UploadUrl>('/v1/photos/upload-url', {
-        method: 'POST',
-        body: JSON.stringify(body),
-      }),
-
-    uploadFile: (uploadUrl: string, file: File, onProgress?: (p: number) => void): Promise<void> =>
-      new Promise((resolve, reject) => {
-        const xhr = new XMLHttpRequest()
-        xhr.open('PUT', uploadUrl)
-        xhr.setRequestHeader('Content-Type', file.type)
-        xhr.upload.onprogress = (e) => {
-          if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total)
-        }
-        xhr.onload = () =>
-          xhr.status >= 200 && xhr.status < 300
-            ? resolve()
-            : reject(new Error(`upload failed: ${xhr.status}`))
-        xhr.onerror = () => reject(new Error('upload network error'))
-        xhr.send(file)
-      }),
-
-    finalize: (photoId: string) =>
-      apiFetch<Photo>(`/v1/photos/${photoId}/finalize`, { method: 'POST' }),
+    /**
+     * Upload one image: the raw bytes are the request body (no multipart).
+     * XHR rather than fetch so we get upload progress. On 401 the access
+     * token is refreshed once and the upload retried.
+     */
+    upload: (file: File, onProgress?: (p: number) => void): Promise<Photo> => {
+      const attempt = (retryOn401: boolean): Promise<Photo> =>
+        new Promise<Photo>((resolve, reject) => {
+          const xhr = new XMLHttpRequest()
+          xhr.open('POST', `${API_BASE}/v1/photos`)
+          xhr.withCredentials = true
+          xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream')
+          if (_accessToken) xhr.setRequestHeader('Authorization', `Bearer ${_accessToken}`)
+          xhr.upload.onprogress = (e) => {
+            if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total)
+          }
+          const netFail = () => reject(new Error('upload network error'))
+          xhr.onerror = netFail
+          xhr.onabort = netFail
+          xhr.ontimeout = netFail
+          xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) {
+              try {
+                resolve(JSON.parse(xhr.responseText) as Photo)
+              } catch {
+                reject(new Error('upload failed: bad response'))
+              }
+              return
+            }
+            if (xhr.status === 401 && retryOn401) {
+              refreshAccessToken().then(
+                (ok) => (ok ? attempt(false).then(resolve, reject) : reject(new ApiError(401, 'unauthorized'))),
+              )
+              return
+            }
+            parseApiError({
+              status: xhr.status,
+              json: async () => JSON.parse(xhr.responseText),
+            }).then(reject)
+          }
+          xhr.send(file)
+        })
+      return attempt(true)
+    },
 
     get: (photoId: string, kind: 'full' | 'thumb' = 'full'): Promise<Blob> =>
       apiFetchBlob(`/v1/photos/${photoId}?kind=${kind}`),
@@ -682,8 +740,8 @@ export const api = {
     delete: (photoId: string) =>
       apiFetch<void>(`/v1/photos/${photoId}`, { method: 'DELETE' }),
 
-    listForUser: (): Promise<Photo[]> =>
-      apiFetch<Photo[]>('/v1/photos'),
+    listForUser: (near?: string): Promise<Photo[]> =>
+      apiFetch<Photo[]>(near ? `/v1/photos?near=${encodeURIComponent(near)}` : '/v1/photos'),
 
     attachToEntry: (entryId: string, photoId: string, position?: number) =>
       apiFetch<Photo>(`/v1/entries/${entryId}/photos`, {

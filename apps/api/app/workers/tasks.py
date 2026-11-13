@@ -831,3 +831,50 @@ async def _backfill_diary(backfill_run_id_str: str) -> None:
             run.error = str(e)
         raise
 
+
+
+# ---------------------------------------------------------------------------
+# process_photo_import (item 14: Google Photos picks)
+# ---------------------------------------------------------------------------
+
+
+@celery_app.task(name="app.workers.tasks.process_photo_import", bind=True)
+def process_photo_import(
+    self, import_id: str, list_attempt: int = 0, poll_s: float | None = None
+) -> None:
+    """Poll a Google Photos pick until it's done, then copy the photos onto the entry.
+
+    Re-queues itself at Google's poll interval, so it finishes without the
+    parent's page open.
+    """
+    run_sync(_process_photo_import(import_id, list_attempt=list_attempt, poll_s=poll_s))
+
+
+async def _process_photo_import(
+    import_id_str: str, list_attempt: int = 0, poll_s: float | None = None
+) -> None:
+    from app.workers.photo_imports import mark_failed, run_photo_import
+
+    import_id = uuid.UUID(import_id_str)
+    try:
+        nxt = await run_photo_import(import_id, list_attempt=list_attempt, poll_s=poll_s)
+    except Exception:
+        # Nothing re-queues a crashed run: end it visibly rather than leave it waiting.
+        log.exception("photo_import_crashed", import_id=import_id_str)
+        try:
+            await mark_failed(import_id)
+        except Exception:
+            log.exception("photo_import_mark_failed_failed", import_id=import_id_str)
+        raise
+    if nxt is None:
+        return
+    try:
+        process_photo_import.apply_async(
+            args=(import_id_str,),
+            kwargs={"list_attempt": nxt.list_attempt, "poll_s": nxt.poll_s},
+            countdown=nxt.countdown,
+        )
+    except Exception:
+        # Nothing else would ever pick it up again: say so instead of waiting forever.
+        log.exception("photo_import_requeue_failed", import_id=import_id_str)
+        await mark_failed(import_id)

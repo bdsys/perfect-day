@@ -4,13 +4,14 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import secrets
 import uuid
 from datetime import UTC, datetime
 from urllib.parse import urlencode
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -20,16 +21,22 @@ from app.core.auth import get_current_user
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.dependencies import get_redis
-from app.core.security import encrypt_oauth_token
+from app.core.security import decrypt_oauth_token, encrypt_oauth_token
 from app.models import OAuthToken, User
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
+logger = logging.getLogger(__name__)
 
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"  # noqa: S105
+GOOGLE_REVOKE_URL = "https://oauth2.googleapis.com/revoke"
+CONNECT_COOKIE = "pd_google_connect"
+CONNECT_COOKIE_PATH = "/v1/integrations/google/callback"
 
 SCOPE_CALENDAR = "https://www.googleapis.com/auth/calendar.readonly"
-SCOPE_PHOTOS = "https://www.googleapis.com/auth/photoslibrary.readonly"
+SCOPE_PHOTOS = "https://www.googleapis.com/auth/photospicker.mediaitems.readonly"
+PHOTOS_SHORT = "photospicker.mediaitems.readonly"
+DEFAULT_RETURN_TO = "/diaries"
 SCOPE_OPENID = "openid email profile"
 
 NONCE_TTL = 600  # 10 minutes
@@ -60,6 +67,39 @@ def _decode_id_token(id_token: str | None) -> dict:
         return {"email": None, "name": None}
 
 
+def _safe_return_to(value: str | None) -> str:
+    """A same-site path only; anything else falls back to the diaries page."""
+    if (
+        not value
+        or not value.startswith("/")
+        or value.startswith("//")
+        or "\\" in value
+        or "://" in value
+        or any(ord(c) < 32 for c in value)
+    ):
+        return DEFAULT_RETURN_TO
+    return value
+
+
+def _redirect(web_base: str, return_to: str, **query: str) -> RedirectResponse:
+    sep = "&" if "?" in return_to else "?"
+    return RedirectResponse(f"{web_base}{return_to}{sep}{urlencode(query)}")
+
+
+def _nonce_digest(nonce: str) -> str:
+    return hashlib.sha256(nonce.encode()).hexdigest()
+
+
+def _clear_connect_cookie(response: Response) -> None:
+    response.delete_cookie(
+        CONNECT_COOKIE,
+        path=CONNECT_COOKIE_PATH,
+        secure=True,
+        httponly=True,
+        samesite="lax",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Schemas
 # ---------------------------------------------------------------------------
@@ -72,6 +112,7 @@ class IntegrationOut(BaseModel):
     expires_at: datetime | None
     google_email: str | None = None
     google_name: str | None = None
+    photos: bool = False
 
     model_config = {"from_attributes": False}
 
@@ -118,6 +159,7 @@ async def list_integrations(
             expires_at=t.expires_at,
             google_email=t.google_email,
             google_name=t.google_name,
+            photos=t.revoked_at is None and PHOTOS_SHORT in (t.scopes_granted or []),
         )
         for t in tokens
     ]
@@ -125,8 +167,11 @@ async def list_integrations(
 
 @router.get("/google/authorize")
 async def google_authorize(
+    response: Response,
     scopes: str = Query("calendar", description="comma-separated: calendar,photos"),
+    return_to: str | None = Query(None),
     user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> dict:
     settings = get_settings()
     r = get_redis()
@@ -141,11 +186,28 @@ async def google_authorize(
     nonce = secrets.token_urlsafe(32)
     # The callback compares what was asked for with what Google granted.
     asked_for = sorted(s for s in set(requested) if s in ("calendar", "photos"))
-    payload = {"user_id": str(user.id), "nonce": nonce, "scopes": asked_for}
+    payload = {
+        "user_id": str(user.id),
+        "nonce": nonce,
+        "scopes": asked_for,
+        "return_to": _safe_return_to(return_to),
+    }
     state = _sign_state(payload, settings.secret_key)
 
     # Store nonce in Redis (single-use, 10-min TTL)
     await r.setex(f"oauth_nonce:{nonce}", NONCE_TTL, "1")
+
+    # Tie the flow to this browser: the callback must present the same cookie,
+    # so a link sent to someone else cannot attach their Google to this account.
+    response.set_cookie(
+        key=CONNECT_COOKIE,
+        value=_nonce_digest(nonce),
+        httponly=True,
+        samesite="lax",
+        secure=True,
+        max_age=NONCE_TTL,
+        path=CONNECT_COOKIE_PATH,
+    )
 
     params = {
         "client_id": settings.google_client_id,
@@ -157,6 +219,14 @@ async def google_authorize(
         "include_granted_scopes": "true",
         "state": state,
     }
+    # Steer Google to the account already connected, so Calendar is not replaced.
+    existing = (
+        await db.execute(
+            select(OAuthToken).where(OAuthToken.user_id == user.id, OAuthToken.provider == "google")
+        )
+    ).scalar_one_or_none()
+    if existing is not None and existing.revoked_at is None and existing.google_email:
+        params["login_hint"] = existing.google_email
     return {"url": f"{GOOGLE_AUTH_URL}?{urlencode(params)}"}
 
 
@@ -169,24 +239,64 @@ async def google_callback(
     scope: str | None = Query(None),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> RedirectResponse:
+    """Whatever happens, the one-shot browser cookie is deleted in the reply."""
+
+    def done(r: RedirectResponse) -> RedirectResponse:
+        _clear_connect_cookie(r)
+        return r
+
+    try:
+        return done(await _google_callback(request, code, state, error, scope, db))
+    except HTTPException as exc:
+        cleared = Response()
+        _clear_connect_cookie(cleared)
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail=exc.detail,
+            headers={"set-cookie": cleared.headers["set-cookie"]},
+        ) from exc
+
+
+async def _google_callback(
+    request: Request,
+    code: str | None,
+    state: str | None,
+    error: str | None,
+    scope: str | None,
+    db: AsyncSession,
+) -> RedirectResponse:
     settings = get_settings()
     r = get_redis()
 
     web_base = settings.cors_origins[0] if settings.cors_origins else "http://localhost:3000"
 
+    return_to = DEFAULT_RETURN_TO
+    if state:
+        try:
+            return_to = _safe_return_to(_verify_state(state, settings.secret_key).get("return_to"))
+        except HTTPException:
+            pass  # a bad state is rejected below, once it matters
+
     if error == "access_denied":
         # The person pressed Cancel on Google's screen.
-        return RedirectResponse(f"{web_base}/diaries?google=cancelled")
+        return _redirect(web_base, return_to, google="cancelled")
     if error or not code or not state:
-        return RedirectResponse(f"{web_base}/diaries?google=failed")
+        return _redirect(web_base, return_to, google="failed")
 
     payload = _verify_state(state, settings.secret_key)
     nonce = payload.get("nonce", "")
 
+    # The browser finishing consent must be the one that started it. Checked
+    # before the nonce is consumed, so a wrong browser cannot burn the real
+    # user's single-use nonce.
+    presented = request.cookies.get(CONNECT_COOKIE, "")
+    if not hmac.compare_digest(presented, _nonce_digest(nonce)):
+        return _redirect(web_base, return_to, google="failed", reason="browser_mismatch")
+
     # Single-use nonce check
     deleted = await r.delete(f"oauth_nonce:{nonce}")
     if not deleted:
-        return RedirectResponse(f"{web_base}/diaries?google=failed&reason=nonce_reuse")
+        return _redirect(web_base, return_to, google="failed", reason="nonce_reuse")
 
     user_id = uuid.UUID(payload["user_id"])
 
@@ -203,9 +313,7 @@ async def google_callback(
             },
         )
         if resp.status_code != 200:
-            return RedirectResponse(
-                f"{web_base}/diaries?google=failed&reason=token_exchange_failed"
-            )
+            return _redirect(web_base, return_to, google="failed", reason="token_exchange_failed")
         token_data = resp.json()
 
     identity = _decode_id_token(token_data.get("id_token"))
@@ -218,29 +326,48 @@ async def google_callback(
     if SCOPE_CALENDAR in granted_scope_str:
         granted_scopes.append("calendar.readonly")
     if SCOPE_PHOTOS in granted_scope_str:
-        granted_scopes.append("photoslibrary.readonly")
+        granted_scopes.append(PHOTOS_SHORT)
 
     # Google shows each permission with its own checkbox. Without calendar
     # access the connection is no use, so nothing is saved: an existing
     # connection, working or lost, is left exactly as it was (C-19).
     asked_for = set(payload.get("scopes", ["calendar"]))
     granted = {"calendar"} if "calendar.readonly" in granted_scopes else set()
-    if "photoslibrary.readonly" in granted_scopes:
+    if PHOTOS_SHORT in granted_scopes:
         granted.add("photos")
     missing = asked_for - granted
     if "calendar" in missing:
-        return RedirectResponse(f"{web_base}/diaries?google=partial&missing=calendar")
+        return _redirect(web_base, return_to, google="partial", missing="calendar")
+
+    existing_result = await db.execute(
+        select(OAuthToken).where(OAuthToken.user_id == user_id, OAuthToken.provider == "google")
+    )
+    existing = existing_result.scalar_one_or_none()
+
+    # Photos-only connect: nothing to save if the picker permission was not given.
+    if "photos" in missing and "calendar" not in asked_for:
+        return _redirect(web_base, return_to, google="partial", missing="photos")
+
+    # One Google account per person: a different account never replaces a
+    # live connection, so Calendar is never swapped out.
+    account_matches = False
+    if existing is not None and existing.revoked_at is None:
+        stored = (existing.google_email or "").lower()
+        # A stored NULL email (older rows) accepts the consenting account and
+        # records it below. Otherwise the consenting email must be present
+        # and match; a missing one is never treated as a match.
+        if stored and stored != (identity["email"] or "").lower():
+            return _redirect(
+                web_base, return_to, google="wrong_account", expected=existing.google_email or ""
+            )
+        account_matches = True
+    if account_matches and existing is not None:
+        granted_scopes = list(dict.fromkeys([*granted_scopes, *(existing.scopes_granted or [])]))
 
     expires_at = datetime.now(tz=UTC).replace(microsecond=0)
     from datetime import timedelta
 
     expires_at = expires_at + timedelta(seconds=expires_in)
-
-    # Upsert oauth_tokens
-    existing_result = await db.execute(
-        select(OAuthToken).where(OAuthToken.user_id == user_id, OAuthToken.provider == "google")
-    )
-    existing = existing_result.scalar_one_or_none()
 
     if existing is not None:
         existing.access_token_ciphertext = encrypt_oauth_token(access_token)
@@ -269,8 +396,8 @@ async def google_callback(
     await db.commit()
 
     if "photos" in missing:
-        return RedirectResponse(f"{web_base}/diaries?google=partial&missing=photos")
-    return RedirectResponse(f"{web_base}/diaries?google=connected")
+        return _redirect(web_base, return_to, google="partial", missing="photos")
+    return _redirect(web_base, return_to, google="connected")
 
 
 @router.delete("/google", status_code=status.HTTP_204_NO_CONTENT)
@@ -282,5 +409,22 @@ async def revoke_google(
         select(OAuthToken).where(OAuthToken.user_id == user.id, OAuthToken.provider == "google")
     )
     token = result.scalar_one_or_none()
-    if token is not None:
-        token.revoked_at = datetime.now(tz=UTC)
+    if token is None:
+        return
+
+    # Revoke the grant at Google, then forget the tokens whatever Google said.
+    try:
+        secret = decrypt_oauth_token(
+            token.refresh_token_ciphertext or token.access_token_ciphertext
+        )
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(GOOGLE_REVOKE_URL, data={"token": secret})
+        if resp.status_code != 200:
+            logger.warning(
+                "Google token revoke failed user_id=%s status=%s", user.id, resp.status_code
+            )
+    except Exception as exc:
+        # Never log the exception text or token: only the user and error type.
+        logger.warning("Google token revoke failed user_id=%s error=%s", user.id, type(exc).__name__)
+    await db.delete(token)
+    await db.commit()
