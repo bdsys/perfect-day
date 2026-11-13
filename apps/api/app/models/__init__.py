@@ -425,6 +425,7 @@ class Photo(TimestampMixin, SoftDeleteMixin, Base):
     source: Mapped[str] = mapped_column(String(20), nullable=False)
     external_id: Mapped[str | None] = mapped_column(Text)
     thumbnail_s3_key: Mapped[str | None] = mapped_column(Text)
+    display_s3_key: Mapped[str | None] = mapped_column(Text)
     ai_description: Mapped[str | None] = mapped_column(Text)
     dek_ciphertext: Mapped[bytes | None] = mapped_column(LargeBinary)  # type: ignore[valid-type]
     finalized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -434,13 +435,44 @@ class Photo(TimestampMixin, SoftDeleteMixin, Base):
 
     __table_args__ = (
         Index(
-            "ix_photos_source_external_id",
+            "ux_photos_user_source_external_id",
+            "user_id",
             "source",
             "external_id",
             unique=True,
-            postgresql_where=text("external_id IS NOT NULL"),
+            postgresql_where=text("external_id IS NOT NULL AND deleted_at IS NULL"),
         ),
         CheckConstraint("source IN ('google_photos','upload')", name="ck_photos_source"),
+    )
+
+
+class PhotoImport(TimestampMixin, Base):
+    """One Google Photos Picker import into an entry."""
+
+    __tablename__ = "photo_imports"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    entry_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("entries.id", ondelete="CASCADE"), nullable=False
+    )
+    google_session_id: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="waiting", server_default="waiting")
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    added_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    skipped_videos: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    failed_names: Mapped[list] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    dismissed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('waiting','copying','done','failed','cancelled','expired','needs_reconnect')",
+            name="ck_photo_imports_status",
+        ),
     )
 
 
