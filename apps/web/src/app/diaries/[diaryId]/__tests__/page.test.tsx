@@ -1,6 +1,6 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import DiaryDetailPage from '../page'
-import { api, type BackfillRun } from '@/lib/api'
+import { api, type BackfillRun, type ScanRun } from '@/lib/api'
 
 jest.mock('@/lib/api', () => {
   const actual = jest.requireActual('@/lib/api')
@@ -14,6 +14,7 @@ jest.mock('@/lib/api', () => {
         getBackfillRun: jest.fn(),
         cancelBackfillRun: jest.fn(),
         listScanRuns: jest.fn(),
+        triggerScan: jest.fn(),
       },
       entries: { list: jest.fn() },
       integrations: { list: jest.fn() },
@@ -93,5 +94,58 @@ describe('DiaryDetailPage backfill status', () => {
     expect(screen.getByText('5 events · 2 new entries')).toBeInTheDocument()
     expect(screen.queryByRole('note')).not.toBeInTheDocument()
     expect(screen.queryByText(/couldn't be saved/)).not.toBeInTheDocument()
+  })
+})
+
+function finishedScan(events: number, entries: number): ScanRun {
+  return {
+    id: 'scan-1',
+    diary_id: 'diary-1',
+    triggered_by: 'manual',
+    started_at: '2026-11-14T10:00:00Z',
+    completed_at: '2026-11-14T10:00:30Z',
+    status: 'success',
+    events_calendar: events,
+    entries_created: entries,
+    errors: null,
+  }
+}
+
+async function runScan(run: ScanRun) {
+  ;(api.diaries.triggerScan as jest.Mock).mockResolvedValue({ queued: true })
+  ;(api.diaries.listScanRuns as jest.Mock).mockResolvedValue([run])
+  render(<DiaryDetailPage />)
+  const scan = await screen.findByRole('button', { name: 'Scan now' })
+  await waitFor(() => expect(scan).not.toBeDisabled())
+  fireEvent.click(scan)
+  await screen.findByText('Scan complete')
+}
+
+describe('DiaryDetailPage scan status', () => {
+  // A scan's drafts come from events it just fetched, evaluated after the run closes,
+  // so "0 new entries" would be wrong while they are being made.
+  it('says how many events were checked when the scan made no entries itself', async () => {
+    await runScan(finishedScan(37, 0))
+
+    expect(screen.getByText('37 events checked')).toBeInTheDocument()
+    expect(screen.queryByText(/0 new entries/)).not.toBeInTheDocument()
+  })
+
+  it('counts new entries when the scan made some', async () => {
+    await runScan(finishedScan(5, 2))
+
+    expect(screen.getByText('5 events · 2 new entries')).toBeInTheDocument()
+  })
+
+  it('uses the singular for one event and one entry', async () => {
+    await runScan(finishedScan(1, 1))
+
+    expect(screen.getByText('1 event · 1 new entry')).toBeInTheDocument()
+  })
+
+  it('uses the singular for one event checked', async () => {
+    await runScan(finishedScan(1, 0))
+
+    expect(screen.getByText('1 event checked')).toBeInTheDocument()
   })
 })
