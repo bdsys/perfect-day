@@ -237,8 +237,8 @@ async def _scan_diary(
 
             failures_before = scan_job_update.consecutive_failures
             if transient:
-                for e in transient:
-                    e["retried_count"] = failures_before
+                for err in transient:
+                    err["retried_count"] = failures_before
                 scan_run_update.errors = errors
                 scan_job_update.consecutive_failures = failures_before + 1
                 scan_job_update.next_scan_after = completed + timedelta(

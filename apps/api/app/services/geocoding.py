@@ -192,7 +192,8 @@ def _is_the_named_place(r: Place, kind: str, query: str, state: str) -> bool:
 
 async def _cache_get(key: str) -> str | None:
     try:
-        return await get_redis().get(key)
+        cached = await get_redis().get(key)
+        return cached.decode() if isinstance(cached, bytes) else cached
     except Exception as exc:  # a cache problem must not stop the lookup
         log.warning("geocode_cache_unavailable", error=str(exc))
         return None

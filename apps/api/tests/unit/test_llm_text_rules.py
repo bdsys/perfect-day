@@ -101,3 +101,7 @@ def test_fallback_body_has_no_markdown():
 def test_prompt_forbids_markdown():
     for p in (SYSTEM_PROMPT_EVENTS, SYSTEM_PROMPT_HYBRID, SYSTEM_PROMPT_POLISH):
         assert "Write plain sentences. Do not use Markdown (no **, #, or _ formatting)." in p
+
+
+def test_short_invented_name_not_hidden_by_substring():
+    assert _flagged("We met Tom at the park.", {"summary": "tomorrow"}) == ["Tom"]
