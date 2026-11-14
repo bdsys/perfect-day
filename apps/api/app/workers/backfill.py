@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Iterator
 from datetime import UTC, date, datetime, timedelta
+from typing import NamedTuple
 
 import structlog
 
@@ -15,6 +16,21 @@ log = structlog.get_logger()
 
 class BackfillLocked(Exception):
     """Another scan or backfill holds this diary's scan lock; try again later."""
+
+
+class BackfillCounts(NamedTuple):
+    events_ingested: int  # events saved
+    entries_created: int  # entries made by this backfill, not ones its events joined
+    events_failed: int  # events that couldn't be saved and were skipped
+
+
+def ingest_failures_message(failed: int) -> str | None:
+    """What the person sees when some events couldn't be saved; None when all were."""
+    if failed <= 0:
+        return None
+    if failed == 1:
+        return "1 event couldn't be saved. Run the backfill again to retry it."
+    return f"{failed} events couldn't be saved. Run the backfill again to retry them."
 
 
 def _iter_week_chunks(
@@ -39,7 +55,7 @@ async def run_backfill(
     to_date: date,
     access_token: str,
     diary_timezone: str,
-) -> tuple[int, int]:
+) -> BackfillCounts:
     """Weekly-chunked backfill with scan_lock, heartbeat, and cancellation.
 
     Acquires scan_lock:{diary_id} (30-min TTL + 5-min heartbeat).
@@ -47,8 +63,10 @@ async def run_backfill(
     Each event is ingested in process, then the chunk's ended events have their
     rules run in process, so the counts are what actually happened.
 
-    Returns (events ingested, distinct entries those events now belong to).
-    Raises BackfillLocked if the lock is already held.
+    An event that can't be saved is logged (id and error type only) and skipped.
+
+    Returns the events saved, the entries this backfill created, and the events
+    skipped. Raises BackfillLocked if the lock is already held.
     """
     import asyncio
 
@@ -79,6 +97,7 @@ async def run_backfill(
 
         headers = {"Authorization": f"Bearer {access_token}"}
         total_events = 0
+        failed_events = 0
         entry_ids: set[uuid.UUID] = set()
 
         for chunk_start, chunk_end in _iter_week_chunks(from_date, to_date):
@@ -109,9 +128,20 @@ async def run_backfill(
                     if event.get("status") == "cancelled":
                         continue
                     # Rules are run below, for the whole chunk, not queued per event.
-                    event_id = await _tasks._ingest_calendar_event(
-                        event, diary_id, diary_timezone, queue_evaluation=False
-                    )
+                    try:
+                        event_id = await _tasks._ingest_calendar_event(
+                            event, diary_id, diary_timezone, queue_evaluation=False
+                        )
+                    except Exception as exc:
+                        # Never log the event's text or the error message: both
+                        # can carry calendar details.
+                        failed_events += 1
+                        log.warning(
+                            "backfill_event_ingest_failed",
+                            event_id=event.get("id"),
+                            error_class=type(exc).__name__,
+                        )
+                        continue
                     if event_id is not None:
                         total_events += 1
 
@@ -122,7 +152,7 @@ async def run_backfill(
 
             await asyncio.sleep(2)
 
-        return total_events, len(entry_ids)
+        return BackfillCounts(total_events, len(entry_ids), failed_events)
     finally:
         heartbeat_task.cancel()
         await r.delete(lock_key)

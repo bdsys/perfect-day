@@ -363,7 +363,7 @@ async def test_backfill_has_no_weather_step(client, db_session):
         patch("app.workers.tasks.generate_entry_draft"),
         patch("asyncio.sleep", new=AsyncMock()),
     ):
-        events, entries = await run_backfill(
+        events, entries, _failed = await run_backfill(
             backfill_run_id=run.id,
             diary_id=diary.id,
             from_date=run.from_date,
@@ -374,3 +374,119 @@ async def test_backfill_has_no_weather_step(client, db_session):
 
     assert (events, entries) == (3, 1)
     weather.assert_not_awaited()  # weather comes with the draft (generate_entry_draft)
+
+
+# ---------------------------------------------------------------------------
+# Pre-review rulings: joins are not "created"; one bad event is skipped
+# ---------------------------------------------------------------------------
+
+
+def _chunk_events(by_day: dict[int, dict]):
+    """A fake fetch that returns the events whose day falls inside the chunk asked for."""
+
+    async def _fetch(calendar_id, headers, time_min, time_max):
+        lo = datetime.fromisoformat(time_min).date()
+        hi = datetime.fromisoformat(time_max).date()
+        return [ev for day, ev in by_day.items() if lo <= date(2026, 5, day) < hi]
+
+    return _fetch
+
+
+async def test_two_weeks_of_one_weekly_series_creates_one_entry(client, db_session):
+    from app.workers.tasks import _backfill_diary
+
+    diary = await _diary_with_series_rule(db_session)
+    run = await _pending_run(db_session, diary.id, date(2026, 5, 4), date(2026, 5, 17))
+    weekly = {
+        4: _event("soccer-wk1", 4, "Soccer practice", recurringEventId="soccer-series"),
+        11: _event("soccer-wk2", 11, "Soccer practice", recurringEventId="soccer-series"),
+    }
+    fetch = AsyncMock(side_effect=_chunk_events(weekly))
+
+    with (
+        patch("app.workers.token_refresh.ensure_fresh_access_token", AsyncMock(return_value="tok")),
+        patch("app.workers.backfill._fetch_events_range", fetch),
+        patch("app.workers.tasks.generate_entry_draft"),
+        patch("asyncio.sleep", new=AsyncMock()),
+    ):
+        await _backfill_diary(str(run.id))
+
+    assert fetch.await_count == 2  # one chunk per week
+    run = await _reload(db_session, run.id)
+    assert run.status == "completed"
+    assert run.events_ingested == 2
+    assert run.entries_created == 1  # week 2 joined week 1's entry
+
+
+async def test_a_later_backfill_that_only_joins_the_series_creates_nothing(client, db_session):
+    from app.workers.tasks import _backfill_diary
+
+    diary = await _diary_with_series_rule(db_session)
+    weekly = {
+        4: _event("soccer-wk1", 4, "Soccer practice", recurringEventId="soccer-series"),
+        18: _event("soccer-wk3", 18, "Soccer practice", recurringEventId="soccer-series"),
+    }
+    first = await _pending_run(db_session, diary.id, date(2026, 5, 4), date(2026, 5, 10))
+    later = await _pending_run(db_session, diary.id, date(2026, 5, 18), date(2026, 5, 24))
+
+    with (
+        patch("app.workers.token_refresh.ensure_fresh_access_token", AsyncMock(return_value="tok")),
+        patch("app.workers.backfill._fetch_events_range", side_effect=_chunk_events(weekly)),
+        patch("app.workers.tasks.generate_entry_draft"),
+        patch("asyncio.sleep", new=AsyncMock()),
+    ):
+        await _backfill_diary(str(first.id))
+        await _backfill_diary(str(later.id))
+
+    first = await _reload(db_session, first.id)
+    later = await _reload(db_session, later.id)
+    assert (first.events_ingested, first.entries_created) == (1, 1)
+    assert (later.events_ingested, later.entries_created) == (1, 0)  # joined, not created
+
+
+async def test_one_event_that_cannot_be_saved_does_not_fail_the_backfill(client, db_session):
+    import app.workers.tasks as tasks
+
+    diary = await _diary_with_series_rule(db_session)
+    run = await _pending_run(db_session, diary.id)
+    real_ingest = tasks._ingest_calendar_event
+
+    async def _ingest(event, *args, **kwargs):
+        if event["id"] == "dentist":
+            raise RuntimeError("Dentist at 5pm with private details")
+        return await real_ingest(event, *args, **kwargs)
+
+    with (
+        patch("app.workers.token_refresh.ensure_fresh_access_token", AsyncMock(return_value="tok")),
+        patch(
+            "app.workers.backfill._fetch_events_range",
+            AsyncMock(return_value=SERIES_AND_ONE_OTHER),
+        ),
+        patch("app.workers.tasks._ingest_calendar_event", AsyncMock(side_effect=_ingest)),
+        patch("app.workers.tasks.generate_entry_draft"),
+        patch("asyncio.sleep", new=AsyncMock()),
+        patch("app.workers.backfill.log") as log,
+    ):
+        await tasks._backfill_diary(str(run.id))
+
+    run = await _reload(db_session, run.id)
+    assert run.status == "completed"
+    assert run.events_ingested == 2
+    assert run.entries_created == 1
+    assert run.error == "1 event couldn't be saved. Run the backfill again to retry it."
+    # Logged with the event id and error type, never the event's text or the error message.
+    log.warning.assert_called_once_with(
+        "backfill_event_ingest_failed", event_id="dentist", error_class="RuntimeError"
+    )
+
+
+def test_backfill_ingest_failure_message():
+    from app.workers.backfill import ingest_failures_message
+
+    assert ingest_failures_message(0) is None
+    assert ingest_failures_message(1) == (
+        "1 event couldn't be saved. Run the backfill again to retry it."
+    )
+    assert ingest_failures_message(3) == (
+        "3 events couldn't be saved. Run the backfill again to retry them."
+    )

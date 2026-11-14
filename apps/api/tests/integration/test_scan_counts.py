@@ -10,7 +10,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import AutoCreationRule, Diary, Event, ScanRun
+from app.models import AutoCreationRule, Diary, Event, ScanJob, ScanRun
 from tests.fixtures.factories import make_diary, make_event, make_user
 
 SOCCER_RULE = {
@@ -20,23 +20,25 @@ SOCCER_RULE = {
     ],
 }
 PER_INSTANCE = {"recurring": "per_instance", "multi_day": "per_day"}
+PER_SERIES = {"recurring": "per_series", "multi_day": "per_day"}
 
 
-async def _diary_with_rule(db: AsyncSession) -> Diary:
+async def _diary_with_rule(db: AsyncSession, options: dict = PER_INSTANCE) -> Diary:
     user = await make_user(db)
     diary = await make_diary(db, owner=user, timezone="UTC")
     db.add(
         AutoCreationRule(
             diary_id=diary.id, name="Soccer", enabled=True, condition=SOCCER_RULE,
-            options=PER_INSTANCE,
+            options=options,
         )
     )
     await db.commit()
     return diary
 
 
-def _soccer_payload(day: datetime) -> dict:
+def _soccer_payload(day: datetime, **extra) -> dict:
     return {
+        **extra,
         "summary": "Soccer practice",
         "description": "",
         "location": "",
@@ -47,7 +49,9 @@ def _soccer_payload(day: datetime) -> dict:
     }
 
 
-async def _due_soccer_events(db: AsyncSession, diary: Diary, days_ago: list[int]) -> list[Event]:
+async def _due_soccer_events(
+    db: AsyncSession, diary: Diary, days_ago: list[int], **extra
+) -> list[Event]:
     """Stored before they ended, now over, rules not run yet."""
     events = []
     for n in days_ago:
@@ -56,7 +60,7 @@ async def _due_soccer_events(db: AsyncSession, diary: Diary, days_ago: list[int]
             await make_event(
                 db,
                 diary_id=diary.id,
-                payload=_soccer_payload(start),
+                payload=_soccer_payload(start, **extra),
                 occurred_at=start,
                 ends_at=start + timedelta(hours=1),
             )
@@ -189,3 +193,38 @@ async def test_scan_ignores_events_from_other_diaries(
         await db_session.execute(select(Event).where(Event.diary_id == other.id))
     ).scalar_one()
     assert other_event.rules_evaluated_at is None
+
+
+async def test_event_joining_an_existing_series_entry_counts_zero(
+    client: AsyncClient, db_session: AsyncSession
+):
+    from app.workers.tasks import _scan_diary
+    from app.workers.utils import db_session as worker_db
+
+    diary = await _diary_with_rule(db_session, options=PER_SERIES)
+    series = {"recurringEventId": "soccer-series"}
+    await _due_soccer_events(db_session, diary, days_ago=[14], **series)
+
+    with patch("app.workers.tasks.generate_entry_draft"):
+        await _scan_diary(str(diary.id))
+        first = await _only_run(db_session, diary)
+        assert first.entries_created == 1
+
+        # A week later the next practice is over; it joins the series entry.
+        await _due_soccer_events(db_session, diary, days_ago=[7], **series)
+        async with worker_db() as db:
+            job = await db.execute(select(ScanJob).where(ScanJob.diary_id == diary.id))
+            job.scalar_one().next_scan_after = None
+        await _scan_diary(str(diary.id))
+
+    runs = (
+        await db_session.execute(
+            select(ScanRun)
+            .where(ScanRun.diary_id == diary.id)
+            .order_by(ScanRun.started_at)
+            .execution_options(populate_existing=True)
+        )
+    ).scalars().all()
+    assert [r.entries_created for r in runs] == [1, 0]
+    events = (await db_session.execute(select(Event).where(Event.diary_id == diary.id))).scalars()
+    assert len({e.entry_id for e in events}) == 1  # both practices share the one entry

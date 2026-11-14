@@ -490,16 +490,20 @@ def _has_ended(ends_at: datetime | None) -> bool:
 async def evaluate_due_events(diary_id: uuid.UUID) -> set[uuid.UUID]:
     """Run the rules, in process, for stored events that are over and not yet evaluated.
 
-    Returns the distinct ids of the entries those events now belong to. An event
-    whose evaluation fails is logged and skipped; its rules_evaluated_at stays
-    NULL, so the next scan tries it again.
+    Returns the distinct ids of the entries this sweep created. An event that
+    joined an entry which already existed (a recurring series, a spanning day)
+    is not counted. An event whose evaluation fails is logged and skipped; its
+    rules_evaluated_at stays NULL, so the next scan tries it again.
     """
     from sqlalchemy import func, or_, select
 
-    from app.models import Event
+    from app.models import Entry, Event
     from app.workers.utils import db_session
 
     async with db_session() as db:
+        # The database clock, as Entry.created_at uses: this transaction starts
+        # before any evaluation below, so every entry they create is at or after it.
+        sweep_started = (await db.execute(select(func.now()))).scalar_one()
         result = await db.execute(
             select(Event.id).where(
                 Event.diary_id == diary_id,
@@ -528,8 +532,9 @@ async def evaluate_due_events(diary_id: uuid.UUID) -> set[uuid.UUID]:
         return set()
     async with db_session() as db:
         result = await db.execute(
-            select(Event.entry_id)
-            .where(Event.id.in_(evaluated), Event.entry_id.is_not(None))
+            select(Entry.id)
+            .join(Event, Event.entry_id == Entry.id)
+            .where(Event.id.in_(evaluated), Entry.created_at >= sweep_started)
             .distinct()
         )
         return {row[0] for row in result.fetchall()}
@@ -847,7 +852,7 @@ async def _backfill_diary(backfill_run_id_str: str) -> None:
     from sqlalchemy import select
 
     from app.models import BackfillRun, Diary, OAuthToken
-    from app.workers.backfill import BackfillLocked, run_backfill
+    from app.workers.backfill import BackfillLocked, ingest_failures_message, run_backfill
     from app.workers.token_refresh import ensure_fresh_access_token
     from app.workers.utils import db_session
 
@@ -915,7 +920,7 @@ async def _backfill_diary(backfill_run_id_str: str) -> None:
         return
 
     try:
-        events_ingested, entries_created = await run_backfill(
+        counts = await run_backfill(
             backfill_run_id=backfill_run_id,
             diary_id=backfill_run.diary_id,
             from_date=backfill_run.from_date,
@@ -931,8 +936,9 @@ async def _backfill_diary(backfill_run_id_str: str) -> None:
             if run.status != "cancelled":
                 run.status = "completed"
                 run.completed_at = datetime.now(tz=UTC)
-            run.events_ingested = events_ingested
-            run.entries_created = entries_created
+            run.events_ingested = counts.events_ingested
+            run.entries_created = counts.entries_created
+            run.error = ingest_failures_message(counts.events_failed)
     except BackfillLocked:
         # A scan holds the lock. Put the run back to waiting; the task retries.
         async with db_session() as db:
