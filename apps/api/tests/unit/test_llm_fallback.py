@@ -192,4 +192,4 @@ class TestBuildFallbackBodyMultipleEvents:
             end_dt="2026-05-19T09:30:00-07:00",
         )]
         _, body = _build_fallback_body(events, _DATE)
-        assert body.strip() == "- 09:00–09:30  **Standup** — Zoom"
+        assert body.strip() == "- 09:00–09:30  Standup — Zoom"

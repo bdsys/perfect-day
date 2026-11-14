@@ -42,6 +42,19 @@ describe('PlaceSearch', () => {
     expect(onSelect).toHaveBeenCalledWith(MUKILTEO)
   })
 
+  it('shows Searching… while the request is pending', async () => {
+    let resolve: (v: unknown[]) => void = () => {}
+    search.mockReturnValue(new Promise((r) => { resolve = r }))
+    render(<PlaceSearch label="Location" onSelect={jest.fn()} />)
+
+    type('Muk')
+    expect(await screen.findByText('Searching…')).toBeInTheDocument()
+
+    resolve([MUKILTEO])
+    await screen.findByRole('button', { name: MUKILTEO.label })
+    expect(screen.queryByText('Searching…')).not.toBeInTheDocument()
+  })
+
   it('says so when nothing matches', async () => {
     search.mockResolvedValue([])
     render(<PlaceSearch label="Location" onSelect={jest.fn()} />)

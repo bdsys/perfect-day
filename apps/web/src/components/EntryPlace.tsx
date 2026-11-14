@@ -30,6 +30,14 @@ const CATCH_UP_MS = [2000, 5000, 10000]
  * Where the entry happened, and (for editors) changing it, plus the
  * rarely-needed per-entry time zone under "Advanced" (item 24).
  */
+// What to call a place that has coordinates but no name, by where it came from.
+const UNNAMED_PLACE: Record<NonNullable<Entry['location']>['source'], string> = {
+  photo: 'From a photo',
+  home: 'Home',
+  event: 'From the event',
+  parent: 'Your place',
+}
+
 export function EntryPlace({ entry, onUpdated }: Props) {
   const [editingPlace, setEditingPlace] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -76,7 +84,7 @@ export function EntryPlace({ entry, onUpdated }: Props) {
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
         {entry.location && (
           <span data-testid="entry-place">
-            📍 {entry.location.name ?? 'From a photo'}
+            📍 {entry.location.name ?? UNNAMED_PLACE[entry.location.source]}
           </span>
         )}
         {entry.location && !hasWeather && <OpenMeteoCredit />}

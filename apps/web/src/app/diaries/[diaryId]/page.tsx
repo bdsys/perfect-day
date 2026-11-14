@@ -41,6 +41,14 @@ function EntryCard({ entry }: { entry: Entry }) {
 const CALENDAR_HINT = 'Connect Google Calendar to scan for new events and backfill past ones.'
 const OWNER_ONLY_HINT = 'Only the diary owner can scan for new events.'
 
+// A scan's own count leaves out drafts made from the events it just fetched
+// (they are evaluated after the run closes), so "0 new entries" would mislead.
+function scanRunDetail(events: number, entries: number): string {
+  const checked = `${events} event${events === 1 ? '' : 's'}`
+  if (entries > 0) return `${checked} · ${entries} new entr${entries === 1 ? 'y' : 'ies'}`
+  return `${checked} checked`
+}
+
 export default function DiaryDetailPage() {
   const { diaryId } = useParams<{ diaryId: string }>()
   const { user, loading: authLoading } = useAuth()
@@ -567,7 +575,7 @@ export default function DiaryDetailPage() {
             }
             detail={
               latestRun.status !== 'running' && latestRun.completed_at
-                ? `${latestRun.events_calendar} events · ${latestRun.entries_created} new entries`
+                ? scanRunDetail(latestRun.events_calendar, latestRun.entries_created)
                 : undefined
             }
             errors={latestRun.errors?.map(e => e.message)}
@@ -596,6 +604,12 @@ export default function DiaryDetailPage() {
               latestBackfillRun.status === 'completed'
                 ? `${latestBackfillRun.events_ingested} events · ${latestBackfillRun.entries_created} new entries`
                 : latestBackfillRun.error ?? undefined
+            }
+            // A completed run can still carry a note, e.g. events it couldn't save.
+            note={
+              latestBackfillRun.status === 'completed' && latestBackfillRun.error
+                ? latestBackfillRun.error
+                : undefined
             }
             startedAt={latestBackfillRun.started_at ?? undefined}
             onDismiss={() => setLatestBackfillRun(null)}

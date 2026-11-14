@@ -545,13 +545,14 @@ class TestBackfillCancellation:
     async def test_run_cancelled_before_the_worker_starts_is_left_alone(
         self, client: AsyncClient, db_session: AsyncSession
     ):
+        from app.workers.backfill import BackfillCounts
         from app.workers.tasks import _backfill_diary
 
         user = await make_user(db_session)
         diary = await make_diary(db_session, owner=user)
         await _google_token(db_session, user.id)
         run = await self._run(db_session, diary, "cancelled")
-        fetch = AsyncMock(return_value=(0, 0))
+        fetch = AsyncMock(return_value=BackfillCounts(0, 0, 0))
 
         with (
             patch("app.workers.token_refresh.ensure_fresh_access_token", _FRESH_TOKEN),
@@ -565,6 +566,7 @@ class TestBackfillCancellation:
     async def test_run_cancelled_while_fetching_is_not_marked_completed(
         self, client: AsyncClient, db_session: AsyncSession, sync_engine
     ):
+        from app.workers.backfill import BackfillCounts
         from app.workers.tasks import _backfill_diary
 
         user = await make_user(db_session)
@@ -580,7 +582,7 @@ class TestBackfillCancellation:
                     {"id": str(run.id)},
                 )
                 conn.commit()
-            return (3, 1)
+            return BackfillCounts(events_ingested=3, entries_created=1, events_failed=0)
 
         with (
             patch("app.workers.token_refresh.ensure_fresh_access_token", _FRESH_TOKEN),

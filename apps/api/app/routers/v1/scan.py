@@ -102,7 +102,7 @@ async def trigger_scan(
         job.next_scan_after = None
     past = body.past_days if body else None
     future = body.future_days if body else None
-    scan_diary.delay(str(diary_id), past_days=past, future_days=future)
+    scan_diary.delay(str(diary_id), past_days=past, future_days=future, triggered_by="manual")
     return {"queued": True}
 
 

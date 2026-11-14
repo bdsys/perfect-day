@@ -18,6 +18,7 @@ from app.services.geocoding import GeocodingUnavailable, search_places
 router = APIRouter(tags=["geocode"])
 
 _MAX_RESULTS = 5
+_SEARCH_TIMEOUT_SECONDS = 5  # someone is typing and waiting
 
 
 class GeocodeResult(BaseModel):
@@ -36,7 +37,7 @@ async def geocode(
     user: User = Depends(get_current_user),
 ) -> list[GeocodeResult]:
     try:
-        places = await search_places(q, count=_MAX_RESULTS)
+        places = await search_places(q, count=_MAX_RESULTS, timeout=_SEARCH_TIMEOUT_SECONDS)
     except GeocodingUnavailable:
         raise HTTPException(status_code=503, detail="geocoding_unavailable") from None
     return [

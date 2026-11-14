@@ -214,7 +214,7 @@ class TestFormatEventLine:
         line = _format_event_line(1, ev)
         assert 'attendees: "Sara, Andrew"' in line
 
-    def test_attendee_falls_back_to_email_when_no_display_name(self):
+    def test_attendee_without_display_name_is_counted_not_emailed(self):
         ev = _make_event(payload={
             "summary": "1:1",
             "attendees": [
@@ -222,7 +222,8 @@ class TestFormatEventLine:
             ],
         })
         line = _format_event_line(1, ev)
-        assert "boss@example.com" in line
+        assert "boss@example.com" not in line
+        assert 'attendees: "1 person"' in line
 
     def test_attendee_skipped_when_both_name_and_email_empty(self):
         ev = _make_event(payload={

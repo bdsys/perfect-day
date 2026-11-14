@@ -17,27 +17,32 @@ export function PlaceSearch({ label, onSelect }: Props) {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<GeocodeResult[] | null>(null)
   const [down, setDown] = useState(false)
+  const [searching, setSearching] = useState(false)
 
   useEffect(() => {
     const q = query.trim()
     if (q.length < MIN_CHARS) {
       setResults(null)
       setDown(false)
+      setSearching(false)
       return
     }
     let cancelled = false
     const timer = setTimeout(() => {
+      setSearching(true)
       api.geocode
         .search(q)
         .then((found) => {
           if (cancelled) return
           setDown(false)
           setResults(found)
+          setSearching(false)
         })
         .catch((e: unknown) => {
           if (cancelled) return
           setResults(null)
           setDown(e instanceof ApiError && e.status === 503)
+          setSearching(false)
         })
     }, DEBOUNCE_MS)
     return () => {
@@ -56,6 +61,11 @@ export function PlaceSearch({ label, onSelect }: Props) {
         onChange={(e) => setQuery(e.target.value)}
         style={{ width: '100%' }}
       />
+      {searching && (
+        <p role="status" style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
+          Searching…
+        </p>
+      )}
       {down && (
         <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
           Search isn&apos;t working right now

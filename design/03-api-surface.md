@@ -50,7 +50,7 @@ All endpoints prefixed `/v1/`. JSON. Auth via `Authorization: Bearer <jwt>` unle
 |---|---|---|
 | GET | `/v1/diaries` | Diaries the user owns or has access to. |
 | POST | `/v1/diaries` | Create diary. Tier check (free=1 / tier1=2 / tier2=4). |
-| GET | `/v1/diaries/{id}` | Details + permissions + scan config. |
+| GET | `/v1/diaries/{id}` | Details + permissions + scan config. The diary's home `lat`/`lon` are returned to the owner only; co-parents and viewers get null, on every diary endpoint (TR-20). |
 | PATCH | `/v1/diaries/{id}` | Owner only. Patchable fields: `name`, `slug`, `subject_name`, `subject_relation`, `voice_override`, `tone_hint`, `timezone`, `scan_interval_minutes`, `scan_enabled`, `cover_photo_id` (must be a photo owned by the diary owner), `notifications_muted`. |
 | DELETE | `/v1/diaries/{id}` | Soft delete + 30-day hard-delete schedule. Owner only. |
 | POST | `/v1/diaries/{id}/restore` | Restore within grace window. |
@@ -118,8 +118,8 @@ Photos attached to a deleted diary are inaccessible even to the photo owner unti
 |---|---|---|
 | GET | `/v1/diaries/{id}/scan` | Scan config + last status. |
 | POST | `/v1/diaries/{id}/scan/run` | On-demand scan now. Owner only: scans read the owner's Google Calendar (decision 2026-11-12, `design/code-review-2026-11.md`). |
-| GET | `/v1/diaries/{id}/scan/runs` | Scan history. |
-| POST | `/v1/diaries/{id}/scan/backfill` | Queue backfill. `{from_date, to_date, sources}`. Owner only. |
+| GET | `/v1/diaries/{id}/scan/runs` | Scan history. Each run has `triggered_by` (`manual` when started from the API, `beat` when scheduled) and `entries_created`. |
+| POST | `/v1/diaries/{id}/scan/backfill` | Queue backfill. `{from_date, to_date, sources}`. Owner only. `entries_created` counts only entries created during the run. If another scan holds the diary's lock, the backfill waits and retries (60 s, 5 times), then fails with "Another scan was still running. Try the backfill again in a few minutes." An event that cannot be saved is skipped, and the run's note says how many ("N events couldn't be saved. Run the backfill again to retry them."). |
 | GET | `/v1/diaries/{id}/scan/backfill/{runId}` | Backfill job status. |
 | DELETE | `/v1/diaries/{id}/scan/backfill/{runId}` | Cancel backfill. |
 

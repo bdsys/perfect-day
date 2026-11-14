@@ -32,11 +32,24 @@ def ping() -> str:
 @celery_app.task(
     name="app.workers.tasks.scan_diary",
     bind=True,
-    max_retries=3,
-    default_retry_delay=60,
 )
-def scan_diary(self, diary_id: str, past_days: int | None = None, future_days: int | None = None) -> None:
-    run_sync(_scan_diary(diary_id, past_days=past_days, future_days=future_days))
+def scan_diary(
+    self,
+    diary_id: str,
+    past_days: int | None = None,
+    future_days: int | None = None,
+    triggered_by: str = "beat",
+) -> None:
+    run_sync(
+        _scan_diary(
+            diary_id, past_days=past_days, future_days=future_days, triggered_by=triggered_by
+        )
+    )
+
+
+def scan_backoff_seconds(failures: int, interval_minutes: int) -> int:
+    """Wait after a failed calendar scan: doubles per failure, never beyond the scan interval."""
+    return min(60 * 2**failures, interval_minutes * 60)
 
 
 _CALENDAR_DISCONNECTED = {
@@ -54,7 +67,12 @@ _CALENDAR_UNAVAILABLE = {
 }
 
 
-async def _scan_diary(diary_id_str: str, past_days: int | None = None, future_days: int | None = None) -> None:
+async def _scan_diary(
+    diary_id_str: str,
+    past_days: int | None = None,
+    future_days: int | None = None,
+    triggered_by: str = "beat",
+) -> None:
     import asyncio
 
     from sqlalchemy import select
@@ -107,7 +125,7 @@ async def _scan_diary(diary_id_str: str, past_days: int | None = None, future_da
             # Open scan run
             scan_run = ScanRun(
                 diary_id=diary_id,
-                triggered_by="beat",
+                triggered_by=triggered_by,
                 started_at=now,
                 status="running",
             )
@@ -177,10 +195,11 @@ async def _scan_diary(diary_id_str: str, past_days: int | None = None, future_da
 
         # Events stored while still in the future get their rules run once
         # they are over. Independent of the calendar sync succeeding.
+        entry_ids: set[uuid.UUID] = set()
         try:
-            await queue_due_rule_evaluations(diary_id)
+            entry_ids = await evaluate_due_events(diary_id)
         except Exception as e:
-            log.error("queue_due_rule_evaluations_error", diary_id=diary_id_str, error=str(e))
+            log.error("evaluate_due_events_error", diary_id=diary_id_str, error=str(e))
             errors.append(
                 {
                     "source": "rules",
@@ -192,6 +211,12 @@ async def _scan_diary(diary_id_str: str, past_days: int | None = None, future_da
                 }
             )
 
+        # Only a calendar error that may clear on its own is a failure to retry
+        # sooner; a disconnected calendar waits for the person (the normal
+        # interval) and a rules error is not about the calendar.
+        calendar_errors = [e for e in errors if e["source"] == "google_calendar"]
+        transient = [e for e in calendar_errors if e["error_class"] != "calendar_disconnected"]
+
         # Close scan run
         async with db_session() as db:
             run_result = await db.execute(select(ScanRun).where(ScanRun.id == scan_run_id))
@@ -202,18 +227,31 @@ async def _scan_diary(diary_id_str: str, past_days: int | None = None, future_da
             completed = datetime.now(tz=UTC)
             scan_run_update.completed_at = completed
             scan_run_update.events_calendar = calendar_events_count
-            scan_run_update.entries_created = 0  # rules engine sets this in Part 3
+            scan_run_update.entries_created = len(entry_ids)
             scan_run_update.errors = errors if errors else None
             scan_run_update.status = "partial" if errors else "success"
 
             scan_job_update.last_scan_completed_at = completed
             scan_job_update.last_scan_status = scan_run_update.status
-            scan_job_update.consecutive_failures = 0
             from datetime import timedelta
 
-            scan_job_update.next_scan_after = completed + timedelta(
-                minutes=diary.scan_interval_minutes
-            )
+            failures_before = scan_job_update.consecutive_failures
+            if transient:
+                for err in transient:
+                    err["retried_count"] = failures_before
+                scan_run_update.errors = errors
+                scan_job_update.consecutive_failures = failures_before + 1
+                scan_job_update.next_scan_after = completed + timedelta(
+                    seconds=scan_backoff_seconds(
+                        scan_job_update.consecutive_failures, diary.scan_interval_minutes
+                    )
+                )
+            else:
+                if not calendar_errors:
+                    scan_job_update.consecutive_failures = 0
+                scan_job_update.next_scan_after = completed + timedelta(
+                    minutes=diary.scan_interval_minutes
+                )
 
     except Exception as e:
         log.error("scan_diary_error", diary_id=diary_id_str, error=str(e))
@@ -268,17 +306,23 @@ async def _heartbeat(r, lock_key: str) -> None:
 
 @celery_app.task(name="app.workers.tasks.ingest_calendar_event", bind=True, max_retries=3)
 def ingest_calendar_event(self, event_data: dict, diary_id: str, diary_timezone: str) -> str | None:
-    """Upsert a single calendar event; return entry_id string or None."""
+    """Upsert a single calendar event; return its event id string, or None."""
     return run_sync(_ingest_calendar_event(event_data, uuid.UUID(diary_id), diary_timezone))
 
 
 async def _ingest_calendar_event(
-    event_data: dict, diary_id: uuid.UUID, diary_timezone: str
+    event_data: dict,
+    diary_id: uuid.UUID,
+    diary_timezone: str,
+    *,
+    queue_evaluation: bool = True,
 ) -> str | None:
     """Ingest one Google Calendar event; store with entry_id=NULL.
 
     Returns the event's UUID string, or None if the date could not be parsed.
-    Rule evaluation is queued separately.
+    A new event that is already over has its rule evaluation queued, unless
+    *queue_evaluation* is False: backfill runs evaluate_due_events itself, in
+    process, so it can count the entries.
     """
     from sqlalchemy import select
 
@@ -350,8 +394,8 @@ async def _ingest_calendar_event(
         event_id = event.id
         # Rules run once, and only after the event is over. A new event that
         # is already over is evaluated now; anything else waits for the sweep
-        # in the scan that follows its end (queue_due_rule_evaluations).
-        due = is_new and _has_ended(ends_at)
+        # in the scan that follows its end (evaluate_due_events).
+        due = queue_evaluation and is_new and _has_ended(ends_at)
 
     if entry_to_redraft is not None:
         try:
@@ -443,17 +487,23 @@ def _has_ended(ends_at: datetime | None) -> bool:
     return ends_at is None or ends_at <= datetime.now(tz=UTC)
 
 
-async def queue_due_rule_evaluations(diary_id: uuid.UUID) -> int:
-    """Queue rule evaluation for stored events that have ended since they were ingested.
+async def evaluate_due_events(diary_id: uuid.UUID) -> set[uuid.UUID]:
+    """Run the rules, in process, for stored events that are over and not yet evaluated.
 
-    Returns how many were queued.
+    Returns the distinct ids of the entries this sweep created. An event that
+    joined an entry which already existed (a recurring series, a spanning day)
+    is not counted. An event whose evaluation fails is logged and skipped; its
+    rules_evaluated_at stays NULL, so the next scan tries it again.
     """
     from sqlalchemy import func, or_, select
 
-    from app.models import Event
+    from app.models import Entry, Event
     from app.workers.utils import db_session
 
     async with db_session() as db:
+        # The database clock, as Entry.created_at uses: this transaction starts
+        # before any evaluation below, so every entry they create is at or after it.
+        sweep_started = (await db.execute(select(func.now()))).scalar_one()
         result = await db.execute(
             select(Event.id).where(
                 Event.diary_id == diary_id,
@@ -464,9 +514,34 @@ async def queue_due_rule_evaluations(diary_id: uuid.UUID) -> int:
         )
         event_ids = [row[0] for row in result.fetchall()]
 
+    if not event_ids:
+        return set()
+
+    evaluated = []
     for event_id in event_ids:
-        evaluate_rules_for_event.delay(str(event_id), str(diary_id))
-    return len(event_ids)
+        try:
+            await _evaluate_rules_for_event(str(event_id), str(diary_id))
+        except Exception as exc:
+            # The id and error type only: the message or traceback can carry
+            # calendar details, as in the backfill.
+            log.warning(
+                "evaluate_due_event_failed",
+                event_id=str(event_id),
+                error_class=type(exc).__name__,
+            )
+            continue
+        evaluated.append(event_id)
+
+    if not evaluated:
+        return set()
+    async with db_session() as db:
+        result = await db.execute(
+            select(Entry.id)
+            .join(Event, Event.entry_id == Entry.id)
+            .where(Event.id.in_(evaluated), Entry.created_at >= sweep_started)
+            .distinct()
+        )
+        return {row[0] for row in result.fetchall()}
 
 
 def _build_attendees(raw: list | None) -> list[dict]:
@@ -667,7 +742,10 @@ def refresh_entry_location(self, entry_id: str, refetch_weather: bool = False) -
     Queued when photos are added or removed, and when a person changes the
     entry's place, time zone or dates (*refetch_weather*).
     """
-    run_sync(_refresh_entry_location(entry_id, refetch_weather=refetch_weather))
+    try:
+        run_sync(_refresh_entry_location(entry_id, refetch_weather=refetch_weather))
+    except Exception as exc:
+        raise self.retry(exc=exc)
 
 
 async def _refresh_entry_location(entry_id_str: str, *, refetch_weather: bool = False) -> None:
@@ -683,7 +761,10 @@ async def _refresh_entry_location(entry_id_str: str, *, refetch_weather: bool = 
 @celery_app.task(name="app.workers.tasks.refresh_diary_locations", bind=True, max_retries=3)
 def refresh_diary_locations(self, diary_id: str) -> None:
     """The diary's home place changed: refresh entries that have no place of their own."""
-    run_sync(_refresh_diary_locations(diary_id))
+    try:
+        run_sync(_refresh_diary_locations(diary_id))
+    except Exception as exc:
+        raise self.retry(exc=exc)
 
 
 async def _refresh_diary_locations(diary_id_str: str) -> None:
@@ -719,14 +800,54 @@ def queue_location_refresh(entry_id: uuid.UUID | str, *, refetch_weather: bool =
 # ---------------------------------------------------------------------------
 
 
+BACKFILL_LOCK_RETRIES = 5
+BACKFILL_LOCK_RETRY_SECONDS = 60
+BACKFILL_LOCKED_MESSAGE = (
+    "Another scan was still running. Try the backfill again in a few minutes."
+)
+
+
 @celery_app.task(
     name="app.workers.tasks.backfill_diary",
     bind=True,
-    max_retries=3,
-    default_retry_delay=60,
+    # Retries are used only to wait for the scan lock (BackfillLocked).
+    max_retries=BACKFILL_LOCK_RETRIES,
+    default_retry_delay=BACKFILL_LOCK_RETRY_SECONDS,
 )
 def backfill_diary(self, backfill_run_id: str) -> None:
-    run_sync(_backfill_diary(backfill_run_id))
+    from app.workers.backfill import BackfillLocked
+
+    try:
+        run_sync(_backfill_diary(backfill_run_id))
+    except BackfillLocked:
+        # _backfill_diary has set the run back to pending, so the retried
+        # delivery gets past its not-pending guard.
+        try:
+            raise self.retry(
+                countdown=BACKFILL_LOCK_RETRY_SECONDS, max_retries=BACKFILL_LOCK_RETRIES
+            ) from None
+        except self.MaxRetriesExceededError:
+            run_sync(_fail_locked_backfill(backfill_run_id))
+
+
+async def _fail_locked_backfill(backfill_run_id_str: str) -> None:
+    """The scan lock never came free: fail a run that is still waiting."""
+    from sqlalchemy import select
+
+    from app.models import BackfillRun
+    from app.workers.utils import db_session
+
+    async with db_session() as db:
+        run = (
+            await db.execute(
+                select(BackfillRun).where(BackfillRun.id == uuid.UUID(backfill_run_id_str))
+            )
+        ).scalar_one_or_none()
+        if run is None or run.status != "pending":
+            return  # cancelled, or deleted with its diary, while it waited
+        run.status = "failed"
+        run.completed_at = datetime.now(tz=UTC)
+        run.error = BACKFILL_LOCKED_MESSAGE
 
 
 async def _backfill_diary(backfill_run_id_str: str) -> None:
@@ -735,7 +856,7 @@ async def _backfill_diary(backfill_run_id_str: str) -> None:
     from sqlalchemy import select
 
     from app.models import BackfillRun, Diary, OAuthToken
-    from app.workers.backfill import run_backfill
+    from app.workers.backfill import BackfillLocked, ingest_failures_message, run_backfill
     from app.workers.token_refresh import ensure_fresh_access_token
     from app.workers.utils import db_session
 
@@ -803,7 +924,7 @@ async def _backfill_diary(backfill_run_id_str: str) -> None:
         return
 
     try:
-        events_ingested, entries_created = await run_backfill(
+        counts = await run_backfill(
             backfill_run_id=backfill_run_id,
             diary_id=backfill_run.diary_id,
             from_date=backfill_run.from_date,
@@ -819,8 +940,18 @@ async def _backfill_diary(backfill_run_id_str: str) -> None:
             if run.status != "cancelled":
                 run.status = "completed"
                 run.completed_at = datetime.now(tz=UTC)
-            run.events_ingested = events_ingested
-            run.entries_created = entries_created
+            run.events_ingested = counts.events_ingested
+            run.entries_created = counts.entries_created
+            run.error = ingest_failures_message(counts.events_failed)
+    except BackfillLocked:
+        # A scan holds the lock. Put the run back to waiting; the task retries.
+        async with db_session() as db:
+            result = await db.execute(select(BackfillRun).where(BackfillRun.id == backfill_run_id))
+            run = result.scalar_one()
+            if run.status == "running":
+                run.status = "pending"
+                run.started_at = None
+        raise
     except Exception as e:
         log.error("backfill_error", backfill_run_id=backfill_run_id_str, error=str(e))
         async with db_session() as db:
