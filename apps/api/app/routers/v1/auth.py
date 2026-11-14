@@ -273,7 +273,11 @@ async def refresh(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="unauthorized")
 
     token_hash = hash_token(refresh_token)
-    result = await db.execute(select(RefreshToken).where(RefreshToken.token_hash == token_hash))
+    # Lock the row: a concurrent refresh with the same cookie waits here, then sees
+    # revoked_at set and takes the grace path instead of forking the family (TR-29).
+    result = await db.execute(
+        select(RefreshToken).where(RefreshToken.token_hash == token_hash).with_for_update()
+    )
     rt = result.scalar_one_or_none()
 
     if rt is None:
