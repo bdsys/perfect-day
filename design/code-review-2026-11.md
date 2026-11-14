@@ -147,7 +147,7 @@ The item 24 and 25.3 minors were listed only in a git-ignored build folder that 
 |---|---|---|---|
 | TR-1 | C-11 backfill bookkeeping | **Fix** ⓐ | Task id used as entry id (no per-chunk weather, wrong counts); a run that can't get the lock says "completed"; overlapping chunks; scan runs report 0 entries and `beat`. |
 | TR-2 | Scan retries (design drift) | **Fix** ⓐ | `scan_diary` declares 3 retries but never retries; a calendar failure resets the failure counter. Includes TR-25. |
-| TR-3 | C-14 restore only reachable for 15 minutes | **Fix** ⓐ | Logging in during the 7-day window shows "Restore your account". The emailed restore link waits for item 20. |
+| TR-3 | C-14 restore only reachable for 15 minutes | Later: PoC item 29 (account settings) | The web app has no "delete account" control yet, so no parent can reach this. The documented design restores by emailed link (`08-security-privacy.md`); item 29 decides login, link or both (Andrew, 2026-11-14). |
 | TR-4 | C-16a "past N days" ignored once a sync token exists | **Fix** ⓐ | One-off windowed fetch that leaves the sync token alone. |
 | TR-5 | C-16b one cursor across calendars | Later | Only matters once calendars can be chosen. |
 | TR-6 | C-16c calendar-only connect said Photos missing | Fixed already | Item 14: `integrations.py` compares against the scopes asked for. |

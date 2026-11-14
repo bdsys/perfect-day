@@ -20,7 +20,7 @@
 
 - **Branch:** work on a branch off `main`. Don't touch files only PR #51 changes.
   - Leave the `refresh` code in `apps/web/src/lib/api.ts` alone; the client half of TR-29 belongs to Plan B.
-  - Edit status cells only in Task 10.
+  - Edit status cells only in Task 9.
 - **Database sessions:** every `Depends(get_db)` uses `scope="function"`. The guard test `tests/unit/test_get_db_scope.py` enforces it.
 - **Privacy:**
   - Coordinates in responses are owner-only (S-12).
@@ -310,48 +310,14 @@ The rules:
 - [ ] **Step 4: Run them.** Expected: PASS. Then run `pytest tests -k "place or geocode or rule or entry" -q` and `npx jest`, and expect all to pass.
 - [ ] **Step 5: Commit** with `fix: place search timeout and spinner, typed date kept, claimed entries refresh place, place and zone labels (TR-19, 21, 22, 24, 26)`.
 
-### Task 9: Logging in during the deletion window offers restore (TR-3, C-14)
-
-**Status: waiting on Andrew.** The web app has no "delete account" control today, so deletion is API-only and no parent can reach this yet. Andrew decides whether this task runs now or moves to "Later, with account settings". If it moves, delete this task and mark TR-3 "Later" in Task 10.
-
-**Files:**
-- Modify: `apps/api/app/routers/v1/auth.py`:
-  - `login` (line 163);
-  - Google login (line 209);
-  - `TokenResponse`.
-- Create: `apps/web/src/app/account/restore/page.tsx`
-- Modify: `apps/web/src/app/login/page.tsx`
-- Test:
-  - `tests/integration/test_restore_on_login.py`;
-  - `apps/web/src/app/account/restore/__tests__/page.test.tsx`.
-
-**Interfaces:**
-- Produces: `TokenResponse.account_pending_deletion: bool = False` and `hard_delete_after: datetime | None = None`.
-  - For an account within its window (`deleted_at` set and `hard_delete_after > now`), `login` issues tokens with those fields set. Every other endpoint still refuses the account, because `get_current_user` is unchanged.
-  - Past the window it stays 401 `account_unavailable`.
-
-- [ ] **Step 1: Write the failing tests.**
-  - API:
-    - in the window, password login gives 200, `account_pending_deletion is True`, and `POST /v1/auth/account/restore` with that token gives 204;
-    - after restore, `GET /v1/diaries` gives 200;
-    - past the window, login gives 401;
-    - the same holds for the Google login path.
-  - Jest: the login page routes to `/account/restore` when the flag is set. The restore page shows `Your account is set to be deleted on {date}.` with two buttons:
-    - `Restore my account` calls restore, then goes to `/diaries`;
-    - `Keep it deleted` logs out.
-- [ ] **Step 2: Run them.** Expected: FAIL.
-- [ ] **Step 3: Implement** as specified.
-- [ ] **Step 4: Run them.** Expected: PASS. Then run `pytest tests -k "auth or account" -q` and `npx jest`, and expect all to pass.
-- [ ] **Step 5: Commit** with `fix: logging in during the deletion window offers restore (TR-3)`.
-
-### Task 10: Docs, status cells and the full suite
+### Task 9: Docs, status cells and the full suite
 
 **Files:**
 - Modify: `design/code-review-2026-11.md`.
-  - Set the status cell of each finding this plan fixed to `Fixed, tested (<test file>)`, with the TR number: C-11, C-14 (if Task 9 ran), C-16, C-17, L-5, and the design-drift bullets for scan retries and Markdown.
+  - Set the status cell of each finding this plan fixed to `Fixed, tested (<test file>)`, with the TR number: C-11, C-16, C-17, L-5, and the design-drift bullets for scan retries and Markdown.
   - Close S-10 and L-4 with the triage reason.
   - Mark C-16's third part fixed (item 14).
-- Modify: `design/03-api-surface.md` (diary coordinates owner-only; scan `triggered_by`; backfill counts and the lock wait; the login restore flag if Task 9 ran) and `docs/local-dev.md`, if Task 1 didn't already cover it.
+- Modify: `design/03-api-surface.md` (diary coordinates owner-only; scan `triggered_by`; backfill counts and the lock wait) and `docs/local-dev.md`, if Task 1 didn't already cover it.
 
 - [ ] **Step 1: Update the docs** as listed.
 - [ ] **Step 2: Run** `make test-all` and `cd apps/web && npx jest`. Expected: all green. Record the counts.
