@@ -550,3 +550,57 @@ class TestEntryChangedDuringGeneration:
             await generate_draft_for_entry(entry_id)
 
         anthropic_p.generate.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# TR-9: Markdown markers in a model reply never reach the stored entry
+# ---------------------------------------------------------------------------
+
+
+class TestMarkdownStrippedBeforeStoring:
+    @pytest.mark.asyncio
+    async def test_draft_written_in_place_is_stripped(self):
+        reply = json.dumps({
+            "title": "## A **Great** Day",
+            "title_facts_used": [1],
+            "body_markdown": "# Morning\n**Standup** happened at __the office__.",
+            "facts_used": [1],
+        })
+        entry_id, entry, diary = _make_entry(body_markdown=None, events=[_make_event()])
+        anthropic_p = _make_provider(name="anthropic", result=_llm_result(reply))
+        gemini_p = _make_provider(name="gemini", configured=False)
+        ctx, entry_update, _ = _db_context(entry, diary)
+
+        with (
+            patch("app.workers.llm.db_session", return_value=ctx),
+            patch("app.workers.llm.AnthropicProvider", return_value=anthropic_p),
+            patch("app.workers.llm.GeminiProvider", return_value=gemini_p),
+        ):
+            from app.workers.llm import generate_draft_for_entry
+            await generate_draft_for_entry(entry_id)
+
+        assert entry_update.body_source == "llm"
+        assert entry_update.title == "A Great Day"
+        assert entry_update.body_markdown == "Morning\nStandup happened at the office."
+
+    @pytest.mark.asyncio
+    async def test_suggestion_is_stripped(self):
+        reply = json.dumps({"title": "**Polished**", "body_markdown": "**Alice** had fun."})
+        entry_id, entry, diary = _make_entry(
+            body_markdown="Alice had fun.", events=[], body_source="user",
+        )
+        anthropic_p = _make_provider(name="anthropic", result=_llm_result(reply))
+        gemini_p = _make_provider(name="gemini", configured=False)
+        ctx, entry_update, _ = _db_context(entry, diary)
+
+        with (
+            patch("app.workers.llm.db_session", return_value=ctx),
+            patch("app.workers.llm.AnthropicProvider", return_value=anthropic_p),
+            patch("app.workers.llm.GeminiProvider", return_value=gemini_p),
+        ):
+            from app.workers.llm import generate_draft_for_entry
+            await generate_draft_for_entry(entry_id)
+
+        assert entry_update.body_markdown == "Alice had fun."
+        assert entry_update.suggested_title == "Polished"
+        assert entry_update.suggested_body_markdown == "Alice had fun."

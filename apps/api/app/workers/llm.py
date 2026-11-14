@@ -291,6 +291,25 @@ def build_prompt(
 # ---------------------------------------------------------------------------
 
 
+_MD_BOLD_STARS = re.compile(r"\*\*(?=\S)(.+?)(?<=\S)\*\*")
+_MD_BOLD_UNDERSCORES = re.compile(r"(?<!\w)__(?=\S)(.+?)(?<=\S)__(?!\w)")
+_MD_HEADING = re.compile(r"^#{1,6}[ \t]+", re.MULTILINE)
+
+
+def _strip_markdown(text: str) -> str:
+    """Remove Markdown emphasis and heading markers from model text (TR-9).
+
+    The web shows entry text as plain text, so ``**Mia**`` would show its stars.
+    Paired ``**…**`` and ``__…__`` become their inner text, and a leading
+    ``#``–``######`` plus a space is removed from each line. Only marker
+    characters are removed, never words; a single ``*`` or ``_`` (``2*3``,
+    ``snake_case``) and ``- `` bullets stay.
+    """
+    text = _MD_BOLD_STARS.sub(r"\1", text)
+    text = _MD_BOLD_UNDERSCORES.sub(r"\1", text)
+    return _MD_HEADING.sub("", text)
+
+
 def _parse_json_reply(raw: str) -> dict | None:
     """The JSON object in a model reply, tolerating text around it; None if there is none."""
     for candidate in (raw, *(m.group() for m in [re.search(r"\{.*\}", raw, re.DOTALL)] if m)):
@@ -657,6 +676,10 @@ async def generate_draft_for_entry(
                         citation_exhausted = True  # prompt/data issue — don't try another provider
                         break
 
+                # The web shows the text as plain text: drop Markdown markers.
+                for key in ("title", "body_markdown"):
+                    if isinstance(parsed.get(key), str):
+                        parsed[key] = _strip_markdown(parsed[key])
                 llm_result = parsed
                 break  # success — exit attempt loop
 

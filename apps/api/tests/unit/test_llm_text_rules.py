@@ -11,6 +11,7 @@ from app.workers.llm import (
     SYSTEM_PROMPT_POLISH,
     _build_fallback_body,
     _format_event_line,
+    _strip_markdown,
     validate_citation,
 )
 
@@ -105,3 +106,22 @@ def test_prompt_forbids_markdown():
 
 def test_short_invented_name_not_hidden_by_substring():
     assert _flagged("We met Tom at the park.", {"summary": "tomorrow"}) == ["Tom"]
+
+
+# --- TR-9: Markdown markers are stripped from model text before it is stored ---
+
+
+def test_strip_markdown_removes_paired_emphasis():
+    assert _strip_markdown("**Mia** swam at __Lake Pleasant__.") == "Mia swam at Lake Pleasant."
+
+
+def test_strip_markdown_removes_leading_heading_marker():
+    assert _strip_markdown("# Day at the beach\nWe swam.") == "Day at the beach\nWe swam."
+    assert _strip_markdown("We swam.\n###### Later\nWe ate.") == "We swam.\nLater\nWe ate."
+
+
+def test_strip_markdown_leaves_single_markers_and_bullets():
+    assert _strip_markdown("snake_case and 2*3") == "snake_case and 2*3"
+    assert _strip_markdown("- swim\n- lunch") == "- swim\n- lunch"
+    assert _strip_markdown("Mia was #1 today.") == "Mia was #1 today."
+
