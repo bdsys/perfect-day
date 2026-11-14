@@ -40,9 +40,13 @@ async def sync_calendar(
     diary_id: uuid.UUID,
     access_token: str,
     diary_timezone: str,
-    past_days: int = DEFAULT_SCAN_PAST_DAYS,
-    future_days: int = DEFAULT_SCAN_FUTURE_DAYS,
+    past_days: int | None = None,
+    future_days: int | None = None,
 ) -> int:
+    # Giving either window argument makes this a windowed fetch: no sync token is
+    # sent (Google ignores timeMin/timeMax when one is) and the stored cursor is
+    # left alone, so the next plain scan resumes its incremental sync.
+    windowed = past_days is not None or future_days is not None
     from sqlalchemy import select
 
     from app.models import DiaryCalendarFilter, ScanJob
@@ -51,7 +55,8 @@ async def sync_calendar(
     async with db_session() as db:
         job_result = await db.execute(select(ScanJob).where(ScanJob.diary_id == diary_id))
         scan_job = job_result.scalar_one_or_none()
-        sync_token = scan_job.last_calendar_cursor if scan_job else None
+        stored_token = scan_job.last_calendar_cursor if scan_job else None
+        sync_token = None if windowed else stored_token
 
         # Determine calendars to scan (default: primary)
         filter_result = await db.execute(
@@ -67,7 +72,9 @@ async def sync_calendar(
     headers = {"Authorization": f"Bearer {access_token}"}
 
     for calendar_id in calendar_ids:
-        time_min, time_max = _scan_window(past_days, future_days)
+        time_min, time_max = _scan_window(
+            past_days or DEFAULT_SCAN_PAST_DAYS, future_days or DEFAULT_SCAN_FUTURE_DAYS
+        )
         raw_events, new_sync_token = await _fetch_events(
             calendar_id, sync_token, headers, time_min=time_min, time_max=time_max
         )
@@ -101,7 +108,7 @@ async def sync_calendar(
             total_events += 1
             ingest_calendar_event.delay(event, str(diary_id), diary_timezone)
 
-        if new_sync_token:
+        if new_sync_token and not windowed:
             async with db_session() as db:
                 job_result = await db.execute(select(ScanJob).where(ScanJob.diary_id == diary_id))
                 job = job_result.scalar_one_or_none()

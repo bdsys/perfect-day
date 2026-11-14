@@ -6,6 +6,8 @@ type StatusPanelProps = {
   state: 'running' | 'success' | 'partial' | 'failed' | 'cancelled'
   headline: string
   detail?: string
+  /** A calm note for the person, e.g. a backfill that finished but skipped events. Not an error. */
+  note?: string
   errors?: string[]
   startedAt?: string
   onDismiss?: () => void
@@ -18,7 +20,7 @@ function formatElapsed(startedAt: string): string {
   return m > 0 ? `${m}m ${s}s ago` : `${s}s ago`
 }
 
-export function StatusPanel({ state, headline, detail, errors, startedAt, onDismiss }: StatusPanelProps) {
+export function StatusPanel({ state, headline, detail, note, errors, startedAt, onDismiss }: StatusPanelProps) {
   const [elapsed, setElapsed] = useState(startedAt ? formatElapsed(startedAt) : '')
 
   useEffect(() => {
@@ -29,10 +31,11 @@ export function StatusPanel({ state, headline, detail, errors, startedAt, onDism
   }, [state, startedAt])
 
   useEffect(() => {
-    if (state !== 'success') return
+    // A note has to be read, so a panel that carries one stays until dismissed.
+    if (state !== 'success' || note) return
     const id = setTimeout(() => onDismiss?.(), 8000)
     return () => clearTimeout(id)
-  }, [state, onDismiss])
+  }, [state, note, onDismiss])
 
   const icon =
     state === 'running' ? <Spinner size={16} /> :
@@ -47,6 +50,7 @@ export function StatusPanel({ state, headline, detail, errors, startedAt, onDism
       <div className="status-panel-body">
         <div className="status-panel-headline">{headline}</div>
         {detail && <div className="status-panel-detail">{detail}</div>}
+        {note && <div className="status-panel-note" role="note">{note}</div>}
         {state === 'running' && startedAt && (
           <div className="status-panel-detail">{elapsed}</div>
         )}

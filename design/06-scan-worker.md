@@ -47,7 +47,11 @@ scan_diary(diary_id):
   5. group_events_into_entries(diary_id, scan_run_id).
   6. For each new/updated draft Entry: queue generate_entry_draft(entry_id).
   7. Update scan_jobs.last_scan_*; close scan_runs row.
-  8. next_scan_after = now() + scan_interval_minutes (or backoff value).
+  8. next_scan_after = now() + scan_interval_minutes. After a transient calendar
+     failure, consecutive_failures += 1 and next_scan_after = now() +
+     min(60 * 2 ** consecutive_failures seconds, scan interval); the retry
+     happens at the next 5-minute dispatch tick. A disconnected calendar
+     does not count as a failure. scan_runs records triggered_by.
   9. Release lock.
 ```
 
@@ -62,7 +66,7 @@ Entries come from three places: auto-creation rules, the event picker, and manua
 **An entry is only created once the event has ended.**
 
 1. Ingest (`_ingest_calendar_event`) stores or updates the event. A new event that is already over is sent to the rules straight away. A future event is stored and nothing else happens.
-2. Each scan then calls `queue_due_rule_evaluations`, which sends to the rules every stored event that is unattached, not yet evaluated, and now over. With hourly scans an entry appears up to one scan interval after the event ends.
+2. Each scan then calls `evaluate_due_events`, which runs the rules over every stored event that is unattached, not yet evaluated, and now over. With hourly scans an entry appears up to one scan interval after the event ends. The scan's `entries_created` counts only the entries this step creates. Events the scan has just fetched are evaluated later by Celery, so they are not in that count (known gap, C-11).
 3. Rules run once per event. `rules_evaluated_at` is set whether or not anything matched, so a rule created later does not sweep up old events. "Apply to past N days" on the rules page is the explicit way to do that, and it also skips events that have not ended.
 
 **One entry per event** (`evaluate_event_against_rules`). All enabled rules are checked, oldest first (`created_at`, then `id`). Every matching rule is recorded against the entry (`entry_rule_matches`). When they disagree about grouping, the oldest matching rule decides:
@@ -120,18 +124,22 @@ Backoff is **per-diary**, not per-user.
 
 ## Backfill mode
 
-`POST /v1/diaries/{id}/scan/backfill` body `{from_date, to_date, sources}`. Worker chunks by week to spread quota:
+`POST /v1/diaries/{id}/scan/backfill` body `{from_date, to_date, sources}`. Worker chunks by week to spread quota. Chunks do not overlap.
 
 ```
 backfill_diary(diary_id, from_date, to_date, sources):
-  for week_start in date_range(from_date, to_date, step=7d):
-    week_end = min(week_start + 7d, to_date)
+  for each week chunk in [from_date, to_date]:
     if backfill_runs.status == 'cancelled': break
-    if 'calendar' in sources: scan_calendar_chunk(...)
+    if 'calendar' in sources: ingest the chunk's events in-process
     if 'photos' in sources:   scan_photos_chunk(...)
-    group_events_into_entries(...)
+    evaluate_due_events(...)   # in-process; no Celery hop
     sleep(2s)
 ```
+
+- There is no per-chunk weather step. Drafting adds weather.
+- `entries_created` counts only entries created during the run.
+- If the scan lock is held, the backfill waits and retries (60 s, 5 times), then fails with "Another scan was still running. Try the backfill again in a few minutes."
+- An event that cannot be saved is skipped. The run still completes, and its note says "N events couldn't be saved. Run the backfill again to retry them." (or "1 event couldn't be saved. Run the backfill again to retry it."). The diary page shows the note on completed runs.
 
 Hard cap: 365 days. Default cap from OAuth doc is 90 days (`photos_backfill_days_max`). Backfill takes the same `scan_lock:{diary_id}` so it can't collide with scheduled scans.
 

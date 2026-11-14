@@ -100,7 +100,7 @@ async def evaluate_event_against_rules(
     Queues ``generate_entry_draft`` after commit, once per entry that needs it.
     """
     # Import here to avoid circular imports (tasks → rules → tasks)
-    from app.workers.tasks import generate_entry_draft  # noqa: PLC0415
+    from app.workers.tasks import generate_entry_draft, queue_location_refresh  # noqa: PLC0415
 
     event_uuid = uuid.UUID(event_id)
     diary_uuid = uuid.UUID(diary_id)
@@ -137,8 +137,11 @@ async def evaluate_event_against_rules(
 
     entry_id: uuid.UUID | None = None
     needs_draft = False
+    joined_without_draft = False
     if matching:
-        entry_id, needs_draft = await _entry_for_event(db, event, diary_uuid, matching[0])
+        entry_id, needs_draft, joined_without_draft = await _entry_for_event(
+            db, event, diary_uuid, matching[0]
+        )
 
     if entry_id is not None:
         event.entry_id = entry_id
@@ -162,24 +165,29 @@ async def evaluate_event_against_rules(
             generate_entry_draft.delay(str(entry_id))
         except Exception:
             log.exception("evaluate_rules_llm_queue_failed", entry_id=str(entry_id))
+    elif entry_id is not None and joined_without_draft:
+        # This event may be in a different place from the ones already there.
+        queue_location_refresh(entry_id)  # logs a queue outage itself
 
 
 async def _entry_for_event(
     db: AsyncSession, event: Event, diary_id: uuid.UUID, rule: AutoCreationRule
-) -> tuple[uuid.UUID | None, bool]:
+) -> tuple[uuid.UUID | None, bool, bool]:
     """Find or create the entry *event* belongs to, grouped as *rule* says.
 
-    Returns ``(entry_id, needs_draft)``. ``entry_id`` is None when a new entry
-    was needed but the owner's tier limit does not allow one.
+    Returns ``(entry_id, needs_draft, joined_without_draft)``. ``entry_id`` is
+    None when a new entry was needed but the owner's tier limit does not allow
+    one. ``joined_without_draft`` is True when the event joined an existing
+    series entry that is not being redrafted, so its place needs a refresh.
     """
     diary = (await db.execute(select(Diary).where(Diary.id == diary_id))).scalar_one_or_none()
     if diary is None:
-        return None, False
+        return None, False, False
     user = (
         await db.execute(select(User).where(User.id == diary.owner_user_id))
     ).scalar_one_or_none()
     if user is None:
-        return None, False
+        return None, False, False
 
     payload = event.payload or {}
     raw_event = {"start": payload.get("start", {}), "end": payload.get("end", {})}
@@ -228,17 +236,17 @@ async def _entry_for_event(
             )
         ).scalar_one_or_none()
         if claim is not None:
-            return claim.entry_id, False
+            return claim.entry_id, False, True
 
         new_id = await _new_entry(None)  # series entries don't span
         if new_id is None:
-            return None, False
+            return None, False, False
         db.add(
             RuleSeriesClaim(
                 rule_id=rule.id, recurring_event_id=recurring_event_id, entry_id=new_id
             )
         )
-        return new_id, True
+        return new_id, True, False
 
     if spanning:
         # Join an existing rule-created entry with exactly the same date range
@@ -277,7 +285,7 @@ async def _entry_for_event(
             )
             # Redraft so the text covers the event that just joined. Known
             # follow-up: N grouped events in one scan mean N regenerations.
-            return existing.id, True
+            return existing.id, True, False
 
     new_id = await _new_entry(entry_end_date if spanning else None)
-    return new_id, new_id is not None
+    return new_id, new_id is not None, False

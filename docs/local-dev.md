@@ -11,16 +11,18 @@ Covers: macOS and Linux (x86_64 and ARM). Requires Docker.
 | Tool | Version | Install |
 |---|---|---|
 | Docker + Docker Compose | 24+ | https://docs.docker.com/get-docker/ |
-| Python | 3.12+ | `brew install python@3.12` or `apt install python3.12` |
+| uv | any | https://docs.astral.sh/uv/getting-started/installation/. uv fetches Python 3.12 itself, so you do not need to install it. After installing uv you may need a new shell, or run `export PATH="$HOME/.local/bin:$PATH"`. |
 | Node.js | 20+ | `brew install node` or `nvm install 20` |
 | pnpm | 9+ | `npm install -g pnpm` |
 | jq | any | `brew install jq` or `apt install jq` |
 | mc (MinIO client) | any | Optional. Used by `seed-minio-bucket.sh`. Falls back to Docker if absent. |
 
+The API venv (`apps/api/.venv`) is Python 3.12 installed from `requirements-dev.lock`, the same as CI and the production image.
+
 Verify:
 ```bash
 docker compose version    # must show v2+
-python3 --version         # 3.12.x
+uv --version              # any
 node --version            # v20.x
 ```
 
@@ -38,7 +40,7 @@ This runs `scripts/bootstrap-local.sh` which:
 2. Starts `postgres`, `redis`, and `minio` via Docker Compose.
 3. Waits for all three to be healthy.
 4. Creates the `photos` MinIO bucket.
-5. Installs Python deps (`pip install -e ".[dev]"`).
+5. Builds `apps/api/.venv` with `uv` (Python 3.12) from `requirements-dev.lock`.
 6. Runs Alembic migrations (`alembic upgrade head`).
 7. Installs Node deps.
 

@@ -3,7 +3,8 @@
 import { Suspense, useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
-import { api, type Entry, type EventItem } from '@/lib/api'
+import { api, type Entry } from '@/lib/api'
+import { formatEventTime } from '@/lib/eventTime'
 import { PhotoThumbnail } from '@/components/PhotoThumbnail'
 import { PhotoLightbox } from '@/components/PhotoLightbox'
 import { AddPhotos } from '@/components/AddPhotos'
@@ -17,32 +18,6 @@ import { EntryPlace } from '@/components/EntryPlace'
 import { GooglePhotosPick } from '@/components/GooglePhotosPick'
 import { PhotoImportNotice } from '@/components/PhotoImportNotice'
 import { googleStatusMessage } from '@/lib/googleStatus'
-
-/** An event's time. With *timeZone* (the entry's own zone), times are shown there, with its name. */
-function formatEventTime(event: EventItem, timeZone?: string): string {
-  const opts: Intl.DateTimeFormatOptions = { hour: '2-digit', minute: '2-digit', ...(timeZone ? { timeZone } : {}) }
-  const zoneName = timeZone
-    ? ` ${new Intl.DateTimeFormat(undefined, { timeZone, timeZoneName: 'short' }).formatToParts(new Date()).find((p) => p.type === 'timeZoneName')?.value ?? timeZone}`
-    : ''
-
-  const start = event.start?.dateTime ?? event.start?.date ?? ''
-  const end = event.end?.dateTime ?? event.end?.date ?? ''
-
-  if (!start && !end) {
-    return event.occurred_at ? new Date(event.occurred_at).toLocaleTimeString(undefined, opts) + zoneName : 'Unknown time'
-  }
-
-  // All-day event
-  if (event.start?.date && !event.start?.dateTime) {
-    return 'All day'
-  }
-
-  const startTime = new Date(start).toLocaleTimeString(undefined, opts)
-  if (!end || event.end?.date) return startTime + zoneName
-
-  const endTime = new Date(end).toLocaleTimeString(undefined, opts)
-  return `${startTime}–${endTime}${zoneName}`
-}
 
 export default function EntryDetailPage() {
   return (

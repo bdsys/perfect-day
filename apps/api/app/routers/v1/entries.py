@@ -547,8 +547,14 @@ async def patch_entry(
         refetch_weather = True
     if tz_set and new_tz != entry.tz_override:
         entry.tz_override = new_tz
-        dates = entry_dates_from_events(
-            [e.payload or {} for e in entry.events], new_tz or diary.timezone
+        # A date typed in the same save wins over the one worked out from events.
+        typed_dates = "entry_date" in updates or "entry_end_date" in updates
+        dates = (
+            None
+            if typed_dates
+            else entry_dates_from_events(
+                [e.payload or {} for e in entry.events], new_tz or diary.timezone
+            )
         )
         if dates is not None:
             entry.entry_date, entry.entry_end_date = dates

@@ -50,12 +50,27 @@ echo "→ Seeding MinIO bucket..."
 "${REPO_ROOT}/scripts/seed-minio-bucket.sh"
 
 # ---- 4. Python env + migrations ----
-if [ ! -d "${API_DIR}/.venv" ]; then
-  echo "→ Creating Python venv..."
-  python3 -m venv "${API_DIR}/.venv"
+# Same Python (3.12) and same hashed lock as CI and the production image.
+if ! command -v uv &>/dev/null; then
+  echo "uv is required: https://docs.astral.sh/uv/getting-started/installation/"
+  exit 1
 fi
-echo "→ Installing Python deps..."
-"${API_DIR}/.venv/bin/pip" install -q -e "${API_DIR}[dev]"
+if [ -d "${API_DIR}/.venv" ] && \
+   ! "${API_DIR}/.venv/bin/python" --version 2>/dev/null | grep -q '^Python 3\.12\.'; then
+  echo "→ Removing .venv (not Python 3.12)..."
+  rm -rf "${API_DIR}/.venv"
+fi
+echo "→ Installing Python 3.12 deps from requirements-dev.lock..."
+(
+  cd "${API_DIR}"
+  # The check above removed any non-3.12 venv, so a .venv still here is a good
+  # one: keep it. (`uv venv` refuses an existing venv when no terminal is attached.)
+  if [ ! -d .venv ]; then
+    uv venv --python 3.12 .venv
+  fi
+  uv pip sync --python .venv/bin/python requirements-dev.lock
+  uv pip install --python .venv/bin/python --no-deps -e .
+)
 
 echo "→ Running Alembic migrations..."
 cd "${API_DIR}" && .venv/bin/alembic upgrade head

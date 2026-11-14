@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime, timedelta
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from httpx import AsyncClient
 from sqlalchemy import select
@@ -122,10 +122,10 @@ class TestIngest:
 
 
 class TestDueSweep:
-    async def test_queues_only_unattached_unevaluated_events_that_have_ended(
+    async def test_evaluates_only_unattached_unevaluated_events_that_have_ended(
         self, client: AsyncClient, db_session: AsyncSession
     ):
-        from app.workers.tasks import queue_due_rule_evaluations
+        from app.workers.tasks import evaluate_due_events
 
         diary = await _diary_with_rule(db_session)
         now = datetime.now(tz=UTC)
@@ -142,11 +142,12 @@ class TestDueSweep:
         )
         await make_event(db_session, diary_id=other_diary.id, ends_at=now - timedelta(minutes=5))
 
-        with patch("app.workers.tasks.evaluate_rules_for_event") as evaluate:
-            queued = await queue_due_rule_evaluations(diary.id)
+        evaluate = AsyncMock()
+        with patch("app.workers.tasks._evaluate_rules_for_event", evaluate):
+            entry_ids = await evaluate_due_events(diary.id)
 
-        assert queued == 1
-        evaluate.delay.assert_called_once_with(str(due.id), str(diary.id))
+        evaluate.assert_awaited_once_with(str(due.id), str(diary.id))
+        assert entry_ids == set()  # the mock attached the event to nothing
 
     async def test_scan_evaluates_an_event_that_ended_since_it_was_stored(
         self, client: AsyncClient, db_session: AsyncSession
@@ -158,11 +159,12 @@ class TestDueSweep:
             db_session, diary_id=diary.id, ends_at=datetime.now(tz=UTC) - timedelta(minutes=5)
         )
 
-        # No Google connection: the sweep must still run.
-        with patch("app.workers.tasks.evaluate_rules_for_event") as evaluate:
+        # No Google connection: the sweep must still run, in process.
+        evaluate = AsyncMock()
+        with patch("app.workers.tasks._evaluate_rules_for_event", evaluate):
             await _scan_diary(str(diary.id))
 
-        evaluate.delay.assert_called_once_with(str(due.id), str(diary.id))
+        evaluate.assert_awaited_once_with(str(due.id), str(diary.id))
 
     async def test_apply_to_past_days_creates_nothing_for_a_future_event(
         self, client: AsyncClient, db_session: AsyncSession

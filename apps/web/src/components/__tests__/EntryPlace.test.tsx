@@ -57,3 +57,20 @@ describe('EntryPlace after a change', () => {
     expect(screen.queryByText('Updating the place and weather…')).not.toBeInTheDocument()
   })
 })
+
+describe('EntryPlace label for an unnamed place (TR-24)', () => {
+  it.each([
+    ['photo', 'From a photo'],
+    ['home', 'Home'],
+    ['event', 'From the event'],
+    ['parent', 'Your place'],
+  ] as const)('reads "%s" as "%s"', (source, text) => {
+    render(
+      <EntryPlace
+        entry={entry({ location: { name: null, lat: null, lon: null, source } })}
+        onUpdated={jest.fn()}
+      />,
+    )
+    expect(screen.getByTestId('entry-place')).toHaveTextContent(text)
+  })
+})

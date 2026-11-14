@@ -286,6 +286,7 @@ input:focus {
 .status-panel-headline { font-weight: 600; }
 .status-panel-detail   { color: var(--text-muted); margin-top: 0.15rem; font-size: 0.8rem; }
 .status-panel-errors   { margin-top: 0.35rem; padding-left: 1rem; font-size: 0.8rem; }
+.status-panel-note     { margin-top: 0.35rem; padding: 0.3rem 0.5rem; font-size: 0.8rem; color: var(--text-muted); background: var(--bg); border: 1px solid var(--border); border-radius: 4px; }
 .status-panel-dismiss  { background: none; border: none; color: var(--text-muted); font-size: 1.1rem; line-height: 1; cursor: pointer; padding: 0; flex-shrink: 0; }
 
 .success-message {
