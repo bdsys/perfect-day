@@ -336,7 +336,7 @@ _SENTENCE_STARTERS = frozenset({
     "There", "Once", "Soon", "Earlier", "Meanwhile", "Also", "Afterward",
     "Over", "By", "For", "From", "With", "Throughout", "Eventually",
     "Tonight", "Tomorrow", "Yesterday",
-    "Some", "Most", "Both", "Each", "Every", "One", "Two", "Three", "As", "But",
+    "Some", "Most", "Both", "Each", "Every", "As", "But",
     "And", "So", "Still", "Just", "Even", "Here", "Now", "Overall",
 })
 

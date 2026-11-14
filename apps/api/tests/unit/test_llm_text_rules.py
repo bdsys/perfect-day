@@ -144,3 +144,7 @@ def test_json_key_does_not_support_a_word():
     src = {"summary": "Park", "location": ""}
     assert _flagged("Location was great.", src) == ["Location"]
     assert _flagged("Summary was great.", {"summary": "Park"}) == ["Summary"]
+
+
+def test_invented_count_at_sentence_start_flagged():
+    assert _flagged("Three friends came.", {"summary": "Park"}) == ["Three"]
