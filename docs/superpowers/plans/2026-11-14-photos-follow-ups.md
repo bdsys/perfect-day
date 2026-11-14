@@ -38,6 +38,36 @@
 
 ---
 
+### Task 0: A Google setup problem is not reported as "not connected" (found 2026-11-14)
+
+Andrew's report: Connect Google Photos succeeds, but "Search Google Photos" says "Google Photos isn't connected yet." The Photos Picker API was never enabled in his Google Cloud project.
+
+`google_photos._check` (around lines 115-122) turns every 401 or 403 into `GoogleAuthError`. The router turns that into 409 `photos_not_connected`, and nothing is logged. Google's error body tells the cases apart. It is JSON shaped like `{"error": {"code", "status", "message", "details": [{"@type": "…ErrorInfo", "reason": "SERVICE_DISABLED" | "ACCESS_TOKEN_SCOPE_INSUFFICIENT" | …}]}}`; this is Google's standard API error model, <https://cloud.google.com/apis/design/errors>.
+
+**Files:**
+- Modify: `apps/api/app/services/google_photos.py`. Change `_check` and add a `GoogleSetupError(GoogleError)`.
+- Modify: `apps/api/app/routers/v1/photo_imports.py`. Its create path is at about line 100.
+- Modify: `apps/web/src/components/GooglePhotosPick.tsx`. Its `start()` error mapping is at about line 87.
+- Test: `tests/unit/test_google_photos_client.py`, `tests/integration/test_photo_imports.py`, and `GooglePhotosPick.test.tsx`.
+
+**Interfaces:**
+- Produces:
+  - `class GoogleSetupError(GoogleError)`. `_check` raises it for a 403 whose `ErrorInfo.reason` is `SERVICE_DISABLED`, `API_DISABLED` or `ACCESS_NOT_CONFIGURED`, or whose message says the API "has not been used" or "is disabled".
+  - A 401, or a 403 with `ACCESS_TOKEN_SCOPE_INSUFFICIENT` or no recognisable reason, stays `GoogleAuthError`.
+  - Every 401/403 logs `google_photos_refused` with only `code`, `status` and `reason`. Never the URL, a token or the message text.
+  - The create route answers a `GoogleSetupError` with 503 `google_photos_not_enabled`. The web shows: `"Google Photos isn't set up for this app yet. The app's owner needs to turn on the Photos Picker API in Google Cloud."`.
+
+- [ ] **Step 1: Write the failing tests.**
+  - `test_service_disabled_403_is_setup_error`: MockTransport returns 403 with the ErrorInfo reason `SERVICE_DISABLED`, and `create_session` raises `GoogleSetupError`.
+  - `test_scope_403_is_auth_error`.
+  - `test_refusal_logs_reason_only`: the log has `reason="SERVICE_DISABLED"` and no `https://`.
+  - `test_create_import_when_picker_api_disabled_is_503_not_409`.
+  - Jest: a 503 `google_photos_not_enabled` shows the setup message exactly, and no Connect button.
+- [ ] **Step 2: Run them.** Expected: FAIL.
+- [ ] **Step 3: Implement.** Read the body defensively: a non-JSON body counts as no reason.
+- [ ] **Step 4: Run.** `pytest tests -k "google_photos or photo_import" -W error::RuntimeWarning`, then `npx jest GooglePhotosPick`. Expected: PASS.
+- [ ] **Step 5: Commit.** Use `fix: tell a Google Photos setup problem apart from a missing connection`.
+
 ### Task 1: The web client shares one token refresh (TR-29, client half)
 
 **Files:**
