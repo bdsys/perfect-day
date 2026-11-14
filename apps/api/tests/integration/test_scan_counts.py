@@ -135,14 +135,25 @@ async def test_one_failing_event_does_not_stop_the_others(
 
     async def _evaluate(event_id: str, diary_id: str) -> None:
         if event_id == str(bad.id):
-            raise RuntimeError("boom")
+            raise RuntimeError("Dentist at 5pm with private details")
         await real_evaluate(event_id, diary_id)
 
     with (
         patch("app.workers.tasks._evaluate_rules_for_event", AsyncMock(side_effect=_evaluate)),
         patch("app.workers.tasks.generate_entry_draft"),
+        patch("app.workers.tasks.log") as log,
     ):
         entry_ids = await tasks.evaluate_due_events(diary.id)
+
+    # Logged with the event id and error type, never the error message or a traceback.
+    log.exception.assert_not_called()
+    failures = [
+        c for c in log.mock_calls if c.args and c.args[0] == "evaluate_due_event_failed"
+    ]
+    assert [(c[0], c.kwargs) for c in failures] == [
+        ("warning", {"event_id": str(bad.id), "error_class": "RuntimeError"})
+    ]
+    assert "private details" not in repr(log.mock_calls)
 
     stored = {
         e.id: e

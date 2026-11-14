@@ -521,9 +521,13 @@ async def evaluate_due_events(diary_id: uuid.UUID) -> set[uuid.UUID]:
     for event_id in event_ids:
         try:
             await _evaluate_rules_for_event(str(event_id), str(diary_id))
-        except Exception:
-            log.exception(
-                "evaluate_due_event_failed", event_id=str(event_id), diary_id=str(diary_id)
+        except Exception as exc:
+            # The id and error type only: the message or traceback can carry
+            # calendar details, as in the backfill.
+            log.warning(
+                "evaluate_due_event_failed",
+                event_id=str(event_id),
+                error_class=type(exc).__name__,
             )
             continue
         evaluated.append(event_id)
