@@ -135,10 +135,9 @@ class TestLocationTasksRetry:
 
         with (
             patch(
-                "app.services.entry_location.update_place_and_weather",
+                "app.workers.tasks._refresh_entry_location",
                 AsyncMock(side_effect=RuntimeError("boom")),
             ),
-            patch("app.workers.tasks.run_sync", side_effect=RuntimeError("boom")),
             patch.object(refresh_entry_location, "retry", side_effect=Retry()) as retry,
             pytest.raises(Retry),
         ):
@@ -149,7 +148,10 @@ class TestLocationTasksRetry:
         from app.workers.tasks import refresh_diary_locations
 
         with (
-            patch("app.workers.tasks.run_sync", side_effect=RuntimeError("boom")),
+            patch(
+                "app.workers.tasks._refresh_diary_locations",
+                AsyncMock(side_effect=RuntimeError("boom")),
+            ),
             patch.object(refresh_diary_locations, "retry", side_effect=Retry()) as retry,
             pytest.raises(Retry),
         ):
