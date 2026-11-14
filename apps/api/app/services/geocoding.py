@@ -114,13 +114,22 @@ def parse_us_location(text: str) -> tuple[Literal["zip", "city"], str, str] | No
 
 
 async def search_places(
-    query: str, *, count: int = 5, country_code: str | None = None
+    query: str,
+    *,
+    count: int = 5,
+    country_code: str | None = None,
+    timeout: float | None = None,
 ) -> list[Place]:
-    """Search Open-Meteo. Raises GeocodingUnavailable when it can't answer."""
+    """Search Open-Meteo. Raises GeocodingUnavailable when it can't answer.
+
+    *timeout* is in seconds; None uses the setting. A person waiting at a
+    search box passes a short one; the background resolver keeps the setting.
+    """
     params: dict[str, str | int] = {"name": query, "count": count, "language": "en"}
     if country_code:
         params["countryCode"] = country_code
-    timeout = get_settings().open_meteo_timeout_seconds
+    if timeout is None:
+        timeout = get_settings().open_meteo_timeout_seconds
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.get(SEARCH_URL, params=params)
