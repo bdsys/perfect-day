@@ -660,6 +660,14 @@ async def generate_draft_for_entry(
                         continue
                     break
 
+                # The web shows the text as plain text: drop Markdown markers first,
+                # so the word check, its flags and the stored text all see the same text
+                # ("__Grandpa__" would hide the name from the check; "**Then**" would
+                # hide a sentence starter).
+                for key in ("title", "body_markdown"):
+                    if isinstance(parsed.get(key), str):
+                        parsed[key] = _strip_markdown(parsed[key])
+
                 valid, err, flagged_tokens = validate_citation(
                     parsed, events, mode=mode, body_seed=parents_text, enrichments=enrichments,
                     known_words=diary.subject_name or "",
@@ -684,10 +692,6 @@ async def generate_draft_for_entry(
                         citation_exhausted = True  # prompt/data issue — don't try another provider
                         break
 
-                # The web shows the text as plain text: drop Markdown markers.
-                for key in ("title", "body_markdown"):
-                    if isinstance(parsed.get(key), str):
-                        parsed[key] = _strip_markdown(parsed[key])
                 llm_result = parsed
                 break  # success — exit attempt loop
 

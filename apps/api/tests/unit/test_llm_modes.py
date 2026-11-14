@@ -604,3 +604,37 @@ class TestMarkdownStrippedBeforeStoring:
         assert entry_update.body_markdown == "Alice had fun."
         assert entry_update.suggested_title == "Polished"
         assert entry_update.suggested_body_markdown == "Alice had fun."
+
+    @staticmethod
+    async def _draft_in_place(body: str) -> MagicMock:
+        reply = json.dumps({
+            "title": "Standup", "title_facts_used": [1], "body_markdown": body, "facts_used": [1],
+        })
+        entry_id, entry, diary = _make_entry(body_markdown=None, events=[_make_event()])
+        anthropic_p = _make_provider(name="anthropic", result=_llm_result(reply))
+        gemini_p = _make_provider(name="gemini", configured=False)
+        ctx, entry_update, _ = _db_context(entry, diary)
+
+        with (
+            patch("app.workers.llm.db_session", return_value=ctx),
+            patch("app.workers.llm.AnthropicProvider", return_value=anthropic_p),
+            patch("app.workers.llm.GeminiProvider", return_value=gemini_p),
+        ):
+            from app.workers.llm import generate_draft_for_entry
+            await generate_draft_for_entry(entry_id)
+        return entry_update
+
+    @pytest.mark.asyncio
+    async def test_word_hidden_by_markers_is_flagged(self):
+        # "__Grandpa__" hides the name from the word check; the stored text shows it.
+        entry_update = await self._draft_in_place("We met __Grandpa__ at the park.")
+
+        assert entry_update.body_markdown == "We met Grandpa at the park."
+        assert "Grandpa" in entry_update.flagged_tokens
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("body", ["**Then** we went home.", "# Then\nWe went home."])
+    async def test_marked_sentence_starter_is_not_flagged(self, body: str):
+        entry_update = await self._draft_in_place(body)
+
+        assert entry_update.flagged_tokens == []
