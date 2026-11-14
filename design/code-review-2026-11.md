@@ -132,3 +132,78 @@ Made by Andrew while fixing C-18 and C-19.
 3. **S-11: the synced calendar is the owner's alone.** Only the owner can list the diary's synced calendar events or make an entry from one ("New entry from Google Calendar"). Co-parents, editors included, don't see that button; they can still write entries by hand and edit drafts. Entries keep showing the events they were made from, as before. **To revisit:** `require_owner=True` in `list_calendar_events` and `create_entry_from_event` in `apps/api/app/routers/v1/calendar_events.py`, and the `isOwner` check on the diary page.
 4. **S-13: event addresses and attendees are the owner's alone.** Co-parents and viewers see each event's title, time and description, and the entry's town from its place line, but not the event's location text or its attendees. Descriptions stay visible for now (Andrew, 2026-11-12). **To revisit:** `exact_places` in `_event_out_from_orm` in `apps/api/app/routers/v1/entries.py`.
 5. **S-14: auto-creation rules are the owner's alone.** Rules run over the owner's synced calendar, and the rule preview searches all of it by title, location and attendee email. Only the owner can list, create, change, delete, preview or apply rules; co-parents, editors included, get 403, and the diary page shows them no rules button or rules link. Entries a rule already made stay visible to co-parents as before (Andrew, 2026-11-12). **To revisit:** `require_owner=True` in `apps/api/app/routers/v1/rules.py`, and the `isOwner` checks on the diary page and the 403 screen on the rules page.
+
+## Triage (2026-11-14)
+
+Andrew went through every finding still open, plus the minors deferred by items 24, 25.3 and 14, and marked each one **fix**, **later** or **won't fix**. Each row was checked against the code on 2026-11-14, except the item 24 / 25.3 minors (TR-19 to TR-28), which are as logged on 2026-11-12/13. The status cells in the tables above are updated as each fix lands. Until then, this section is the record.
+
+The item 24 and 25.3 minors were listed only in a git-ignored build folder that had been deleted. They were recovered from the session transcript. From now on, deferred findings go in full into the PR body or a committed doc.
+
+**Where the fixes go.** Items marked ⓐ are on `main` today, so they go into one "review fixes" plan off `main`. Items marked ⓑ change item 14 code (PR #51, which is not merged yet), so they are built on #51's branch before it merges.
+
+### Review findings and design drift
+
+| # | Finding | Outcome | Note |
+|---|---|---|---|
+| TR-1 | C-11 backfill bookkeeping | **Fix** ⓐ | Task id used as entry id (no per-chunk weather, wrong counts); a run that can't get the lock says "completed"; overlapping chunks; scan runs report 0 entries and `beat`. |
+| TR-2 | Scan retries (design drift) | **Fix** ⓐ | `scan_diary` declares 3 retries but never retries; a calendar failure resets the failure counter. Includes TR-25. |
+| TR-3 | C-14 restore only reachable for 15 minutes | **Fix** ⓐ | Logging in during the 7-day window shows "Restore your account". The emailed restore link waits for item 20. |
+| TR-4 | C-16a "past N days" ignored once a sync token exists | **Fix** ⓐ | One-off windowed fetch that leaves the sync token alone. |
+| TR-5 | C-16b one cursor across calendars | Later | Only matters once calendars can be chosen. |
+| TR-6 | C-16c calendar-only connect said Photos missing | Fixed already | Item 14: `integrations.py` compares against the scopes asked for. |
+| TR-7 | C-17 noisy "verify these words" | **Fix** ⓐ | Count the subject's name as known; compare ignoring case. |
+| TR-8 | L-5 attendee emails sent to the model | **Fix** ⓐ | Leave nameless attendees out (or "and N others"). |
+| TR-9 | Markdown shown literally (design drift) | **Fix** ⓐ | The fallback body stops producing Markdown. |
+| TR-10 | Account deletion doesn't revoke Google access | **Fix** ⓑ | Reuse item 14's disconnect-revoke (S-8). |
+| TR-11 | Google's one-time OAuth code in API access logs | Later (NUC logging) | Single-use, and needs the client secret. |
+| TR-12 | S-9 diary-limit lock untested | Later (item 18) | Only matters with more than one API process. |
+| TR-13 | S-10 refresh accepts a missing `Origin` | Won't fix | The refresh cookie is `SameSite=Strict` (`routers/v1/auth.py` `_set_refresh_cookie`), so a cross-site request never carries it. |
+| TR-14 | L-2 prompt caching never caches | Later (item 18) | Correct the 70% hit-rate assumption in `04-llm-integration.md` when item 18's cost work starts. |
+| TR-15 | L-4 enrichments | Won't fix (closed) | Reworded in 25.2. The validator already counts enrichments as a source. |
+| TR-16 | Edit diffs never written (design drift) | Later | Nothing reads them yet. |
+| TR-17 | Tiers (design drift) | Later (item 18) | |
+| TR-18 | Google Photos library scope (design drift) | Resolved by item 14 | Close when #51 merges. |
+
+P-2, P-4, P-6, P-7, D-5, D-6 and S-6 stay with the NUC deployment work. L-6 is item 18.
+
+### Item 24 and 25.3 deferred minors
+
+| # | Minor | Outcome |
+|---|---|---|
+| TR-19 | `/v1/geocode` waits up to 30 s on Open-Meteo; no loading indicator in the place search | **Fix** ⓐ: shorter timeout and a spinner |
+| TR-20 | `DiaryOut` lat/lon (home coordinates) returned to co-parents and viewers | **Fix** ⓐ: owner-only, like S-12 (Andrew, 2026-11-14) |
+| TR-21 | A PATCH setting both `entry_date` and `tz_override` recomputes the date over the hand-set one | **Fix** ⓐ |
+| TR-22 | An event joining an existing rule-claimed entry doesn't refresh the entry's place | **Fix** ⓐ |
+| TR-23 | Cached place JSON rebuilt with `Place(**json)` would raise if a required field is added | Won't fix now: handle it when a field is added |
+| TR-24 | A home place with no name is labelled "From a photo" | **Fix** ⓐ |
+| TR-25 | `refresh_entry_location` / `refresh_diary_locations` never retry | **Fix** ⓐ, with TR-2 |
+| TR-26 | The time-zone label uses today's date (PST shown for a summer entry) | **Fix** ⓐ |
+| TR-27 | An unknown time zone gives Pydantic's generic 422, not `unknown_time_zone` | Later: the UI only offers a picker |
+| TR-28 | 25.3: a background redraft can leave an older pending suggestion | Later: the parent can dismiss it |
+
+### Item 14 (PR #51) deferred minors
+
+The full list is in PR #51's body. Grouped:
+
+| # | Theme | Fix now | Later |
+|---|---|---|---|
+| TR-29 | **Refresh-token race** (older than item 14; parallel uploads make it likelier). Refresh doesn't lock the token row, so two refreshes at once can leave two live tokens in one family; a later grace-window lookup expects one (`scalar_one_or_none`) and errors. Not reproduced yet. | **Fix** ⓐ: test with two refreshes at once first; lock the row; the web client shares one refresh | |
+| TR-30 | Non-uploaders' JPEGs keep non-GPS EXIF, including the MakerNote and possibly an embedded thumbnail (not known whether either can carry location) | **Fix** ⓑ: non-uploaders keep only orientation | |
+| TR-31 | Phone uploads | **Fix** ⓑ: upload timeout; no duplicate photo when attach fails after upload | Cancel uploads on Edit |
+| TR-32 | Google import worker | **Fix** ⓑ: guarded status writes; bearer token only to Google's photo host; missing field in Google's reply → handled error, not 500; edit rights re-checked per item | Concurrent-pass lock, orphaned encrypted objects, memory copies, page caps, per-user cap on waiting imports |
+| TR-33 | Google connect | **Fix** ⓑ: non-ASCII cookie → 500; scan/backfill after disconnect (`scalar_one` → stuck "running"); double-tap guard on the diary page's Calendar connect | `return_to` fragment and length cap; "lost" → "none" wording; Back-button cache |
+| TR-34 | Entry page | **Fix** ⓑ: import finishing during Edit leaves the strip stale; poll errors never end waiting; failed list shows "Connect"; "Google Photos is open" during copying; `opener` on the picker tab | Accessible names for repeated buttons, `aria-live` |
+| TR-35 | Photo storage | **Fix** ⓑ: display backfill retries bad photos first; display-copy failure not logged; index on `entry_photos(photo_id)` | One location refresh per batch; stored location-free copy; memory; orphaned objects |
+| TR-36 | `03-api-surface.md` says photos on a deleted diary are unreadable even to the owner | **Fix** ⓑ (doc): a photo belongs to the uploader's library, so the uploader can read it | |
+| TR-37 | Missing tests listed per task; misnamed helper; stale docstring; long lines; old item-13 row | Won't fix as a batch: add a test when that code is next touched | |
+| TR-38 | `S3_PUBLIC_ENDPOINT_URL` and the `media.` upload route now unused; httpcore detail in debug logs | NUC work | |
+
+Noted, not bugs: the sweep ends a killed import sooner than Celery's one-hour redelivery would, and it leaves Google's picker session to expire on its own.
+
+### Open decisions settled
+
+| # | Decision | Outcome |
+|---|---|---|
+| TR-39 | P-12: local tests on Python 3.14 with unlocked versions; the image and CI use 3.12 and the lock | **Fix** ⓐ: `scripts/bootstrap-local.sh` builds `.venv` with Python 3.12 (via `uv`) from `requirements-dev.lock` |
+| TR-40 | `__Host-` prefix for the Google-connect cookie (item 14 Task 6) | **Fix** ⓑ: `__Host-pd_google_connect`, path `/`. Stops a sibling `*.andrewlass.com` site planting a connect cookie, which would defeat S-5. |
+| TR-41 | Open-Meteo licence (free API is non-commercial) | Later: decide in item 18, before any paid tier ships; re-check their terms then |
