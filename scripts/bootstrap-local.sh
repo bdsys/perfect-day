@@ -63,7 +63,11 @@ fi
 echo "→ Installing Python 3.12 deps from requirements-dev.lock..."
 (
   cd "${API_DIR}"
-  uv venv --python 3.12 .venv
+  # The check above removed any non-3.12 venv, so a .venv still here is a good
+  # one: keep it. (`uv venv` refuses an existing venv when no terminal is attached.)
+  if [ ! -d .venv ]; then
+    uv venv --python 3.12 .venv
+  fi
   uv pip sync --python .venv/bin/python requirements-dev.lock
   uv pip install --python .venv/bin/python --no-deps -e .
 )
