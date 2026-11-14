@@ -32,11 +32,14 @@ def ping() -> str:
 @celery_app.task(
     name="app.workers.tasks.scan_diary",
     bind=True,
-    max_retries=3,
-    default_retry_delay=60,
 )
 def scan_diary(self, diary_id: str, past_days: int | None = None, future_days: int | None = None) -> None:
     run_sync(_scan_diary(diary_id, past_days=past_days, future_days=future_days))
+
+
+def scan_backoff_seconds(failures: int, interval_minutes: int) -> int:
+    """Wait after a failed calendar scan: doubles per failure, never beyond the scan interval."""
+    return min(60 * 2**failures, interval_minutes * 60)
 
 
 _CALENDAR_DISCONNECTED = {
@@ -192,6 +195,12 @@ async def _scan_diary(diary_id_str: str, past_days: int | None = None, future_da
                 }
             )
 
+        # Only a calendar error that may clear on its own is a failure to retry
+        # sooner; a disconnected calendar waits for the person (the normal
+        # interval) and a rules error is not about the calendar.
+        calendar_errors = [e for e in errors if e["source"] == "google_calendar"]
+        transient = [e for e in calendar_errors if e["error_class"] != "calendar_disconnected"]
+
         # Close scan run
         async with db_session() as db:
             run_result = await db.execute(select(ScanRun).where(ScanRun.id == scan_run_id))
@@ -208,12 +217,25 @@ async def _scan_diary(diary_id_str: str, past_days: int | None = None, future_da
 
             scan_job_update.last_scan_completed_at = completed
             scan_job_update.last_scan_status = scan_run_update.status
-            scan_job_update.consecutive_failures = 0
             from datetime import timedelta
 
-            scan_job_update.next_scan_after = completed + timedelta(
-                minutes=diary.scan_interval_minutes
-            )
+            failures_before = scan_job_update.consecutive_failures
+            if transient:
+                for e in transient:
+                    e["retried_count"] = failures_before
+                scan_run_update.errors = errors
+                scan_job_update.consecutive_failures = failures_before + 1
+                scan_job_update.next_scan_after = completed + timedelta(
+                    seconds=scan_backoff_seconds(
+                        scan_job_update.consecutive_failures, diary.scan_interval_minutes
+                    )
+                )
+            else:
+                if not calendar_errors:
+                    scan_job_update.consecutive_failures = 0
+                scan_job_update.next_scan_after = completed + timedelta(
+                    minutes=diary.scan_interval_minutes
+                )
 
     except Exception as e:
         log.error("scan_diary_error", diary_id=diary_id_str, error=str(e))
@@ -667,7 +689,10 @@ def refresh_entry_location(self, entry_id: str, refetch_weather: bool = False) -
     Queued when photos are added or removed, and when a person changes the
     entry's place, time zone or dates (*refetch_weather*).
     """
-    run_sync(_refresh_entry_location(entry_id, refetch_weather=refetch_weather))
+    try:
+        run_sync(_refresh_entry_location(entry_id, refetch_weather=refetch_weather))
+    except Exception as exc:
+        raise self.retry(exc=exc)
 
 
 async def _refresh_entry_location(entry_id_str: str, *, refetch_weather: bool = False) -> None:
@@ -683,7 +708,10 @@ async def _refresh_entry_location(entry_id_str: str, *, refetch_weather: bool = 
 @celery_app.task(name="app.workers.tasks.refresh_diary_locations", bind=True, max_retries=3)
 def refresh_diary_locations(self, diary_id: str) -> None:
     """The diary's home place changed: refresh entries that have no place of their own."""
-    run_sync(_refresh_diary_locations(diary_id))
+    try:
+        run_sync(_refresh_diary_locations(diary_id))
+    except Exception as exc:
+        raise self.retry(exc=exc)
 
 
 async def _refresh_diary_locations(diary_id_str: str) -> None:
