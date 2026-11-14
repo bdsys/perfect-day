@@ -132,6 +132,16 @@ async def _get_diary_or_404(
     return diary, perm.role
 
 
+def _diary_out(diary: Diary, *, is_owner: bool) -> DiaryOut:
+    """Serialize a diary. Home coordinates go to the owner only (TR-20), like
+    photo and entry coordinates (S-12); co-parents get the place name."""
+    out = DiaryOut.model_validate(diary)
+    if not is_owner:
+        out.lat = None
+        out.lon = None
+    return out
+
+
 # Columns a PATCH may set to NULL. An explicit null for any other field is
 # ignored, because those columns are NOT NULL.
 _CLEARABLE_DIARY_FIELDS = frozenset(
@@ -158,7 +168,7 @@ def _diary_updates(body: DiaryPatch) -> dict:
 async def list_diaries(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db, scope="function"),
-) -> list[Diary]:
+) -> list[DiaryOut]:
     owned = await db.execute(
         select(Diary).where(Diary.owner_user_id == user.id, Diary.deleted_at.is_(None))
     )
@@ -169,7 +179,10 @@ async def list_diaries(
     shared = await db.execute(
         select(Diary).where(Diary.id.in_(shared_diary_ids), Diary.deleted_at.is_(None))
     )
-    return list(owned.scalars()) + list(shared.scalars())
+    return [
+        _diary_out(d, is_owner=d.owner_user_id == user.id)
+        for d in [*owned.scalars(), *shared.scalars()]
+    ]
 
 
 @router.post("", response_model=DiaryOut, status_code=status.HTTP_201_CREATED)
@@ -177,7 +190,7 @@ async def create_diary(
     body: DiaryCreate,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db, scope="function"),
-) -> Diary:
+) -> DiaryOut:
     limit = TIER_DIARY_LIMITS.get(user.subscription_tier, 1)
 
     # Advisory lock to prevent check-then-create race. The key is derived in
@@ -234,14 +247,14 @@ async def create_diary(
     # Commit before returning so the row is visible to concurrent requests that
     # receive this response and immediately issue follow-up calls (e.g. DELETE).
     await db.commit()
-    return diary
+    return _diary_out(diary, is_owner=True)
 
 
 @router.get("/trash", response_model=list[DiaryOut])
 async def list_deleted_diaries(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db, scope="function"),
-) -> list[Diary]:
+) -> list[DiaryOut]:
     result = await db.execute(
         select(Diary)
         .where(
@@ -251,7 +264,7 @@ async def list_deleted_diaries(
         )
         .order_by(Diary.hard_delete_after.asc())
     )
-    return list(result.scalars())
+    return [_diary_out(d, is_owner=True) for d in result.scalars()]
 
 
 @router.get("/{diary_id}", response_model=DiaryOut)
@@ -259,9 +272,9 @@ async def get_diary(
     diary_id: uuid.UUID,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db, scope="function"),
-) -> Diary:
-    diary, _ = await _get_diary_or_404(diary_id, user, db)
-    return diary
+) -> DiaryOut:
+    diary, role = await _get_diary_or_404(diary_id, user, db)
+    return _diary_out(diary, is_owner=role is None)
 
 
 @router.patch("/{diary_id}", response_model=DiaryOut)
@@ -270,7 +283,7 @@ async def patch_diary(
     body: DiaryPatch,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db, scope="function"),
-) -> Diary:
+) -> DiaryOut:
     diary, _ = await _get_diary_or_404(diary_id, user, db, require_owner=True)
 
     home_before = tuple(getattr(diary, f) for f in _HOME_PLACE_FIELDS)
@@ -298,7 +311,7 @@ async def patch_diary(
             logging.getLogger(__name__).exception(
                 "refresh_diary_locations_queue_failed diary=%s", diary.id
             )
-    return diary
+    return _diary_out(diary, is_owner=True)
 
 
 @router.delete("/{diary_id}", response_model=DiaryOut)
@@ -306,7 +319,7 @@ async def delete_diary(
     diary_id: uuid.UUID,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db, scope="function"),
-) -> Diary:
+) -> DiaryOut:
     diary, _ = await _get_diary_or_404(diary_id, user, db, require_owner=True)
     now = datetime.now(tz=UTC)
     diary.deleted_at = now
@@ -315,7 +328,7 @@ async def delete_diary(
     db.add(
         AuditLog(user_id=user.id, action="diary.delete", target_type="diary", target_id=diary.id)
     )
-    return diary
+    return _diary_out(diary, is_owner=True)
 
 
 @router.post("/{diary_id}/restore", response_model=DiaryOut)
@@ -323,7 +336,7 @@ async def restore_diary(
     diary_id: uuid.UUID,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db, scope="function"),
-) -> Diary:
+) -> DiaryOut:
     # Fetch even soft-deleted diaries for restore
     result = await db.execute(
         select(Diary).where(Diary.id == diary_id, Diary.owner_user_id == user.id)
@@ -382,5 +395,5 @@ async def restore_diary(
     diary.deleted_at = None
     diary.hard_delete_after = None
     diary.scan_enabled = True
-    return diary
+    return _diary_out(diary, is_owner=True)
 
