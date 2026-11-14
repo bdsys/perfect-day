@@ -12,10 +12,13 @@ Covers: macOS and Linux (x86_64 and ARM). Requires Docker.
 |---|---|---|
 | Docker + Docker Compose | 24+ | https://docs.docker.com/get-docker/ |
 | Python | 3.12+ | `brew install python@3.12` or `apt install python3.12` |
+| uv | any | https://docs.astral.sh/uv/getting-started/installation/ |
 | Node.js | 20+ | `brew install node` or `nvm install 20` |
 | pnpm | 9+ | `npm install -g pnpm` |
 | jq | any | `brew install jq` or `apt install jq` |
 | mc (MinIO client) | any | Optional. Used by `seed-minio-bucket.sh`. Falls back to Docker if absent. |
+
+The API venv (`apps/api/.venv`) is Python 3.12 installed from `requirements-dev.lock`, the same as CI and the production image.
 
 Verify:
 ```bash
