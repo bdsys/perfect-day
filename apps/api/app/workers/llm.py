@@ -326,7 +326,7 @@ def _unsupported_words(output: dict, source_text: str, known_words: str = "") ->
     """Capitalised words in the reply's body and title that no source supports.
 
     A word is supported when its lowercase form is in the lowercased source text
-    plus *known_words* (such as the child's name), or it is a weekday or month.
+    plus *known_words* (such as the child's name), matched as a whole word, or it is a weekday or month.
     A common sentence opener ("After", "Then") is not flagged at a sentence start.
     """
     body = output.get("body_markdown") or ""
@@ -336,7 +336,9 @@ def _unsupported_words(output: dict, source_text: str, known_words: str = "") ->
     for text in (body, title):
         for m in re.finditer(r"\b[A-Z][a-z]{2,}\b", text):
             t = m.group(0)
-            if t.lower() in haystack or t in _CALENDAR_WORDS:
+            if t in _CALENDAR_WORDS or re.search(
+                rf"(?<!\w){re.escape(t.lower())}(?!\w)", haystack
+            ):
                 continue
             before = text[: m.start()].rstrip(" \t")
             at_start = not before or before[-1] in ".!?\n" or text[: m.start()].endswith("\n")
