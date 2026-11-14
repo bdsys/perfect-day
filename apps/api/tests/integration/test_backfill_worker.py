@@ -1,17 +1,17 @@
-"""Integration tests for backfill worker: chunking, lock, cancellation."""
+"""Integration tests for backfill worker: chunking, lock, cancellation, counts."""
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.models import BackfillRun, Enrichment
-from app.workers.backfill import run_backfill
+from app.models import AutoCreationRule, BackfillRun, Entry, OAuthToken
+from app.workers.backfill import BackfillLocked, _iter_week_chunks, run_backfill
 
-pytestmark = pytest.mark.asyncio
+# asyncio_mode = "auto" runs the async tests; the sync ones stay plain.
 
 
 @pytest.fixture(autouse=True)
@@ -45,7 +45,7 @@ async def _make_run(db_session, diary_id, from_d, to_d):
 
 
 async def test_run_backfill_fetches_each_weekly_chunk(client, db_session):
-    """15-day range (05-01 to 05-15) -> 2 weekly chunks."""
+    """15-day range (05-01 to 05-15) -> 3 weekly chunks."""
     from tests.fixtures.factories import make_diary, make_user
     user = await make_user(db_session)
     diary = await make_diary(db_session, owner=user)
@@ -64,7 +64,7 @@ async def test_run_backfill_fetches_each_weekly_chunk(client, db_session):
             diary_timezone="UTC",
         )
 
-    assert fetch_mock.await_count == 2  # 2 chunks for 15-day range
+    assert fetch_mock.await_count == 3  # 7 + 7 + 1 days for a 15-day range
     # Verify chunk time ranges are ordered (start times increase)
     call_args = [c.args for c in fetch_mock.await_args_list]
     starts = [args[2] for args in call_args]  # time_min is 3rd positional arg
@@ -97,35 +97,6 @@ async def test_run_backfill_acquires_and_releases_lock(client, db_session):
 
     # Lock must be released in finally
     assert not await r.exists(lock_key)
-
-
-async def test_run_backfill_skips_when_lock_held(client, db_session):
-    from app.core.dependencies import get_redis
-    from tests.fixtures.factories import make_diary, make_user
-
-    user = await make_user(db_session)
-    diary = await make_diary(db_session, owner=user)
-    run = await _make_run(db_session, diary.id, date(2026, 5, 1), date(2026, 5, 8))
-
-    r = get_redis()
-    lock_key = f"scan_lock:{diary.id}"
-    await r.set(lock_key, "1", ex=300)
-
-    fetch_mock = AsyncMock(return_value=[])
-    try:
-        result = await run_backfill(
-            backfill_run_id=run.id,
-            diary_id=diary.id,
-            from_date=run.from_date,
-            to_date=run.to_date,
-            access_token="tok",  # noqa: S106
-            diary_timezone="UTC",
-        )
-    finally:
-        await r.delete(lock_key)
-
-    assert fetch_mock.await_count == 0
-    assert result == (0, 0)
 
 
 async def test_run_backfill_breaks_on_cancellation(client, db_session):
@@ -194,49 +165,205 @@ async def test_post_then_delete_then_worker_exits_cleanly(client, db_session):
     assert fetch_mock.await_count == 0
 
 
-async def test_backfill_writes_weather_per_entry(
-    client, db_session, make_user, make_diary_for_user
-):
-    """After each chunk, run_backfill should call enrich_entry_weather for each
-    created entry, resulting in Enrichment rows with kind='weather'."""
-    from tests.fixtures.factories import make_entry
+# ---------------------------------------------------------------------------
+# C-11 / TR-1 — counts tell the truth, chunks don't overlap, a held lock waits
+# ---------------------------------------------------------------------------
 
-    # 1. Create a user and a diary with known lat/lon (Pittsburgh, PA).
-    user = await make_user()
-    diary = await make_diary_for_user(user, lat=40.4406, lon=-79.9959)
+SOCCER_RULE = {
+    "op": "AND",
+    "children": [
+        {"field": "title", "op": "contains", "value": "Soccer", "case_sensitive": False}
+    ],
+}
+PER_SERIES = {"recurring": "per_series", "multi_day": "per_day"}
+LOCKED_MESSAGE = "Another scan was still running. Try the backfill again in a few minutes."
 
-    # 2. Create a real Entry in the DB so enrich_entry_weather can load it.
-    entry = await make_entry(db_session, diary, entry_date=date(2026, 5, 5))
 
-    # 3. Create a BackfillRun (single-day range -> 1 chunk).
-    run = await _make_run(db_session, diary.id, date(2026, 5, 5), date(2026, 5, 5))
+def _event(external_id: str, day: int, summary: str, **extra) -> dict:
+    return {
+        "id": external_id,
+        "summary": summary,
+        "status": "confirmed",
+        "start": {"dateTime": f"2026-05-{day:02d}T16:00:00Z"},
+        "end": {"dateTime": f"2026-05-{day:02d}T17:00:00Z"},
+        **extra,
+    }
 
-    # 4. Fake calendar event (one non-cancelled event).
-    fake_events = [
-        {
-            "id": "ev1",
-            "summary": "Morning walk",
-            "status": "confirmed",
-            "start": {"dateTime": "2026-05-05T08:00:00Z"},
-            "end": {"dateTime": "2026-05-05T09:00:00Z"},
-        },
+
+# Two practices from one weekly series, plus something no rule matches.
+SERIES_AND_ONE_OTHER = [
+    _event("soccer-1", 4, "Soccer practice", recurringEventId="soccer-series"),
+    _event("soccer-2", 6, "Soccer practice", recurringEventId="soccer-series"),
+    _event("dentist", 5, "Dentist"),
+]
+
+
+async def _diary_with_series_rule(db_session):
+    from tests.fixtures.factories import make_diary, make_user
+
+    user = await make_user(db_session)
+    diary = await make_diary(db_session, owner=user, timezone="UTC")
+    db_session.add(
+        AutoCreationRule(
+            diary_id=diary.id, name="Soccer", enabled=True, condition=SOCCER_RULE,
+            options=PER_SERIES,
+        )
+    )
+    db_session.add(
+        OAuthToken(
+            user_id=user.id,
+            provider="google",
+            access_token_ciphertext=b"not-a-real-ciphertext",
+            scopes_granted=["https://www.googleapis.com/auth/calendar.readonly"],
+        )
+    )
+    await db_session.commit()
+    return diary
+
+
+async def _pending_run(db_session, diary_id, from_d=date(2026, 5, 4), to_d=date(2026, 5, 6)):
+    run = BackfillRun(
+        diary_id=diary_id,
+        from_date=from_d,
+        to_date=to_d,
+        sources=["google_calendar"],
+        status="pending",
+    )
+    db_session.add(run)
+    await db_session.commit()
+    return run
+
+
+async def _reload(db_session, run_id) -> BackfillRun:
+    return (
+        await db_session.execute(
+            select(BackfillRun)
+            .where(BackfillRun.id == run_id)
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one()
+
+
+def test_chunks_do_not_overlap():
+    chunks = list(_iter_week_chunks(date(2026, 1, 1), date(2026, 1, 15)))
+    assert chunks == [
+        (date(2026, 1, 1), date(2026, 1, 7)),
+        (date(2026, 1, 8), date(2026, 1, 14)),
+        (date(2026, 1, 15), date(2026, 1, 15)),
     ]
 
-    # 5. ingest_calendar_event.delay returns the entry ID (str), mimicking
-    #    the task returning an entry UUID when it creates/updates an entry.
-    task_mock = MagicMock()
-    task_mock.delay.return_value = str(entry.id)
 
-    # 6. open_meteo.fetch_daily returns a minimal weather payload.
-    fake_weather = {"temperature_2m_max": 22.0, "temperature_2m_min": 14.0}
+async def test_backfill_counts_events_and_entries(client, db_session):
+    from app.workers.tasks import _backfill_diary
+
+    diary = await _diary_with_series_rule(db_session)
+    run = await _pending_run(db_session, diary.id)
 
     with (
-        patch("app.workers.backfill._fetch_events_range", AsyncMock(return_value=fake_events)),
-        patch("app.workers.tasks.ingest_calendar_event", task_mock),
-        patch("app.workers.open_meteo.fetch_daily", AsyncMock(return_value=fake_weather)),
+        patch("app.workers.token_refresh.ensure_fresh_access_token", AsyncMock(return_value="tok")),
+        patch(
+            "app.workers.backfill._fetch_events_range",
+            AsyncMock(return_value=SERIES_AND_ONE_OTHER),
+        ),
+        patch("app.workers.tasks.ingest_calendar_event") as ingest_task,
+        patch("app.workers.tasks.evaluate_rules_for_event") as evaluate_task,
+        patch("app.workers.tasks.generate_entry_draft"),
         patch("asyncio.sleep", new=AsyncMock()),
     ):
-        await run_backfill(
+        await _backfill_diary(str(run.id))
+
+    run = await _reload(db_session, run.id)
+    assert run.status == "completed"
+    assert run.events_ingested == 3
+    assert run.entries_created == 1
+    ingest_task.delay.assert_not_called()  # ingestion is awaited in process
+    evaluate_task.delay.assert_not_called()  # so is rule evaluation
+    entries = (await db_session.execute(select(Entry).where(Entry.diary_id == diary.id))).all()
+    assert len(entries) == 1
+
+
+async def test_backfill_waits_when_scan_lock_held(client, db_session):
+    from app.core.dependencies import get_redis
+    from app.workers.tasks import _backfill_diary, _fail_locked_backfill
+
+    diary = await _diary_with_series_rule(db_session)
+    run = await _pending_run(db_session, diary.id)
+    r = get_redis()
+    lock_key = f"scan_lock:{diary.id}"
+    await r.set(lock_key, "1", ex=300)
+
+    fetch = AsyncMock(return_value=SERIES_AND_ONE_OTHER)
+    with (
+        patch("app.workers.token_refresh.ensure_fresh_access_token", AsyncMock(return_value="tok")),
+        patch("app.workers.backfill._fetch_events_range", fetch),
+        patch("app.workers.tasks.generate_entry_draft"),
+        patch("asyncio.sleep", new=AsyncMock()),
+    ):
+        try:
+            with pytest.raises(BackfillLocked):
+                await _backfill_diary(str(run.id))
+        finally:
+            await r.delete(lock_key)
+
+        locked_out = await _reload(db_session, run.id)
+        assert locked_out.status == "pending", "a locked-out run is waiting, not completed"
+        assert locked_out.started_at is None
+        assert fetch.await_count == 0
+
+        # The retried delivery finds the run pending, so the not-pending guard lets it through.
+        await _backfill_diary(str(run.id))
+
+    finished = await _reload(db_session, run.id)
+    assert finished.status == "completed"
+    assert finished.events_ingested == 3
+
+    # When the retries run out the run is failed with a message the person can act on.
+    gave_up = await _pending_run(db_session, diary.id)
+    await _fail_locked_backfill(str(gave_up.id))
+    gave_up = await _reload(db_session, gave_up.id)
+    assert gave_up.status == "failed"
+    assert gave_up.error == LOCKED_MESSAGE
+    assert gave_up.completed_at is not None
+
+
+def test_backfill_task_requeues_on_lock_then_fails_after_5_tries():
+    """The Celery wrapper re-queues itself every 60 s; after 5 retries it gives up."""
+    from app.workers.tasks import backfill_diary
+
+    run_id = "00000000-0000-0000-0000-000000000000"
+    locked = AsyncMock(side_effect=BackfillLocked())
+    give_up = AsyncMock()
+    with (
+        patch("app.workers.tasks._backfill_diary", locked),
+        patch("app.workers.tasks._fail_locked_backfill", give_up),
+        patch.object(backfill_diary, "retry", wraps=backfill_diary.retry) as retry,
+    ):
+        # apply() runs eagerly and re-runs each retry in place, ignoring the countdown.
+        backfill_diary.apply(args=[run_id])
+
+    assert locked.await_count == 6  # the first try and 5 retries
+    assert retry.call_count == 6  # the 6th call finds the retries used up
+    for call in retry.call_args_list:
+        assert call.kwargs == {"countdown": 60, "max_retries": 5}
+    give_up.assert_awaited_once_with(run_id)
+    assert backfill_diary.max_retries == 5
+
+
+async def test_backfill_has_no_weather_step(client, db_session):
+    diary = await _diary_with_series_rule(db_session)
+    run = await _make_run(db_session, diary.id, date(2026, 5, 4), date(2026, 5, 6))
+
+    weather = AsyncMock()
+    with (
+        patch(
+            "app.workers.backfill._fetch_events_range",
+            AsyncMock(return_value=SERIES_AND_ONE_OTHER),
+        ),
+        patch("app.workers.enrichments.enrich_entry_weather", weather),
+        patch("app.workers.tasks.generate_entry_draft"),
+        patch("asyncio.sleep", new=AsyncMock()),
+    ):
+        events, entries = await run_backfill(
             backfill_run_id=run.id,
             diary_id=diary.id,
             from_date=run.from_date,
@@ -245,15 +372,5 @@ async def test_backfill_writes_weather_per_entry(
             diary_timezone="UTC",
         )
 
-    # 7. Assert Enrichment rows were written.
-    result = await db_session.execute(
-        select(Enrichment).where(
-            Enrichment.entry_id == entry.id,
-            Enrichment.kind == "weather",
-            Enrichment.source == "open_meteo",
-        )
-    )
-    rows = result.scalars().all()
-    assert len(rows) >= 1, (
-        f"Expected at least 1 Enrichment row for entry {entry.id}, found {len(rows)}"
-    )
+    assert (events, entries) == (3, 1)
+    weather.assert_not_awaited()  # weather comes with the draft (generate_entry_draft)

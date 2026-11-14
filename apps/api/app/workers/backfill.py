@@ -13,23 +13,23 @@ from app.workers.utils import db_session
 log = structlog.get_logger()
 
 
+class BackfillLocked(Exception):
+    """Another scan or backfill holds this diary's scan lock; try again later."""
+
+
 def _iter_week_chunks(
     from_date: date, to_date: date
 ) -> Iterator[tuple[date, date]]:
     """Yield (chunk_start, chunk_end_inclusive) windows of up to 7 days.
-    Final chunk may be shorter; if from_date == to_date, yields one (d, d).
-    """
-    if from_date == to_date:
-        yield (from_date, to_date)
-        return
 
+    Each chunk starts the day after the previous one ends, so no day is fetched
+    twice. The final chunk may be shorter; if from_date == to_date, yields (d, d).
+    """
     cur = from_date
     while cur <= to_date:
-        nxt = min(cur + timedelta(days=7), to_date)
+        nxt = min(cur + timedelta(days=6), to_date)
         yield (cur, nxt)
-        if nxt == to_date:
-            break
-        cur = nxt
+        cur = nxt + timedelta(days=1)
 
 
 async def run_backfill(
@@ -44,7 +44,11 @@ async def run_backfill(
 
     Acquires scan_lock:{diary_id} (30-min TTL + 5-min heartbeat).
     Re-reads BackfillRun.status at each chunk boundary; breaks if cancelled.
-    Returns (0, 0) immediately if the lock is already held.
+    Each event is ingested in process, then the chunk's ended events have their
+    rules run in process, so the counts are what actually happened.
+
+    Returns (events ingested, distinct entries those events now belong to).
+    Raises BackfillLocked if the lock is already held.
     """
     import asyncio
 
@@ -58,8 +62,8 @@ async def run_backfill(
     lock_key = f"scan_lock:{diary_id}"
     acquired = await r.set(lock_key, "1", nx=True, ex=1800)
     if not acquired:
-        log.info("backfill_skipped_locked", diary_id=str(diary_id))
-        return 0, 0
+        log.info("backfill_locked", diary_id=str(diary_id))
+        raise BackfillLocked(str(diary_id))
 
     heartbeat_task = asyncio.create_task(_tasks._heartbeat(r, lock_key))
     try:
@@ -75,7 +79,7 @@ async def run_backfill(
 
         headers = {"Authorization": f"Bearer {access_token}"}
         total_events = 0
-        entry_ids: set[str] = set()
+        entry_ids: set[uuid.UUID] = set()
 
         for chunk_start, chunk_end in _iter_week_chunks(from_date, to_date):
             async with db_session() as db:
@@ -99,28 +103,22 @@ async def run_backfill(
                 .isoformat()
             )
 
-            chunk_entry_ids: set[str] = set()
             for calendar_id in calendar_ids:
                 events = await _fetch_events_range(calendar_id, headers, time_min, time_max)
-                total_events += len(events)
                 for event in events:
                     if event.get("status") == "cancelled":
                         continue
-                    result = _tasks.ingest_calendar_event.delay(event, str(diary_id), diary_timezone)
-                    if result:
-                        entry_ids.add(str(result))
-                        chunk_entry_ids.add(str(result))
+                    # Rules are run below, for the whole chunk, not queued per event.
+                    event_id = await _tasks._ingest_calendar_event(
+                        event, diary_id, diary_timezone, queue_evaluation=False
+                    )
+                    if event_id is not None:
+                        total_events += 1
 
             # TODO(item-15): call group_events_into_entries for this chunk once it exists.
 
-            # Weather enrichment per entry created/updated this chunk.
-            from app.workers.enrichments import enrich_entry_weather
-            for eid in chunk_entry_ids:
-                try:
-                    async with db_session() as db:
-                        await enrich_entry_weather(uuid.UUID(eid), db)
-                except Exception as exc:
-                    log.warning("backfill_weather_failed", entry_id=eid, error=str(exc))
+            # Weather is not fetched here: generate_entry_draft adds it to each draft.
+            entry_ids |= await _tasks.evaluate_due_events(diary_id)
 
             await asyncio.sleep(2)
 

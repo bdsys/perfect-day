@@ -69,7 +69,9 @@ class TestScanTrigger:
             r = await client.post(f"/v1/diaries/{diary['id']}/scan/run", headers=auth)
 
         assert r.status_code == 202
-        mock_delay.assert_called_once_with(str(diary["id"]), past_days=None, future_days=None)
+        mock_delay.assert_called_once_with(
+            str(diary["id"]), past_days=None, future_days=None, triggered_by="manual"
+        )
 
     async def test_trigger_with_window_body_passes_kwargs(self, client):
         """POST with past_days/future_days → 202; delay called with those kwargs."""
@@ -85,7 +87,9 @@ class TestScanTrigger:
             )
 
         assert r.status_code == 202
-        mock_delay.assert_called_once_with(str(diary["id"]), past_days=30, future_days=30)
+        mock_delay.assert_called_once_with(
+            str(diary["id"]), past_days=30, future_days=30, triggered_by="manual"
+        )
 
     async def test_trigger_invalid_past_days_returns_422(self, client):
         """POST with past_days=0 (below ge=1) → 422 validation error."""
