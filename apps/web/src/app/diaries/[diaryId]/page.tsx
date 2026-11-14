@@ -597,6 +597,12 @@ export default function DiaryDetailPage() {
                 ? `${latestBackfillRun.events_ingested} events · ${latestBackfillRun.entries_created} new entries`
                 : latestBackfillRun.error ?? undefined
             }
+            // A completed run can still carry a note, e.g. events it couldn't save.
+            note={
+              latestBackfillRun.status === 'completed' && latestBackfillRun.error
+                ? latestBackfillRun.error
+                : undefined
+            }
             startedAt={latestBackfillRun.started_at ?? undefined}
             onDismiss={() => setLatestBackfillRun(null)}
           />
