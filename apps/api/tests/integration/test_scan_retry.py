@@ -12,7 +12,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import ScanJob, ScanRun
+from app.models import OAuthToken, ScanJob, ScanRun
 from tests.integration.test_calendar_connection import _diary_with_google
 
 
@@ -93,10 +93,26 @@ class TestScanBackoff:
     async def test_disconnected_calendar_does_not_count(
         self, client: AsyncClient, db_session: AsyncSession
     ):
-        diary = await _diary_with_google(db_session, revoked_at=datetime.now(tz=UTC))
-        await _scan_again(diary)
+        """A disconnected scan neither adds to nor clears the transient-failure count."""
+        from app.workers.utils import db_session as worker_db
+
+        diary = await _diary_with_google(db_session)
+        await _scan_again(diary, sync=_boom())
+        await _scan_again(diary, sync=_boom())
+        assert (await _job(diary)).consecutive_failures == 2
+
+        async with worker_db() as db:
+            token = (
+                await db.execute(
+                    select(OAuthToken).where(OAuthToken.user_id == diary.owner_user_id)
+                )
+            ).scalar_one()
+            token.revoked_at = datetime.now(tz=UTC)
+
+        run = await _scan_again(diary)
+        assert [e["error_class"] for e in run.errors] == ["calendar_disconnected"]
         job = await _job(diary)
-        assert job.consecutive_failures == 0
+        assert job.consecutive_failures == 2
         assert _delay(job) == timedelta(minutes=diary.scan_interval_minutes)
 
     async def test_success_resets_failures(self, client: AsyncClient, db_session: AsyncSession):
