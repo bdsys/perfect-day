@@ -11,6 +11,7 @@ access to the photo for an hour) or photo bytes.
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime
@@ -26,6 +27,12 @@ API_TIMEOUT = httpx.Timeout(20.0)
 DOWNLOAD_TIMEOUT = httpx.Timeout(60.0, connect=10.0)
 DEFAULT_POLL_S = 5.0  # when Google's session omits pollingConfig.pollInterval
 
+logger = logging.getLogger(__name__)
+
+# ErrorInfo.reason values that mean "this app's Google Cloud project is not set up".
+_SETUP_REASONS = frozenset({"SERVICE_DISABLED", "API_DISABLED", "ACCESS_NOT_CONFIGURED"})
+_SETUP_PHRASES = ("has not been used", "is disabled")
+
 _DURATION = re.compile(r"^(\d+(?:\.\d+)?)s$")
 
 
@@ -35,6 +42,13 @@ class GoogleError(Exception):
 
 class GoogleAuthError(GoogleError):
     """401/403: the grant is gone or doesn't cover the picker. The parent must reconnect."""
+
+
+class GoogleSetupError(GoogleError):
+    """403 because the Photos Picker API is not enabled in this app's Google Cloud project.
+
+    The parent can't fix this by reconnecting; the app's owner must enable the API.
+    """
 
 
 class GoogleUnavailable(GoogleError):
@@ -112,11 +126,43 @@ def _item(data: dict) -> PickedItem:
     )
 
 
+def _refusal(resp: httpx.Response) -> tuple[str | None, str | None, bool]:
+    """(error.status, ErrorInfo reason, message says the API is off) from Google's error body.
+
+    Defensive: a non-JSON, unread (streamed) or oddly shaped body means no reason.
+    The message text is inspected but never returned or logged.
+    """
+    try:
+        body = resp.json()
+    except (ValueError, httpx.ResponseNotRead):
+        return None, None, False
+    error = body.get("error") if isinstance(body, dict) else None
+    if not isinstance(error, dict):
+        return None, None, False
+    reason: str | None = None
+    details = error.get("details")
+    if isinstance(details, list):
+        for d in details:
+            if isinstance(d, dict) and isinstance(d.get("reason"), str):
+                reason = d["reason"]
+                break
+    message = error.get("message")
+    off = isinstance(message, str) and any(p in message.lower() for p in _SETUP_PHRASES)
+    status = error.get("status")
+    return (status if isinstance(status, str) else None), reason, off
+
+
 def _check(resp: httpx.Response) -> None:
+    """Raise for a non-2xx. A streamed response must be aread() first to be classified."""
     code = resp.status_code
     if 200 <= code < 300:
         return
     if code in (401, 403):
+        status, reason, off = _refusal(resp)
+        # Only code, status and reason: never the URL, a token or Google's message.
+        logger.warning("google_photos_refused code=%s status=%s reason=%s", code, status, reason)
+        if code == 403 and (reason in _SETUP_REASONS or (reason is None and off)):
+            raise GoogleSetupError(f"google photos {code}")
         raise GoogleAuthError(f"google photos {code}")
     if code == 429 or code >= 500:
         raise GoogleUnavailable(f"google photos {code}")
@@ -193,6 +239,8 @@ class GooglePhotosClient:
         try:
             async with self._client(DOWNLOAD_TIMEOUT, follow_redirects=True) as client:
                 async with client.stream("GET", f"{item.base_url}=d") as resp:
+                    if resp.status_code in (401, 403):
+                        await resp.aread()  # small error body, so _check can classify it
                     _check(resp)
                     declared = resp.headers.get("content-length")
                     if declared and declared.isdigit() and int(declared) > MAX_BYTES:

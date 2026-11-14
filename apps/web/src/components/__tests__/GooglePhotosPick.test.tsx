@@ -33,6 +33,20 @@ describe('GooglePhotosPick', () => {
     expect(await screen.findByRole('button', { name: 'Search Google Photos for 16 May 2026' })).toBeInTheDocument()
   })
 
+  it('a Google setup problem is not reported as not connected', async () => {
+    list.mockResolvedValue(connected)
+    create.mockRejectedValue(new ApiError(503, 'google_photos_not_enabled', 'google_photos_not_enabled'))
+    const tab = { location: { href: '' }, close: jest.fn() }
+    jest.spyOn(window, 'open').mockReturnValue(tab as unknown as Window)
+    render(<GooglePhotosPick entry={entry} inFlight={false} onStarted={jest.fn()} />)
+    fireEvent.click(await screen.findByRole('button', { name: /Search Google Photos/ }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      "Google Photos isn't set up for this app yet. The app's owner needs to turn on the Photos Picker API in Google Cloud.",
+    )
+    expect(screen.queryByRole('button', { name: /Connect Google Photos/ })).not.toBeInTheDocument()
+    expect(tab.close).toHaveBeenCalled()
+  })
+
   it('not connected starts Google connect with the entry as return path', async () => {
     list.mockResolvedValue([{ ...connected[0], photos: false }])
     authUrl.mockResolvedValue({ url: 'https://accounts.google.com/x' })

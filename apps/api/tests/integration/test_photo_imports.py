@@ -19,6 +19,7 @@ from app.core.security import encrypt_oauth_token
 from app.models import DiaryPermission, EntryPhoto, OAuthToken, Photo, PhotoImport, User
 from app.services.google_photos import (
     GoogleAuthError,
+    GoogleSetupError,
     GoogleUnavailable,
     PickedItem,
     PickerSession,
@@ -62,6 +63,7 @@ class FakeGoogle:
         self.bytes = {item.id: data for item, data in picks}
         self.polls_until_set = polls_until_set
         self.get_error: Exception | None = None
+        self.create_error: Exception | None = None
         self.get_errors: list[Exception] = []  # raised once each, before get_error
         self.list_errors: list[Exception] = []  # raised once each
         self.sessions: list[str] = []
@@ -82,6 +84,8 @@ class _FakeClient:
 
     async def create_session(self, max_items: int = 50) -> PickerSession:
         assert max_items == 50
+        if self.g.create_error is not None:
+            raise self.g.create_error
         sid = f"sess-{len(self.g.sessions) + 1}"
         self.g.sessions.append(sid)
         return PickerSession(
@@ -331,6 +335,34 @@ async def test_not_connected_returns_409(client, db_session, scopes):
     assert r.json()["error"]["message"] == "photos_not_connected"
     assert fake.sessions == []
     queued.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_create_import_when_picker_api_disabled_is_503_not_409(client, db_session):
+    auth, entry = await _owner_with_entry(client, db_session, "pi-not-enabled")
+    fake = FakeGoogle()
+    fake.create_error = GoogleSetupError("google photos 403")
+
+    with _google(fake), patch("app.workers.tasks.process_photo_import.apply_async") as queued:
+        r = await client.post(f"/v1/entries/{entry['id']}/photo-imports", headers=auth)
+
+    assert r.status_code == 503, r.text
+    assert r.json()["error"]["message"] == "google_photos_not_enabled"
+    queued.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_setup_error_in_worker_fails_the_import_not_needs_reconnect(client, db_session):
+    auth, entry = await _owner_with_entry(client, db_session, "pi-setup-worker")
+    fake = FakeGoogle([_photo(1, read_fixture("sample.jpg"))])
+    imp = await _start(client, auth, entry["id"], fake)
+    fake.get_error = GoogleSetupError("google photos 403")
+
+    countdowns, _ = await _run_worker(imp["id"], fake)
+
+    assert countdowns == []
+    row = await _import_row(db_session, imp["id"])
+    assert row.status == "failed"
 
 
 @pytest.mark.asyncio

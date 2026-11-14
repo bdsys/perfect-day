@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import UTC, datetime
 
 import httpx
@@ -13,6 +14,7 @@ from app.services.google_photos import (
     GoogleAuthError,
     GoogleError,
     GooglePhotosClient,
+    GoogleSetupError,
     GoogleUnavailable,
     PhotoTooLarge,
     PickedItem,
@@ -237,3 +239,91 @@ async def test_bare_redirect_from_an_api_call_is_an_error(status):
 
     with pytest.raises(GoogleError):
         await _client(handler).get_session("sess-1")
+
+
+def _info(reason: str, message: str = "Some message.") -> dict:
+    return {
+        "error": {
+            "code": 403,
+            "status": "PERMISSION_DENIED",
+            "message": message,
+            "details": [
+                {"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": reason}
+            ],
+        }
+    }
+
+
+async def test_service_disabled_403_is_setup_error():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, json=_info("SERVICE_DISABLED"))
+
+    with pytest.raises(GoogleSetupError):
+        await _client(handler).create_session()
+
+
+async def test_disabled_message_without_reason_is_setup_error():
+    def handler(request: httpx.Request) -> httpx.Response:
+        message = "Photos Picker API has not been used in project 1"
+        body = {"error": {"code": 403, "message": message}}
+        return httpx.Response(403, json=body)
+
+    with pytest.raises(GoogleSetupError):
+        await _client(handler).create_session()
+
+
+async def test_scope_403_is_auth_error():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, json=_info("ACCESS_TOKEN_SCOPE_INSUFFICIENT"))
+
+    with pytest.raises(GoogleAuthError) as exc:
+        await _client(handler).create_session()
+    assert not isinstance(exc.value, GoogleSetupError)
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        httpx.Response(401, json=_info("SERVICE_DISABLED")),
+        httpx.Response(403, text="<html>nope</html>"),
+        httpx.Response(403, json=["not", "an", "object"]),
+        httpx.Response(403, json={"error": "a string"}),
+        httpx.Response(403, json={"error": {"details": "x"}}),
+    ],
+)
+async def test_other_401_403_stay_auth_errors(response):
+    with pytest.raises(GoogleAuthError) as exc:
+        await _client(lambda request: response).create_session()
+    assert not isinstance(exc.value, GoogleSetupError)
+
+
+async def test_setup_error_is_detected_on_the_streamed_download_path():
+    item = PickedItem("i1", "PHOTO", None, "https://lh3.googleusercontent.com/b", None, None)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, json=_info("API_DISABLED"))
+
+    with pytest.raises(GoogleSetupError):
+        await _client(handler).download(item)
+
+
+async def test_refusal_logs_reason_only(caplog):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            403, json=_info("SERVICE_DISABLED", "enable at https://console.cloud.google.com/x")
+        )
+
+    # Alembic's fileConfig (run by the integration fixtures) disables existing loggers.
+    logging.getLogger("app.services.google_photos").disabled = False
+    with caplog.at_level("INFO", logger="app.services.google_photos"):
+        with pytest.raises(GoogleSetupError):
+            await _client(handler).create_session()
+
+    records = [r for r in caplog.records if "google_photos_refused" in r.getMessage()]
+    assert len(records) == 1
+    text = records[0].getMessage()
+    assert "reason=SERVICE_DISABLED" in text
+    assert "code=403" in text
+    assert "https://" not in caplog.text
+    assert "ya29" not in caplog.text
+    assert "enable at" not in caplog.text

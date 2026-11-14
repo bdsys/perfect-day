@@ -88,6 +88,10 @@ export function GooglePhotosPick({ entry, inFlight, onStarted }: Props) {
         if (e instanceof ApiError && e.status === 409) {
           setOfferConnect(true);
           setError("Google Photos isn't connected yet.");
+        } else if (e instanceof ApiError && e.status === 503 && e.code === 'google_photos_not_enabled') {
+          setError(
+            "Google Photos isn't set up for this app yet. The app's owner needs to turn on the Photos Picker API in Google Cloud.",
+          )
         } else if (e instanceof ApiError && e.status === 503) {
           setError("Google Photos isn't responding. Try again in a minute.");
         } else {

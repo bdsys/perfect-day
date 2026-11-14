@@ -24,7 +24,12 @@ from app.core.auth import get_current_user
 from app.core.database import get_db
 from app.models import PhotoImport, User
 from app.services import google_photos
-from app.services.google_photos import GoogleAuthError, GoogleError, GoogleUnavailable
+from app.services.google_photos import (
+    GoogleAuthError,
+    GoogleError,
+    GoogleSetupError,
+    GoogleUnavailable,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["photo-imports"])
@@ -105,6 +110,9 @@ async def create_photo_import(
         session = await client.create_session(max_items=MAX_PICK)
     except GoogleAuthError:
         raise HTTPException(status_code=409, detail="photos_not_connected") from None
+    except GoogleSetupError:
+        # The app's Google Cloud project, not this parent's connection.
+        raise HTTPException(status_code=503, detail="google_photos_not_enabled") from None
     except GoogleUnavailable:
         raise HTTPException(status_code=503, detail="google_unavailable") from None
     except GoogleError:
