@@ -367,6 +367,9 @@ def _unsupported_words(output: dict, source_text: str, known_words: str = "") ->
     return flagged
 
 
+_EVENT_WRAPPER = re.compile(r'<event index="\d+">|</event>')
+
+
 def validate_citation(
     output: dict, events: list, mode: str = "events", body_seed: str = "",
     enrichments: list | None = None, known_words: str = "",
@@ -393,8 +396,13 @@ def validate_citation(
         if not isinstance(idx, int) or idx < 1 or idx > max_idx:
             return False, f"facts_used contains invalid event index: {idx}", []
 
+    # The cited events as the model was shown them: names only (no attendee
+    # emails), no JSON keys or escapes, the same description cut-off. The
+    # <event index="N"> wrapper is dropped so "event" and "index" support nothing.
     cited_event_text = " ".join(
-        json.dumps(events[i - 1].payload) for i in facts_used if 1 <= i <= max_idx
+        _EVENT_WRAPPER.sub(" ", _format_event_line(i, events[i - 1]))
+        for i in facts_used
+        if 1 <= i <= max_idx
     )
     source_text = cited_event_text + " " + enrichment_text
     if mode == "hybrid":

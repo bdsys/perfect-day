@@ -125,3 +125,22 @@ def test_strip_markdown_leaves_single_markers_and_bullets():
     assert _strip_markdown("- swim\n- lunch") == "- swim\n- lunch"
     assert _strip_markdown("Mia was #1 today.") == "Mia was #1 today."
 
+
+# --- Verify words: the haystack is the event text the model was shown ---
+
+
+def test_name_after_newline_in_description_is_supported():
+    src = {"summary": "Soccer", "description": "Carpool:\nSarah drives"}
+    assert _flagged("Sarah drove everyone to soccer.", src) == []
+
+
+def test_attendee_email_does_not_support_a_name():
+    src = {"summary": "Visit", "attendees": [{"email": "grandma.tom@x.com"}]}
+    assert _flagged("Grandma came.", src) == ["Grandma"]
+
+
+def test_json_key_does_not_support_a_word():
+    # "location" is a key in the payload but not in the event line the model saw.
+    src = {"summary": "Park", "location": ""}
+    assert _flagged("Location was great.", src) == ["Location"]
+    assert _flagged("Summary was great.", {"summary": "Park"}) == ["Summary"]

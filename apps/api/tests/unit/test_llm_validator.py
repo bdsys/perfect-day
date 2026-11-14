@@ -278,7 +278,9 @@ class TestValidateCitationEnrichments:
     def test_validate_citation_allows_words_present_in_enrichment_payload(self):
         from types import SimpleNamespace
 
-        events = [SimpleNamespace(payload={"summary": "Park visit"})]
+        events = [SimpleNamespace(
+            payload={"summary": "Park visit"}, source="google_calendar", occurred_at=None
+        )]
         enrichments = [SimpleNamespace(payload={
             "date": "2024-01-15", "condition": "Sunny", "location": "Brooklyn",
         })]
@@ -295,7 +297,9 @@ class TestValidateCitationEnrichments:
     def test_validate_citation_still_flags_unrelated_capitalized_tokens(self):
         from types import SimpleNamespace
 
-        events = [SimpleNamespace(payload={"summary": "Park visit"})]
+        events = [SimpleNamespace(
+            payload={"summary": "Park visit"}, source="google_calendar", occurred_at=None
+        )]
         enrichments = [SimpleNamespace(payload={"condition": "clear sky"})]
         output = {
             "body_markdown": "We saw Aunt Mildred at the park.",
