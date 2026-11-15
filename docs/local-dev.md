@@ -320,7 +320,7 @@ GOOGLE_CLIENT_ID=<your Client ID from step 4>
 GOOGLE_CLIENT_SECRET=<your Client secret from step 4>
 ```
 
-**Connecting Google from a phone.** The cookie that ties a Google connect to your browser (`pd_google_connect`) is always `Secure`. Browsers only keep a `Secure` cookie on HTTPS or on `localhost`. So Google connect from a phone on your LAN, or from any other plain-http address, fails with `reason=browser_mismatch`. Use HTTPS for that test (for example the Cloudflare-fronted dev domain). Photo upload from a phone does not need this; only the Google connect does.
+**Connecting Google from a phone.** The cookie that ties a Google connect to your browser (`__Host-pd_google_connect`) is always `Secure`. Browsers only keep a `Secure` cookie on HTTPS or on `localhost`. So Google connect from a phone on your LAN, or from any other plain-http address, fails with `reason=browser_mismatch`. Use HTTPS for that test (for example the Cloudflare-fronted dev domain). Photo upload from a phone does not need this; only the Google connect does.
 
 ---
 

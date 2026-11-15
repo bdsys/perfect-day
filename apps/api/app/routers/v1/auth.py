@@ -22,6 +22,7 @@ from app.core.security import (
 )
 from app.middleware.rate_limit import auth_limiter
 from app.models import NotificationPreferences, OAuthToken, RefreshToken, SocialIdentity, User
+from app.services.google_revoke import revoke_and_forget_google
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -422,13 +423,15 @@ async def delete_account(
         .where(RefreshToken.user_id == user.id, RefreshToken.revoked_at.is_(None))
         .values(revoked_at=now)
     )
-    # Stop pulling the user's Google data during the grace window. The scan
-    # worker also skips diaries whose owner is soft-deleted.
-    await db.execute(
-        update(OAuthToken)
-        .where(OAuthToken.user_id == user.id, OAuthToken.revoked_at.is_(None))
-        .values(revoked_at=now)
-    )
+    # Revoke the grant at Google and forget the tokens. Restoring the account
+    # inside the grace window then needs a Google reconnect.
+    token = (
+        await db.execute(
+            select(OAuthToken).where(OAuthToken.user_id == user.id, OAuthToken.provider == "google")
+        )
+    ).scalar_one_or_none()
+    if token is not None:
+        await revoke_and_forget_google(db, token, user_id=user.id)
     response.delete_cookie(REFRESH_COOKIE, path="/v1/auth")
 
 

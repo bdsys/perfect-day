@@ -21,17 +21,18 @@ from app.core.auth import get_current_user
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.dependencies import get_redis
-from app.core.security import decrypt_oauth_token, encrypt_oauth_token
+from app.core.security import encrypt_oauth_token
 from app.models import OAuthToken, User
+from app.services.google_revoke import revoke_and_forget_google
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
 logger = logging.getLogger(__name__)
 
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"  # noqa: S105
-GOOGLE_REVOKE_URL = "https://oauth2.googleapis.com/revoke"
-CONNECT_COOKIE = "pd_google_connect"
-CONNECT_COOKIE_PATH = "/v1/integrations/google/callback"
+# A __Host- cookie must be Secure, path "/" and have no Domain.
+CONNECT_COOKIE = "__Host-pd_google_connect"
+CONNECT_COOKIE_PATH = "/"
 
 SCOPE_CALENDAR = "https://www.googleapis.com/auth/calendar.readonly"
 SCOPE_PHOTOS = "https://www.googleapis.com/auth/photospicker.mediaitems.readonly"
@@ -290,7 +291,7 @@ async def _google_callback(
     # before the nonce is consumed, so a wrong browser cannot burn the real
     # user's single-use nonce.
     presented = request.cookies.get(CONNECT_COOKIE, "")
-    if not hmac.compare_digest(presented, _nonce_digest(nonce)):
+    if not hmac.compare_digest(presented.encode(), _nonce_digest(nonce).encode()):
         return _redirect(web_base, return_to, google="failed", reason="browser_mismatch")
 
     # Single-use nonce check
@@ -412,19 +413,5 @@ async def revoke_google(
     if token is None:
         return
 
-    # Revoke the grant at Google, then forget the tokens whatever Google said.
-    try:
-        secret = decrypt_oauth_token(
-            token.refresh_token_ciphertext or token.access_token_ciphertext
-        )
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(GOOGLE_REVOKE_URL, data={"token": secret})
-        if resp.status_code != 200:
-            logger.warning(
-                "Google token revoke failed user_id=%s status=%s", user.id, resp.status_code
-            )
-    except Exception as exc:
-        # Never log the exception text or token: only the user and error type.
-        logger.warning("Google token revoke failed user_id=%s error=%s", user.id, type(exc).__name__)
-    await db.delete(token)
+    await revoke_and_forget_google(db, token, user_id=user.id)
     await db.commit()

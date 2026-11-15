@@ -10,6 +10,7 @@ import uuid
 from datetime import UTC, date, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import sqlalchemy as sa
 from httpx import AsyncClient
 from sqlalchemy import select, update
@@ -283,7 +284,7 @@ class TestDeletedAccountIsNotScanned:
         runs = (await db_session.execute(select(ScanRun.id))).scalars().all()
         assert runs == []
 
-    async def test_deleting_the_account_revokes_the_google_grant(
+    async def test_deleting_the_account_forgets_the_google_grant(
         self, client: AsyncClient, db_session: AsyncSession
     ):
         auth = await _register(client, "revoke@example.com")
@@ -292,15 +293,14 @@ class TestDeletedAccountIsNotScanned:
         ).scalar_one()
         await _google_token(db_session, user_id)
 
-        r = await client.delete("/v1/auth/account", headers=auth)
+        with patch("httpx.AsyncClient.post", AsyncMock(return_value=httpx.Response(200))):
+            r = await client.delete("/v1/auth/account", headers=auth)
         assert r.status_code == 204
 
-        revoked_at = (
-            await db_session.execute(
-                select(OAuthToken.revoked_at).where(OAuthToken.user_id == user_id)
-            )
-        ).scalar_one()
-        assert revoked_at is not None
+        rows = (
+            await db_session.execute(select(OAuthToken).where(OAuthToken.user_id == user_id))
+        ).scalars().all()
+        assert rows == []
 
 
 # ---------------------------------------------------------------------------

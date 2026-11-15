@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 
-CONNECT_COOKIE = "pd_google_connect"
+CONNECT_COOKIE = "__Host-pd_google_connect"
 
 
 def connect_cookie_for(state: str) -> dict[str, str]:

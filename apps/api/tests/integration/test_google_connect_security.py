@@ -117,8 +117,46 @@ async def test_authorize_sets_the_cookie_the_callback_expects(client: AsyncClien
     assert header.startswith(expected)
     low = header.lower()
     assert "httponly" in low and "secure" in low and "samesite=lax" in low
-    assert "path=/v1/integrations/google/callback" in low
+    assert "path=/;" in low or low.endswith("path=/")
+    assert "domain" not in low
     assert "max-age=600" in low
+
+
+async def test_connect_cookie_is_host_prefixed(client: AsyncClient):
+    auth = await _register(client, "sec-host@example.com")
+    _, resp = await _authorize(client, auth)
+
+    header = resp.headers["set-cookie"]
+    assert header.startswith("__Host-pd_google_connect=")
+    low = header.lower()
+    assert "path=/" in low and "path=/v1" not in low
+    assert "secure" in low and "httponly" in low and "samesite=lax" in low
+    assert "domain" not in low
+
+
+async def test_old_cookie_name_is_ignored(client: AsyncClient, db_session: AsyncSession):
+    auth = await _register(client, "sec-old@example.com")
+    state, _ = await _authorize(client, auth)
+    value = connect_cookie_for(state)["Cookie"].split("=", 1)[1]
+
+    r = await _callback(client, state, headers={"Cookie": f"pd_google_connect={value}"})
+
+    assert _query(r) == {"google": "failed", "reason": "browser_mismatch"}
+    assert await _token_count(db_session, "sec-old@example.com") == 0
+
+
+async def test_non_ascii_cookie_is_a_mismatch_not_500(client: AsyncClient):
+    auth = await _register(client, "sec-utf@example.com")
+    state, _ = await _authorize(client, auth)
+
+    r = await _callback(
+        client, state, headers={"Cookie": f"{CONNECT_COOKIE}=é".encode()}
+    )
+
+    assert r.status_code == 307  # RedirectResponse's default
+    assert _query(r) == {"google": "failed", "reason": "browser_mismatch"}
+    assert r.headers["set-cookie"].lower().startswith(f"{CONNECT_COOKIE.lower()}=")
+    assert "max-age=0" in r.headers["set-cookie"].lower()
 
 
 async def test_cookie_cleared_after_callback(client: AsyncClient):
@@ -127,9 +165,9 @@ async def test_cookie_cleared_after_callback(client: AsyncClient):
     def cleared(r) -> bool:
         h = r.headers.get("set-cookie", "").lower()
         return (
-            h.startswith(f"{CONNECT_COOKIE}=")
+            h.startswith(f"{CONNECT_COOKIE.lower()}=")
             and "max-age=0" in h
-            and "path=/v1/integrations/google/callback" in h
+            and "path=/" in h
         )
 
     state, _ = await _authorize(client, auth)

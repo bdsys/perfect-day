@@ -1,6 +1,9 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import DiaryDetailPage from '../page'
 import { api, type BackfillRun, type ScanRun } from '@/lib/api'
+import { navigateTo } from '@/lib/navigate'
+
+jest.mock('@/lib/navigate', () => ({ navigateTo: jest.fn() }))
 
 jest.mock('@/lib/api', () => {
   const actual = jest.requireActual('@/lib/api')
@@ -17,7 +20,7 @@ jest.mock('@/lib/api', () => {
         triggerScan: jest.fn(),
       },
       entries: { list: jest.fn() },
-      integrations: { list: jest.fn() },
+      integrations: { list: jest.fn(), getGoogleAuthUrl: jest.fn() },
     },
   }
 })
@@ -147,5 +150,52 @@ describe('DiaryDetailPage scan status', () => {
     await runScan(finishedScan(1, 0))
 
     expect(screen.getByText('1 event checked')).toBeInTheDocument()
+  })
+})
+
+describe('DiaryDetailPage connect calendar', () => {
+  it('a double tap makes one authorize call and disables the button', async () => {
+    ;(api.diaries.getScanConfig as jest.Mock).mockResolvedValue({
+      can_scan: true,
+      calendar: 'none',
+      scan_enabled: true,
+      scan_interval_minutes: 60,
+      last_scan_status: null,
+      next_scan_after: null,
+      consecutive_failures: 0,
+    })
+    ;(api.integrations.getGoogleAuthUrl as jest.Mock).mockResolvedValue({
+      url: 'https://accounts.google.com/x',
+    })
+    render(<DiaryDetailPage />)
+    const connect = await screen.findByRole('button', { name: 'Connect Google Calendar' })
+
+    fireEvent.click(connect)
+    fireEvent.click(connect)
+
+    await waitFor(() => expect(navigateTo).toHaveBeenCalledWith('https://accounts.google.com/x'))
+    expect(api.integrations.getGoogleAuthUrl).toHaveBeenCalledTimes(1)
+    expect(connect).toBeDisabled()
+  })
+
+  it('lets the person try again after a failure', async () => {
+    ;(api.diaries.getScanConfig as jest.Mock).mockResolvedValue({
+      can_scan: true,
+      calendar: 'none',
+      scan_enabled: true,
+      scan_interval_minutes: 60,
+      last_scan_status: null,
+      next_scan_after: null,
+      consecutive_failures: 0,
+    })
+    ;(api.integrations.getGoogleAuthUrl as jest.Mock).mockRejectedValueOnce(new Error('nope'))
+    render(<DiaryDetailPage />)
+    const connect = await screen.findByRole('button', { name: 'Connect Google Calendar' })
+
+    fireEvent.click(connect)
+    await waitFor(() => expect(connect).not.toBeDisabled())
+    fireEvent.click(connect)
+
+    await waitFor(() => expect(api.integrations.getGoogleAuthUrl).toHaveBeenCalledTimes(2))
   })
 })

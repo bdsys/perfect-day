@@ -8,6 +8,7 @@ import { useAuth } from '@/lib/auth-context'
 import { StatusPanel } from '@/components/StatusPanel'
 import { usePolling } from '@/lib/usePolling'
 import { formatDateRange } from '@/lib/date'
+import { navigateTo } from '@/lib/navigate'
 
 // Must match the API's default page size for GET /v1/diaries/{id}/entries.
 const ENTRIES_PAGE_SIZE = 20
@@ -83,6 +84,8 @@ export default function DiaryDetailPage() {
   const [newEntryTitle, setNewEntryTitle] = useState('')
   const [newEntryError, setNewEntryError] = useState('')
   const pollFailuresRef = useRef(0)
+  const connectingRef = useRef(false)
+  const [connecting, setConnecting] = useState(false)
   const MAX_POLL_FAILURES = 5
 
   useEffect(() => {
@@ -274,10 +277,15 @@ export default function DiaryDetailPage() {
   }, [pollingBackfill])
 
   async function connectCalendar() {
+    if (connectingRef.current) return // two authorize calls would leave the wrong connect cookie
+    connectingRef.current = true
+    setConnecting(true)
     try {
       const { url } = await api.integrations.getGoogleAuthUrl('calendar')
-      window.location.href = url
+      navigateTo(url)
     } catch (e: unknown) {
+      connectingRef.current = false
+      setConnecting(false)
       setError(e instanceof Error ? e.message : 'Failed to get auth URL')
     }
   }
@@ -353,7 +361,7 @@ export default function DiaryDetailPage() {
                 {googleIntegration?.google_email ? ` (${googleIntegration.google_email})` : ''} ✓
               </span>
             ) : isOwner && calendar === 'none' ? (
-              <button className="btn btn-secondary" onClick={connectCalendar}>
+              <button className="btn btn-secondary" onClick={connectCalendar} disabled={connecting}>
                 Connect Google Calendar
               </button>
             ) : null}
@@ -539,7 +547,7 @@ export default function DiaryDetailPage() {
                 <p style={{ margin: 0 }}>
                   Google Calendar is disconnected, so new events aren&apos;t being picked up.
                 </p>
-                <button className="btn btn-primary" style={{ marginTop: '0.5rem' }} onClick={connectCalendar}>
+                <button className="btn btn-primary" style={{ marginTop: '0.5rem' }} onClick={connectCalendar} disabled={connecting}>
                   Reconnect Google Calendar
                 </button>
               </>

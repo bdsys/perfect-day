@@ -161,9 +161,14 @@ async def _scan_diary(
                             OAuthToken.provider == "google",
                         )
                     )
-                    oauth_token_fresh = token_result.scalar_one()
-                    access_token = await ensure_fresh_access_token(oauth_token_fresh, db)
-                    grant_gone = oauth_token_fresh.revoked_at is not None
+                    oauth_token_fresh = token_result.scalar_one_or_none()
+                    if oauth_token_fresh is None:
+                        # Disconnected while the scan ran.
+                        access_token = None
+                        grant_gone = True
+                    else:
+                        access_token = await ensure_fresh_access_token(oauth_token_fresh, db)
+                        grant_gone = oauth_token_fresh.revoked_at is not None
 
                 if access_token:
                     kwargs = {}
@@ -911,8 +916,21 @@ async def _backfill_diary(backfill_run_id_str: str) -> None:
                 OAuthToken.provider == "google",
             )
         )
-        oauth_token_fresh = token_result.scalar_one()
-        access_token = await ensure_fresh_access_token(oauth_token_fresh, db)
+        oauth_token_fresh = token_result.scalar_one_or_none()
+        if oauth_token_fresh is None:
+            access_token = None
+        else:
+            access_token = await ensure_fresh_access_token(oauth_token_fresh, db)
+
+    if oauth_token_fresh is None:
+        # Disconnected while the backfill waited to start.
+        async with db_session() as db:
+            result = await db.execute(select(BackfillRun).where(BackfillRun.id == backfill_run_id))
+            run = result.scalar_one()
+            run.status = "failed"
+            run.completed_at = datetime.now(tz=UTC)
+            run.error = "No valid Google OAuth token"
+        return
 
     if not access_token:
         async with db_session() as db:
