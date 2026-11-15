@@ -490,3 +490,47 @@ def test_backfill_ingest_failure_message():
     assert ingest_failures_message(3) == (
         "3 events couldn't be saved. Run the backfill again to retry them."
     )
+
+
+def _http_error(status: int):
+    import httpx
+
+    url = "https://www.googleapis.com/calendar/v3/calendars/parent@example.com/events?x=1"
+    request = httpx.Request("GET", url)
+    return httpx.HTTPStatusError(
+        f"Client error '{status}' for url '{url}'",
+        request=request,
+        response=httpx.Response(status, request=request),
+    )
+
+
+async def _run_failing_backfill(db_session, exc):
+    from app.workers.tasks import _backfill_diary
+
+    diary = await _diary_with_series_rule(db_session)
+    run = await _pending_run(db_session, diary.id)
+    with (
+        patch("app.workers.token_refresh.ensure_fresh_access_token", AsyncMock(return_value="tok")),
+        patch("app.workers.backfill._fetch_events_range", AsyncMock(side_effect=exc)),
+        patch("asyncio.sleep", new=AsyncMock()),
+    ):
+        with pytest.raises(type(exc)):
+            await _backfill_diary(str(run.id))
+    return await _reload(db_session, run.id)
+
+
+async def test_backfill_disconnect_reads_plainly_without_the_url(client, db_session):
+    failed = await _run_failing_backfill(db_session, _http_error(401))
+    assert failed.status == "failed"
+    assert failed.error == (
+        "Google Calendar was disconnected during the backfill. "
+        "Reconnect it and run the backfill again."
+    )
+    assert "http" not in failed.error.lower()
+    assert "googleapis" not in failed.error
+
+
+async def test_backfill_other_failure_gives_a_generic_message(client, db_session):
+    failed = await _run_failing_backfill(db_session, RuntimeError("secret parent@example.com"))
+    assert failed.status == "failed"
+    assert failed.error == "The backfill stopped because of a problem. Try again later."

@@ -855,6 +855,13 @@ async def _fail_locked_backfill(backfill_run_id_str: str) -> None:
         run.error = BACKFILL_LOCKED_MESSAGE
 
 
+_BACKFILL_DISCONNECTED_MESSAGE = (
+    "Google Calendar was disconnected during the backfill. "
+    "Reconnect it and run the backfill again."
+)
+_BACKFILL_FAILED_MESSAGE = "The backfill stopped because of a problem. Try again later."
+
+
 async def _backfill_diary(backfill_run_id_str: str) -> None:
     from datetime import UTC, datetime
 
@@ -971,13 +978,24 @@ async def _backfill_diary(backfill_run_id_str: str) -> None:
                 run.started_at = None
         raise
     except Exception as e:
-        log.error("backfill_error", backfill_run_id=backfill_run_id_str, error=str(e))
+        # Never log or store str(e): an HTTP error's text carries the Calendar URL,
+        # and the calendar id is often an email address.
+        import httpx
+
+        log_extra: dict[str, object] = {"error_class": type(e).__name__}
+        if isinstance(e, httpx.HTTPStatusError):
+            log_extra["status_code"] = e.response.status_code
+        log.error("backfill_error", backfill_run_id=backfill_run_id_str, **log_extra)
+        if isinstance(e, httpx.HTTPStatusError) and e.response.status_code in (401, 403):
+            message = _BACKFILL_DISCONNECTED_MESSAGE
+        else:
+            message = _BACKFILL_FAILED_MESSAGE
         async with db_session() as db:
             result = await db.execute(select(BackfillRun).where(BackfillRun.id == backfill_run_id))
             run = result.scalar_one()
             run.status = "failed"
             run.completed_at = datetime.now(tz=UTC)
-            run.error = str(e)
+            run.error = message
         raise
 
 
