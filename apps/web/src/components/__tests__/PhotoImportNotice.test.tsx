@@ -203,6 +203,33 @@ describe('PhotoImportNotice', () => {
       expect(listForEntry).toHaveBeenCalledTimes(calls)
     })
 
+    it('giving up tells the page nothing is in flight, so the pick line goes away', async () => {
+      jest.useFakeTimers()
+      ;(api.integrations.list as jest.Mock).mockResolvedValue([
+        { provider: 'google', scopes_granted: [], revoked: false, expires_at: null, google_email: null, google_name: null, photos: true },
+      ])
+      listForEntry
+        .mockResolvedValueOnce([imp({ status: 'copying' })])
+        .mockRejectedValue(new Error('network'))
+      function Page() {
+        const [inFlight, setInFlight] = useState(false)
+        const [copying, setCopying] = useState(false)
+        return (
+          <>
+            <GooglePhotosPick entry={{ id: 'e1', entry_date: '2026-05-16' } as never} inFlight={inFlight} copying={copying} onStarted={jest.fn()} />
+            <PhotoImportNotice entryId="e1" onInFlightChange={(f, c) => { setInFlight(f); setCopying(c) }} />
+          </>
+        )
+      }
+      render(<Page />)
+      await act(async () => {})
+      expect(screen.getByText('Copying your photos from Google Photos…')).toBeInTheDocument()
+      for (let i = 0; i < 3; i++) await act(async () => { jest.advanceTimersByTime(3000) })
+      expect(screen.getByText(CANT_CHECK)).toBeInTheDocument()
+      expect(screen.queryByText('Copying your photos from Google Photos…')).not.toBeInTheDocument()
+      expect(screen.queryByText('Google Photos is open. Finish your pick there.')).not.toBeInTheDocument()
+    })
+
     it('a success in between resets the count', async () => {
       jest.useFakeTimers()
       const waiting = [imp({ status: 'waiting' })]

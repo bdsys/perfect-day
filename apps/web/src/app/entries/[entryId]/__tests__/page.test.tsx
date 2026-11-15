@@ -16,14 +16,17 @@ jest.mock('@/lib/api', () => {
     },
   }
 })
-jest.mock('@/lib/auth-context', () => ({
-  useAuth: () => ({ user: { id: 'u1', email: 'a@b.com' }, loading: false }),
-}))
-jest.mock('next/navigation', () => ({
-  useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
-  useParams: () => ({ entryId: 'e1' }),
-  useSearchParams: () => new URLSearchParams(),
-}))
+// Stable references: a fresh user/router object each render would re-run the page's load effect.
+jest.mock('@/lib/auth-context', () => {
+  const value = { user: { id: 'u1', email: 'a@b.com' }, loading: false }
+  return { useAuth: () => value }
+})
+jest.mock('next/navigation', () => {
+  const router = { push: jest.fn(), replace: jest.fn() }
+  const params = { entryId: 'e1' }
+  const search = new URLSearchParams()
+  return { useRouter: () => router, useParams: () => params, useSearchParams: () => search }
+})
 
 const get = api.entries.get as jest.Mock
 const listForEntry = api.photoImports.listForEntry as jest.Mock
@@ -66,5 +69,33 @@ describe('entry page: Google import notice in Edit mode', () => {
     await act(async () => {})
     expect(screen.getByTestId('thumb')).toBeInTheDocument()
     expect(screen.getByText('1 photo added from Google Photos')).toBeVisible()
+  })
+
+  it('in view mode the notice comes before the Photos heading', async () => {
+    ;(api.integrations.list as jest.Mock).mockResolvedValue([])
+    get.mockResolvedValue(entry([{ id: 'p1' }]))
+    listForEntry.mockResolvedValue([imp({ status: 'copying' })])
+    render(<EntryDetailPage />)
+    const notice = await screen.findByText('Copying photos from Google Photos…')
+    const heading = screen.getByRole('heading', { name: 'Photos' })
+    expect(notice.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('an import finishing mid-edit does not wipe what was typed', async () => {
+    jest.useFakeTimers()
+    ;(api.integrations.list as jest.Mock).mockResolvedValue([])
+    get.mockResolvedValueOnce(entry([])).mockResolvedValue(entry([{ id: 'p1' }]))
+    listForEntry
+      .mockResolvedValueOnce([imp({ status: 'copying' })])
+      .mockResolvedValue([imp({ status: 'done', added_count: 1 })])
+    render(<EntryDetailPage />)
+    await act(async () => {})
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'My typed title' } })
+    fireEvent.change(screen.getByLabelText('Body'), { target: { value: 'My typed body' } })
+    await act(async () => { jest.advanceTimersByTime(3000) })
+    expect(get).toHaveBeenCalledTimes(2) // the refresh ran
+    expect(screen.getByLabelText('Title')).toHaveValue('My typed title')
+    expect(screen.getByLabelText('Body')).toHaveValue('My typed body')
   })
 })

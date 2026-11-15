@@ -89,7 +89,11 @@ export function PhotoImportNotice({ entryId, refreshKey = 0, onDismiss, onFinish
         return;
       }
       failuresRef.current += 1;
-      if (failuresRef.current >= MAX_POLL_FAILURES) setGaveUp(true);
+      if (failuresRef.current >= MAX_POLL_FAILURES) {
+        // We no longer know the state: don't leave "Copying…" showing next to "can't check".
+        setGaveUp(true);
+        onInFlightRef.current?.(false, false);
+      }
     }
   }, [entryId]);
 

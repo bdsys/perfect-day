@@ -445,6 +445,26 @@ function EntryDetailPageInner() {
               />
             )}
 
+          </>
+        )}
+
+        {/* Stays mounted in Edit mode so polling and the photo refresh keep working; just not shown. */}
+        {entry.can_edit && (
+          <div hidden={editing}>
+            <PhotoImportNotice
+              entryId={entry.id}
+              refreshKey={noticeKey}
+              onFinished={refreshAfterImport}
+              onInFlightChange={(inFlight, copying) => {
+                setImportInFlight(inFlight)
+                setImportCopying(copying)
+              }}
+            />
+          </div>
+        )}
+
+        {!editing && (
+          <>
             {/* Photo strip */}
             {entry.photos && entry.photos.length > 0 && (
               <section>
@@ -570,21 +590,6 @@ function EntryDetailPageInner() {
               </button>
             </div>
           </>
-        )}
-
-        {/* Stays mounted in Edit mode so polling and the photo refresh keep working; just not shown. */}
-        {entry.can_edit && (
-          <div hidden={editing}>
-            <PhotoImportNotice
-              entryId={entry.id}
-              refreshKey={noticeKey}
-              onFinished={refreshAfterImport}
-              onInFlightChange={(inFlight, copying) => {
-                setImportInFlight(inFlight)
-                setImportCopying(copying)
-              }}
-            />
-          </div>
         )}
       </div>
     </>
