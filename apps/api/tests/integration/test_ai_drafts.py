@@ -321,6 +321,29 @@ async def test_limit_leaves_parents_text(db_url: str, db_session: AsyncSession) 
     )
 
 
+async def test_limit_replaces_stale_ai_text(db_url: str, db_session: AsyncSession) -> None:
+    # An untouched AI draft lost an event (e.g. a cancelled swim lesson) and a
+    # background redraft was queued. At the limit the old AI prose must not stay.
+    owner, entry = await _owner_with_entry(
+        db_session, body="A swim lesson, then a picnic in the park.", body_source="llm"
+    )
+    await _spend(db_session, owner, 5)
+    provider = _provider()
+
+    await _run_draft(db_url, entry.id, provider, trigger="background")
+
+    provider.generate.assert_not_awaited()
+    reloaded = await _reload(db_session, entry.id)
+    assert reloaded.body_source == "fallback"
+    assert reloaded.title == "Picnic in the park"
+    assert reloaded.body_markdown == "- 12:00–13:00  Picnic in the park"
+    [gen] = await _generations(db_session, entry.id)
+    assert (gen.status, gen.model, gen.error, gen.mode) == (
+        "failed", "none", AI_DRAFT_LIMIT_ERROR, "events"
+    )
+    assert await _used(db_session, owner) == 5
+
+
 async def test_editor_regenerate_spends_owner_quota(
     db_url: str, db_session: AsyncSession
 ) -> None:

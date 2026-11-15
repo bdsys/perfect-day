@@ -628,10 +628,12 @@ async def _generate_draft(
             db, owner=owner, entry_id=entry.id, key=reservation_key
         )
         if not reserved:
-            # Out of AI drafts this month: no provider call. An empty entry still
-            # gets its events listed; text already there is left alone.
+            # Out of AI drafts this month: no provider call. An empty entry, or
+            # machine-only text a background redraft would have replaced (e.g.
+            # AI prose about an event that was since cancelled), gets the plain
+            # event list instead. A person's text is left alone.
             log.info("generate_draft_ai_draft_limit", entry_id=str(entry_id), mode=mode)
-            if mode == "events" and not has_body and write_in_place:
+            if mode == "events" and write_in_place:
                 entry.title, entry.body_markdown = _build_fallback_body(events, entry.entry_date)
                 entry.body_source = "fallback"
                 entry.flagged_tokens = []
