@@ -228,6 +228,9 @@ describe('PhotoImportNotice', () => {
       expect(screen.getByText(CANT_CHECK)).toBeInTheDocument()
       expect(screen.queryByText('Copying your photos from Google Photos…')).not.toBeInTheDocument()
       expect(screen.queryByText('Google Photos is open. Finish your pick there.')).not.toBeInTheDocument()
+      // The notice's own in-progress lines are replaced by the can't-check message too.
+      expect(screen.queryByText('Copying photos from Google Photos…')).not.toBeInTheDocument()
+      expect(screen.queryByText('Waiting for you to finish in Google Photos…')).not.toBeInTheDocument()
     })
 
     it('a success in between resets the count', async () => {

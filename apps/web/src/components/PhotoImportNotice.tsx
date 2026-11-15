@@ -146,7 +146,7 @@ export function PhotoImportNotice({ entryId, refreshKey = 0, onDismiss, onFinish
     }
   }
 
-  const shown = imports.filter((i) => isInFlight(i) || importMessage(i) !== null);
+  const shown = imports.filter((i) => (!gaveUp && isInFlight(i)) || importMessage(i) !== null);
   if (shown.length === 0 && !gaveUp) return null;
 
   return (
