@@ -1,4 +1,4 @@
-import { api, setAccessToken, refreshAccessToken, UPLOAD_TIMEOUT_MS, type Photo } from "../api";
+import { api, setAccessToken, refreshAccessToken, UPLOAD_TIMEOUT_MS, UPLOAD_STALL_MS, type Photo } from "../api";
 
 const MOCK_TOKEN = "test-token";
 
@@ -109,12 +109,13 @@ describe("api.photos.upload", () => {
     timeout = 0;
     responseText = "";
     sent: unknown;
-    upload = {} as { onprogress?: unknown };
+    upload = {} as { onprogress?: (e: unknown) => void; onload?: () => void };
     onload?: () => void;
     onerror?: () => void;
     onabort?: () => void;
     ontimeout?: () => void;
     open = jest.fn();
+    abort() { this.onabort?.(); }
     setRequestHeader(k: string, v: string) { this.headers[k] = v; }
     send(body: unknown) { this.sent = body; FakeXHR.instances.push(this); }
     respond(status: number, body: unknown) {
@@ -152,7 +153,8 @@ describe("api.photos.upload", () => {
   });
 
   it("sets a timeout on the request and on the 401 retry, and a timeout settles the call", async () => {
-    expect(UPLOAD_TIMEOUT_MS).toBe(120000);
+    expect(UPLOAD_TIMEOUT_MS).toBe(600000);
+    expect(UPLOAD_STALL_MS).toBe(60000);
     global.fetch = jest.fn().mockResolvedValueOnce({
       ok: true, status: 200, json: async () => ({ access_token: "new-token" }),
     } as unknown as Response);
@@ -165,6 +167,57 @@ describe("api.photos.upload", () => {
     expect(second.timeout).toBe(UPLOAD_TIMEOUT_MS);
     second.ontimeout?.();
     await expect(p).rejects.toThrow("upload network error");
+  });
+
+  describe("stall timer", () => {
+    beforeEach(() => jest.useFakeTimers());
+    afterEach(() => jest.useRealTimers());
+    const progress = (x: FakeXHR) => x.upload.onprogress?.({ lengthComputable: true, loaded: 1, total: 2 });
+    const f = () => new File(["a"], "a.jpg", { type: "image/jpeg" });
+
+    it("rejects as a network failure after 60 s with no progress", async () => {
+      const p = api.photos.upload(f());
+      const assertion = expect(p).rejects.toThrow("upload network error");
+      jest.advanceTimersByTime(UPLOAD_STALL_MS);
+      await assertion;
+    });
+
+    it("keeps going while progress arrives, then resolves", async () => {
+      const p = api.photos.upload(f());
+      const x = FakeXHR.instances[0];
+      for (let i = 0; i < 6; i++) {
+        jest.advanceTimersByTime(30000);
+        progress(x);
+      }
+      x.upload.onload?.();
+      x.respond(201, { id: "p1" });
+      await expect(p).resolves.toEqual({ id: "p1" });
+      jest.advanceTimersByTime(UPLOAD_STALL_MS * 2); // timer was cleared: no late abort
+    });
+
+    it("a server that never answers after the body is sent surfaces after 60 s", async () => {
+      const p = api.photos.upload(f());
+      const x = FakeXHR.instances[0];
+      jest.advanceTimersByTime(50000);
+      x.upload.onload?.();
+      const assertion = expect(p).rejects.toThrow("upload network error");
+      jest.advanceTimersByTime(UPLOAD_STALL_MS);
+      await assertion;
+    });
+
+    it("the 401 retry XHR gets the same stall behaviour", async () => {
+      global.fetch = jest.fn().mockResolvedValueOnce({
+        ok: true, status: 200, json: async () => ({ access_token: "new-token" }),
+      } as unknown as Response);
+      const p = api.photos.upload(f());
+      FakeXHR.instances[0].respond(401, {});
+      for (let i = 0; i < 10 && FakeXHR.instances.length < 2; i++) await Promise.resolve();
+      expect(FakeXHR.instances).toHaveLength(2);
+      expect(FakeXHR.instances[1].timeout).toBe(UPLOAD_TIMEOUT_MS);
+      const assertion = expect(p).rejects.toThrow("upload network error");
+      jest.advanceTimersByTime(UPLOAD_STALL_MS);
+      await assertion;
+    });
   });
 
   it("settles when the XHR is aborted or times out", async () => {

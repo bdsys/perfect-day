@@ -31,8 +31,6 @@ type Item = {
   status: "queued" | "uploading" | "done" | "error";
   progress: number;
   error?: string;
-  /** Set once the upload succeeds, so Try again only re-attaches. */
-  photoId?: string;
 };
 
 export function AddPhotos({ entry, onChanged, googlePhotos }: Props) {
@@ -48,6 +46,7 @@ export function AddPhotos({ entry, onChanged, googlePhotos }: Props) {
   const onChangedRef = useRef(onChanged);
   onChangedRef.current = onChanged;
   const filesRef = useRef(new Map<number, File>());
+  // Uploaded photo per row: Try again after a failed attach re-attaches instead of re-uploading.
   const photoIdsRef = useRef(new Map<number, string>());
 
   useEffect(() => {
@@ -91,7 +90,6 @@ export function AddPhotos({ entry, onChanged, googlePhotos }: Props) {
             const photo = await api.photos.upload(file, (p) => patch(id, { progress: p }));
             photoId = photo.id;
             photoIdsRef.current.set(id, photoId);
-            patch(id, { photoId });
           }
           await api.photos.attachToEntry(entryRef.current.id, photoId);
           anyDoneRef.current = true;
@@ -99,6 +97,10 @@ export function AddPhotos({ entry, onChanged, googlePhotos }: Props) {
           photoIdsRef.current.delete(id);
           patch(id, { status: "done", progress: 1 });
         } catch (e) {
+          // The remembered photo is gone: the next Try again must upload afresh.
+          if (e instanceof ApiError && e.status === 404 && e.code === "photo_not_found") {
+            photoIdsRef.current.delete(id);
+          }
           patch(id, { status: "error", error: friendlyUploadError(e) });
         } finally {
           activeRef.current--;

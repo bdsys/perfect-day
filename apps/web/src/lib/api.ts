@@ -407,8 +407,10 @@ export interface BackfillRun {
 // API functions
 // ---------------------------------------------------------------------------
 
-/** A phone on a dead connection must not hold an upload slot forever. */
-export const UPLOAD_TIMEOUT_MS = 120000
+/** Hard ceiling for one upload request. */
+export const UPLOAD_TIMEOUT_MS = 600000
+/** An upload with no progress (or no server answer) for this long is a dead connection. */
+export const UPLOAD_STALL_MS = 60000
 
 export const api = {
   auth: {
@@ -694,14 +696,33 @@ export const api = {
           xhr.timeout = UPLOAD_TIMEOUT_MS
           xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream')
           if (_accessToken) xhr.setRequestHeader('Authorization', `Bearer ${_accessToken}`)
+          let stallTimer: ReturnType<typeof setTimeout> | undefined
+          const clearStall = () => {
+            if (stallTimer !== undefined) clearTimeout(stallTimer)
+            stallTimer = undefined
+          }
+          const armStall = () => {
+            clearStall()
+            stallTimer = setTimeout(() => {
+              stallTimer = undefined
+              xhr.abort()
+            }, UPLOAD_STALL_MS)
+          }
           xhr.upload.onprogress = (e) => {
+            armStall()
             if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total)
           }
-          const netFail = () => reject(new Error('upload network error'))
+          xhr.upload.onload = armStall
+          // Promise settlement is once-only, so an abort the stall timer triggers is safe.
+          const netFail = () => {
+            clearStall()
+            reject(new Error('upload network error'))
+          }
           xhr.onerror = netFail
           xhr.onabort = netFail
           xhr.ontimeout = netFail
           xhr.onload = () => {
+            clearStall()
             if (xhr.status >= 200 && xhr.status < 300) {
               try {
                 resolve(JSON.parse(xhr.responseText) as Photo)
@@ -721,6 +742,7 @@ export const api = {
               json: async () => JSON.parse(xhr.responseText),
             }).then(reject)
           }
+          armStall()
           xhr.send(file)
         })
       return attempt(true)

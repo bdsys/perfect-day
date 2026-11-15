@@ -98,6 +98,7 @@ it('a timed-out upload shows the network message and frees its slot', async () =
     f.name === 'slow.jpg' ? Promise.reject(new Error('upload network error'))
       : f.name === 'next.jpg' ? Promise.resolve(photo('n')) : new Promise<Photo>(() => {}))
   await open()
+  // Two uploads stay open, so slow.jpg is the third of MAX_CONCURRENT (3) and next.jpg waits for its slot.
   await act(async () => {
     fireEvent.change(input(), { target: { files: [file('a.jpg'), file('b.jpg'), file('slow.jpg'), file('next.jpg')] } })
   })
@@ -116,6 +117,31 @@ it('Try again after an attach failure re-attaches without re-uploading', async (
   await waitFor(() => expect(attach).toHaveBeenCalledTimes(2))
   expect(upload).toHaveBeenCalledTimes(1)
   expect(attach).toHaveBeenLastCalledWith('e1', 'p1')
+})
+
+it('Try again after photo_not_found re-uploads', async () => {
+  upload.mockResolvedValue(photo('p1'))
+  attach.mockRejectedValueOnce(new ApiError(404, 'photo_not_found', 'photo_not_found'))
+  await open()
+  await act(async () => { fireEvent.change(input(), { target: { files: [file('a.jpg')] } }) })
+  await screen.findByRole('alert')
+  upload.mockResolvedValue(photo('p2'))
+  attach.mockResolvedValue(photo('p2'))
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: /try again/i })) })
+  await waitFor(() => expect(attach).toHaveBeenLastCalledWith('e1', 'p2'))
+  expect(upload).toHaveBeenCalledTimes(2)
+})
+
+it('Try again after an entry not_found keeps the photo and does not re-upload', async () => {
+  upload.mockResolvedValue(photo('p1'))
+  attach.mockRejectedValueOnce(new ApiError(404, 'not_found', 'not_found'))
+  await open()
+  await act(async () => { fireEvent.change(input(), { target: { files: [file('a.jpg')] } }) })
+  await screen.findByRole('alert')
+  attach.mockResolvedValue(photo('p1'))
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: /try again/i })) })
+  await waitFor(() => expect(attach).toHaveBeenCalledTimes(2))
+  expect(upload).toHaveBeenCalledTimes(1)
 })
 
 it('library is asked for photos near the entry date and hides attached ones', async () => {
