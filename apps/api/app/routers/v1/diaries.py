@@ -271,7 +271,8 @@ async def get_diary(
 ) -> DiaryOut:
     diary, role = await _get_diary_or_404(diary_id, user, db)
     out = _diary_out(diary, is_owner=role is None)
-    out.plan = await owner_plan_out(db, diary)
+    # The owner's numbers go to the owner and editors only, never to viewers.
+    out.plan = None if role == "viewer" else await owner_plan_out(db, diary)
     return out
 
 

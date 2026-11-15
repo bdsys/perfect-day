@@ -503,7 +503,8 @@ async def get_entry(
 ) -> EntryOut:
     entry, diary, role = await _get_entry_or_404(entry_id, user, db)
     out = _entry_out_from_orm(entry, can_edit=role != "viewer", exact_places=role is None)
-    out.plan = await owner_plan_out(db, diary)
+    # The owner's numbers go to the owner and editors only, never to viewers.
+    out.plan = None if role == "viewer" else await owner_plan_out(db, diary)
     return out
 
 

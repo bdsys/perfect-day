@@ -132,3 +132,18 @@ async def test_plan_only_on_detail_gets(client: AsyncClient, db_session: AsyncSe
     owner, _, _ = await _free_world(db_session, 0)
     rows = (await client.get("/v1/diaries", headers=_auth(owner))).json()
     assert all(row.get("plan") is None for row in rows)
+
+
+async def test_viewer_never_sees_owner_plan(client: AsyncClient, db_session: AsyncSession) -> None:
+    owner, diary, entry = await _free_world(db_session, 2)
+    entry.status = "published"  # viewers only see published entries
+    viewer = await make_user(db_session, subscription_tier="family")
+    db_session.add(DiaryPermission(diary_id=diary.id, user_id=viewer.id, role="viewer"))
+    await db_session.commit()
+
+    d = await client.get(f"/v1/diaries/{diary.id}", headers=_auth(viewer))
+    assert d.status_code == 200, d.text
+    assert d.json()["plan"] is None
+    e = await client.get(f"/v1/entries/{entry.id}", headers=_auth(viewer))
+    assert e.status_code == 200, e.text
+    assert e.json()["plan"] is None
