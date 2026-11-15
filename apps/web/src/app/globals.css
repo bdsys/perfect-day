@@ -498,3 +498,58 @@ input:focus {
   opacity: 1;
   outline: 2px solid var(--accent);
 }
+
+/* Plan limits: badge, note and plans table */
+:root {
+  --limit-green: #2e7d32;
+  --limit-yellow: #f9a825;
+  --limit-red: #c62828;
+}
+
+.plan-badge-wrap {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.plan-badge {
+  font-size: 0.8rem;
+  padding: 0.15rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  background: transparent;
+}
+
+.plan-badge[data-color='green'] { color: var(--limit-green); }
+.plan-badge[data-color='yellow'] { color: var(--limit-yellow); }
+.plan-badge[data-color='red'] { color: var(--limit-red); }
+
+.plan-upgrade {
+  font-size: 0.8rem;
+}
+
+.plan-badge-details {
+  flex-basis: 100%;
+  list-style: none;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.limit-note {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.plans-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 1rem;
+}
+
+.plans-table th,
+.plans-table td {
+  text-align: left;
+  padding: 0.5rem;
+  border-bottom: 1px solid var(--border);
+}

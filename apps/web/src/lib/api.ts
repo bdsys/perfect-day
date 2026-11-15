@@ -165,6 +165,32 @@ export type Photo = {
   has_thumbnail: boolean
 }
 
+/** The diary owner's plan, on GET /v1/diaries/{id} and GET /v1/entries/{id}. null = unlimited. */
+export interface OwnerPlan {
+  tier: string
+  plan_name: string
+  ai_drafts_limit: number | null
+  ai_drafts_left: number | null
+  /** YYYY-MM-DD */
+  resets_on: string
+  photos_per_entry: number | null
+  read_only: boolean
+}
+
+/** The caller's own plan and usage, from GET /v1/auth/me/plan. null = unlimited. */
+export interface MyPlan {
+  tier: string
+  plan_name: string
+  diaries_limit: number
+  diaries_used: number
+  ai_drafts_limit: number | null
+  ai_drafts_used: number
+  ai_drafts_left: number | null
+  resets_on: string
+  photos_per_entry: number | null
+  read_only_diary_ids: string[]
+}
+
 export interface Diary {
   id: string
   name: string
@@ -183,6 +209,8 @@ export interface Diary {
   deleted_at: string | null
   hard_delete_after: string | null
   created_at: string
+  /** The owner's plan; only on the single-diary GET */
+  plan?: OwnerPlan | null
 }
 
 /** A place from the city search (GET /v1/geocode). */
@@ -307,6 +335,8 @@ export interface Entry {
   tz_override: string | null
   /** The caller may edit this entry (not a viewer) */
   can_edit: boolean
+  /** The owner's plan; only on the single-entry GET */
+  plan?: OwnerPlan | null
 }
 
 /** What PATCH /v1/entries/{id} accepts. location: null = use the automatic place. */
@@ -438,6 +468,9 @@ export const api = {
     },
     async me() {
       return apiFetch('/v1/auth/me')
+    },
+    async myPlan(): Promise<MyPlan> {
+      return apiFetch('/v1/auth/me/plan')
     },
   },
 
