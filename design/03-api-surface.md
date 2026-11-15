@@ -134,7 +134,7 @@ A caller may read photo P (any `kind`) iff one of the following is true. Built a
 
 Everyone but the uploader gets the location stripped. The bytes are decrypted with the uploader's key. Anyone else gets 404.
 
-Photos attached to a deleted diary are inaccessible even to the photo owner until the cross-diary check confirms no other diary links them (in which case the photo row and MinIO object are deleted by `process_hard_deletes`).
+A photo stays readable by its uploader after the diary or entry it was attached to is deleted, because photos belong to the uploader's library (rule (a) does not look at diaries or entries). Everyone else loses access with the diary or entry, since rules (b) and (c) require a live entry in a live diary.
 
 ## Scan worker
 

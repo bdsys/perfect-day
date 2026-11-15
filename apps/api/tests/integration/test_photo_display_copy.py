@@ -201,3 +201,54 @@ def gps_heic_exif() -> bytes:
     gps = exif.get_ifd(0x8825)
     gps[1], gps[2] = "N", (47.0, 36.0, 0.0)
     return exif.tobytes()
+
+
+@pytest.mark.asyncio
+async def test_bad_photos_do_not_starve_new_ones(client, db_session, s3_client, photos_bucket):
+    from datetime import UTC, datetime, timedelta
+
+    from app.workers.beat_tasks import create_missing_display_copies
+
+    user = await make_user(db_session)
+    old = datetime.now(tz=UTC) - timedelta(days=30)
+    bad_ids = []
+    for i in range(20):  # objects missing: permanently bad, and older than the good one
+        bad = await make_photo(db_session, user=user, mime_type="image/heic")
+        bad.created_at = old + timedelta(minutes=i)
+        bad_ids.append(str(bad.id))
+    await db_session.commit()
+    good = await _old_heic(db_session, s3_client, photos_bucket, user)
+    good_id = str(good.id)
+
+    await create_missing_display_copies(limit=20)
+    await create_missing_display_copies(limit=20)
+
+    db_session.expire_all()
+    assert (await _row(db_session, good_id)).display_s3_key is not None
+    for bid in bad_ids:
+        assert (await _row(db_session, bid)).display_attempted_at is not None
+
+
+@pytest.mark.asyncio
+async def test_ingest_logs_display_failure(client, db_session):
+    from unittest.mock import patch
+
+    from structlog.testing import capture_logs
+
+    from app.services.photo_ingest import ingest_photo
+
+    user = await make_user(db_session)
+    with (
+        patch("app.services.photo_ingest.make_display_jpeg", side_effect=ValueError("secret-text")),
+        capture_logs() as logs,
+    ):
+        photo = await ingest_photo(
+            db_session, owner=user, data=heic_bytes(), source="upload"
+        )
+    assert photo.display_s3_key is None
+    events = [e for e in logs if e["event"] == "display_copy_failed"]
+    assert len(events) == 1
+    assert events[0]["photo_id"] is not None
+    assert events[0]["error_class"] == "ValueError"
+    assert set(events[0]) <= {"event", "log_level", "photo_id", "error_class"}
+    assert "secret-text" not in str(events[0])

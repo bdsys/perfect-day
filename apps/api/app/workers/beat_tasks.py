@@ -164,7 +164,7 @@ async def create_missing_display_copies(limit: int = 20) -> int:
     """Give HEIC/HEIF photos that lack a JPEG display copy one. Returns how many were made."""
     import asyncio
 
-    from sqlalchemy import select
+    from sqlalchemy import func, select
 
     from app.core.photo_crypto import PURPOSE_DISPLAY, decrypt_stream, encrypt_stream, unwrap_dek
     from app.models import Photo
@@ -184,11 +184,13 @@ async def create_missing_display_copies(limit: int = 20) -> int:
                     Photo.deleted_at.is_(None),
                     Photo.dek_ciphertext.is_not(None),
                 )
-                .order_by(Photo.created_at)
+                .order_by(Photo.display_attempted_at.asc().nulls_first(), Photo.created_at)
                 .limit(limit)
             )
         ).scalars().all()
         for photo in photos:
+            # Stamped on every attempt so a failing photo goes behind untried ones.
+            photo.display_attempted_at = func.now()
             try:
                 dek = unwrap_dek(photo.dek_ciphertext, photo.user_id)
                 key = f"{photo.user_id}/{photo.id}_display.enc"

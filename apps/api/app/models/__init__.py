@@ -426,6 +426,7 @@ class Photo(TimestampMixin, SoftDeleteMixin, Base):
     external_id: Mapped[str | None] = mapped_column(Text)
     thumbnail_s3_key: Mapped[str | None] = mapped_column(Text)
     display_s3_key: Mapped[str | None] = mapped_column(Text)
+    display_attempted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     ai_description: Mapped[str | None] = mapped_column(Text)
     dek_ciphertext: Mapped[bytes | None] = mapped_column(LargeBinary)  # type: ignore[valid-type]
     finalized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -502,6 +503,8 @@ class EntryPhoto(Base):
 
     entry: Mapped[Entry] = relationship(back_populates="entry_photos")
     photo: Mapped[Photo] = relationship(back_populates="entry_photos")
+
+    __table_args__ = (Index("ix_entry_photos_photo_id", "photo_id"),)
 
 
 # ---------------------------------------------------------------------------

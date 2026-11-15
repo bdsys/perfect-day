@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from functools import partial
 from typing import Literal
 
+import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.photo_crypto import (
@@ -30,6 +31,8 @@ from app.services.photos import (
     parse_exif,
     put_object_bytes,
 )
+
+log = structlog.get_logger()
 
 
 class UnsupportedPhoto(Exception):  # noqa: N818 — named by the task interface
@@ -57,10 +60,13 @@ async def ingest_photo(
     except ValueError:
         thumb = b""  # non-fatal: store without a thumbnail
 
+    photo_id = uuid.uuid4()
     try:
         display = await loop.run_in_executor(None, lambda: make_display_jpeg(data, mime))
-    except ValueError:
+    except ValueError as exc:
         display = None  # non-fatal: the backfill sweep retries
+        # Class only: exception text can carry file content or paths.
+        log.warning("display_copy_failed", photo_id=str(photo_id), error_class=type(exc).__name__)
 
     dek = generate_dek()
     wrapped = wrap_dek(dek, owner.id)
@@ -77,7 +83,6 @@ async def ingest_photo(
         else None
     )
 
-    photo_id = uuid.uuid4()
     full_key = f"{owner.id}/{photo_id}.enc"
     thumb_key = f"{owner.id}/{photo_id}_thumb.enc"
     display_key = f"{owner.id}/{photo_id}_display.enc"
