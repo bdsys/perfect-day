@@ -8,9 +8,12 @@ from datetime import UTC, datetime
 from unittest.mock import patch
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import func, select, update
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models import DiaryPermission, EntryPhoto, Photo, User
+from app.services.photo_limits import ensure_photo_room
 from tests.integration.photo_helpers import jpeg_with_exif, register_and_login, upload_photo
 from tests.integration.test_photo_imports import (
     FakeGoogle,
@@ -97,14 +100,29 @@ async def test_plus_attaches_many(client, db_session):
 
 
 @pytest.mark.asyncio
-async def test_concurrent_attach_keeps_one_photo(client, db_session):
+async def test_concurrent_attach_keeps_one_photo(client, db_engine, db_session):
     auth, entry = await _setup(client, "pl-race")
     p1, p2 = await _new_photo(client, auth), await _new_photo(client, auth)
-    # Two requests at once: each gets its own database session from the app.
-    r1, r2 = await asyncio.gather(
-        _attach(client, auth, entry["id"], p1), _attach(client, auth, entry["id"], p2)
-    )
-    assert sorted([r1.status_code, r2.status_code]) == [201, 403]
+    owner = await _user(db_session, "pl-race@example.com")
+    entry_id = uuid.UUID(entry["id"])
+    factory = async_sessionmaker(db_engine, expire_on_commit=False, class_=AsyncSession)
+
+    async def attach(photo_id: str) -> int:
+        # What the attach route does, in its own session: check for room, then add.
+        async with factory() as s:
+            try:
+                await ensure_photo_room(s, entry_id, owner)
+            except HTTPException as e:
+                await s.rollback()
+                return e.status_code
+            s.add(EntryPhoto(entry_id=entry_id, photo_id=uuid.UUID(photo_id), position=0))
+            # Hold the transaction open a moment so the racers overlap.
+            await asyncio.sleep(0.05)
+            await s.commit()
+            return 201
+
+    results = await asyncio.gather(attach(p1), attach(p2))
+    assert sorted(results) == [201, 403]
     assert await _count(db_session, entry["id"]) == 1
 
 
