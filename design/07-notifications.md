@@ -117,7 +117,7 @@ Each `notifications.payload` jsonb field has a fixed shape per `kind`:
 | `integration_revoked` | `{provider: "google", diary_ids: [uuid], scope: string}` |
 | `entry_published` | `{diary_id, diary_name, entry_id, entry_date, entry_title: string}` |
 | `invite_received` | `{diary_id, diary_name, inviter_display_name: string, role: "viewer|editor", invitation_token: string}` |
-| `tier_limit` | `{diary_id, limit_type: "diary_count|ai_draft|photo", current: int, limit: int, required_tier: string}` |
+| `tier_limit` | Planned, not built — nothing sends this notification yet. `{diary_id, limit_type: "diary|ai_draft|photo|diary_read_only", current: int, limit: int, required_tier: string}` (`limit_type` values match the API's `LimitSource`). |
 | `deletion_grace` | `{target_type: "account|diary", target_id: uuid, hard_delete_after: datetime, days_remaining: int}` |
 
 Payload is stored in the `notifications` row and also passed to push/email channels. Email and push templates consume the same payload struct.

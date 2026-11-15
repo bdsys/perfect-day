@@ -105,7 +105,7 @@ None of this was verified on the NUC.
 
 ## Design drift
 
-- **Tiers.** Code uses `free / tier1 / tier2` (now `free / plus / family`, item 18) with Free capped at 5 manual and 3 auto entries for the lifetime of the account. `COMPETITION.md` says Free / Plus / Family, unlimited manual entries, 5 AI drafts per month. Photo uploads are not gated. (Item 18.)
+- **Tiers.** Resolved by item 18. Code used `free / tier1 / tier2` with Free capped at 5 manual and 3 auto entries for the lifetime of the account, and photo uploads were not gated. It now follows `COMPETITION.md`: Free / Plus / Family, unlimited manual entries, 5 AI drafts per month and 1 photo per entry on Free.
 - **Google Photos.** `photoslibrary.readonly` was removed by Google on 2025-03-31; item 14 needs a redesign around the Picker API. Source: <https://developers.google.com/photos/support/updates>
 - **Edit diffs.** `entry_edit_diffs` is never written. (`publish_entry` used to run a query and discard the result; that dead query is removed.)
 - **Markdown.** `body_markdown` is shown as plain text, so the fallback body's `**bold**` markers appeared literally. Fixed (TR-9): the fallback body has no Markdown, the prompt says "Do not use Markdown", and paired `**`/`__` and leading `#` heading markers are stripped from the model's title and body before they are stored. The sanitising render pipeline in `03-api-surface.md` is not built. (No XSS exposure as a result.)
