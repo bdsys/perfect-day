@@ -32,5 +32,21 @@ it('a diary_read_only restore error shows the read-only banner, not the entry-co
   expect(
     await screen.findByText(/This diary is read-only on the Free plan\. Upgrade, or delete another diary, to use it again\./),
   ).toBeInTheDocument()
+  expect(screen.getByRole('link', { name: 'Upgrade now' })).toHaveAttribute('href', '/plans')
   expect(screen.queryByText(/free-tier limit/)).not.toBeInTheDocument()
+})
+
+it('any other restore error shows its message, never a limit sentence or the dead upgrade link', async () => {
+  ;(api.diaries.get as jest.Mock).mockResolvedValue({ id: 'd1', name: 'D', plan: { plan_name: 'Free' } })
+  ;(api.entries.listTrash as jest.Mock).mockResolvedValue([
+    { id: 'e1', title: 'Old', entry_date: '2026-05-16', deleted_at: new Date().toISOString() },
+  ])
+  ;(api.entries.restore as jest.Mock).mockRejectedValue(
+    new ApiError(403, 'Not allowed', 'tier_limit', { source: 'diary', limit: 1, current: 1 }),
+  )
+  render(<EntryRestorePage />)
+  fireEvent.click(await screen.findByRole('button', { name: /restore/i }))
+  expect(await screen.findByText('Not allowed')).toBeInTheDocument()
+  expect(screen.queryByText(/free-tier limit/)).not.toBeInTheDocument()
+  expect(document.querySelector('a[href="/account/upgrade"]')).toBeNull()
 })
