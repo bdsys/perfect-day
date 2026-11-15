@@ -1,7 +1,7 @@
 'use client'
 
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react'
-import { api, setAccessToken } from '@/lib/api'
+import { api, refreshAccessToken, setAccessToken } from '@/lib/api'
 
 interface AuthState {
   user: Record<string, unknown> | null
@@ -27,17 +27,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     // Try to refresh on mount (may have a valid cookie)
-    fetch(`${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'}/v1/auth/refresh`, {
-      method: 'POST',
-      credentials: 'include',
-    })
-      .then((r) => r.json())
-      .then((data) => {
-        if (data.access_token) {
-          setAccessToken(data.access_token)
-          return api.auth.me()
-        }
-      })
+    refreshAccessToken()
+      .then((ok) => (ok ? api.auth.me() : undefined))
       .then((me) => {
         if (me) setUser(me as Record<string, unknown>)
       })

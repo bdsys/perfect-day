@@ -72,17 +72,28 @@ export async function parseApiError(res: { status: number; json: () => Promise<u
   return new ApiError(res.status, fallback)
 }
 
-/** Refresh the access token via the refresh cookie. True when a new token was stored. */
-async function refreshAccessToken(): Promise<boolean> {
-  try {
-    const res = await fetch(`${API_BASE}/v1/auth/refresh`, { method: 'POST', credentials: 'include' })
-    if (res.ok) {
-      setAccessToken(((await res.json()) as TokenPair).access_token)
-      return true
-    }
-  } catch {}
-  _accessToken = null
-  return false
+let inflightRefresh: Promise<boolean> | null = null
+
+/**
+ * Refresh the access token via the refresh cookie. True when a new token was stored.
+ * Single-flight: refresh tokens rotate, so concurrent callers must share one request.
+ */
+export function refreshAccessToken(): Promise<boolean> {
+  if (inflightRefresh) return inflightRefresh
+  inflightRefresh = (async () => {
+    try {
+      const res = await fetch(`${API_BASE}/v1/auth/refresh`, { method: 'POST', credentials: 'include' })
+      if (res.ok) {
+        setAccessToken(((await res.json()) as TokenPair).access_token)
+        return true
+      }
+    } catch {}
+    _accessToken = null
+    return false
+  })().finally(() => {
+    inflightRefresh = null
+  })
+  return inflightRefresh
 }
 
 async function apiFetchBlob(path: string, retryOn401 = true): Promise<Blob> {
@@ -95,20 +106,7 @@ async function apiFetchBlob(path: string, retryOn401 = true): Promise<Blob> {
     credentials: 'include',
   })
   if (res.status === 401 && retryOn401) {
-    // Try to refresh
-    try {
-      const refreshRes = await fetch(`${API_BASE}/v1/auth/refresh`, {
-        method: 'POST',
-        credentials: 'include',
-      })
-      if (refreshRes.ok) {
-        const data = (await refreshRes.json()) as TokenPair
-        setAccessToken(data.access_token)
-        return apiFetchBlob(path, false)
-      }
-    } catch {}
-    // Refresh failed — clear token
-    _accessToken = null
+    if (await refreshAccessToken()) return apiFetchBlob(path, false)
     throw new ApiError(401, 'unauthorized')
   }
   if (!res.ok) throw await parseApiError(res)
@@ -136,20 +134,7 @@ async function apiFetch<T>(
   })
 
   if (res.status === 401 && retryOn401) {
-    // Try to refresh
-    try {
-      const refreshRes = await fetch(`${API_BASE}/v1/auth/refresh`, {
-        method: 'POST',
-        credentials: 'include',
-      })
-      if (refreshRes.ok) {
-        const data = (await refreshRes.json()) as TokenPair
-        setAccessToken(data.access_token)
-        return apiFetch<T>(path, options, false)
-      }
-    } catch {}
-    // Refresh failed — clear token
-    _accessToken = null
+    if (await refreshAccessToken()) return apiFetch<T>(path, options, false)
     throw new Error('unauthorized')
   }
 

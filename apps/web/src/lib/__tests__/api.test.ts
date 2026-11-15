@@ -1,4 +1,4 @@
-import { api, setAccessToken, type Photo } from "../api";
+import { api, setAccessToken, refreshAccessToken, type Photo } from "../api";
 
 const MOCK_TOKEN = "test-token";
 
@@ -158,5 +158,49 @@ describe("api.photos.upload", () => {
     const p2 = api.photos.upload(f);
     FakeXHR.instances[1].ontimeout?.();
     await expect(p2).rejects.toThrow("upload network error");
+  });
+});
+
+describe("shared token refresh", () => {
+  const isRefresh = (url: string) => url.endsWith("/v1/auth/refresh");
+
+  it("three 401s at once make one refresh call", async () => {
+    let refreshed = false;
+    global.fetch = jest.fn(async (url: string) => {
+      if (isRefresh(url)) {
+        await new Promise((r) => setTimeout(r, 10));
+        refreshed = true;
+        return { ok: true, status: 200, json: async () => ({ access_token: "new-token" }) } as unknown as Response;
+      }
+      if (!refreshed) return { ok: false, status: 401, json: async () => ({}) } as unknown as Response;
+      return { ok: true, status: 200, json: async () => ({ ok: true }) } as unknown as Response;
+    }) as unknown as typeof fetch;
+
+    const results = await Promise.all([
+      api.photos.listForUser(),
+      api.photos.listForUser(),
+      api.photos.listForUser(),
+    ]);
+
+    const refreshCalls = (global.fetch as jest.Mock).mock.calls.filter(([u]) => isRefresh(u as string));
+    expect(refreshCalls).toHaveLength(1);
+    expect(results).toHaveLength(3);
+  });
+
+  it("a refresh after the first settles starts a new one", async () => {
+    global.fetch = jest.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ access_token: "t" }),
+    })) as unknown as typeof fetch;
+
+    const a = refreshAccessToken();
+    const b = refreshAccessToken();
+    expect(await a).toBe(true);
+    expect(await b).toBe(true);
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+
+    expect(await refreshAccessToken()).toBe(true);
+    expect(global.fetch).toHaveBeenCalledTimes(2);
   });
 });
