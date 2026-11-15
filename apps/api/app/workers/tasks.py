@@ -708,10 +708,13 @@ def generate_entry_draft(self, entry_id: str, trigger: str = "background") -> No
 
     Tasks queued before 25.3 carry no trigger and run as background redrafts.
     """
-    run_sync(_generate_entry_draft(entry_id, trigger))
+    # The task id keys the AI-draft reservation, so a redelivery never spends twice.
+    run_sync(_generate_entry_draft(entry_id, trigger, reservation_key=self.request.id))
 
 
-async def _generate_entry_draft(entry_id_str: str, trigger: str = "background") -> None:
+async def _generate_entry_draft(
+    entry_id_str: str, trigger: str = "background", *, reservation_key: str | None = None
+) -> None:
     from app.services.entry_location import update_place_and_weather
     from app.workers.llm import generate_draft_for_entry
     from app.workers.utils import db_session
@@ -732,7 +735,7 @@ async def _generate_entry_draft(entry_id_str: str, trigger: str = "background") 
             entry_id=entry_id_str,
             error=str(exc),
         )
-    await generate_draft_for_entry(entry_uuid, trigger=why)
+    await generate_draft_for_entry(entry_uuid, trigger=why, reservation_key=reservation_key)
 
 
 # ---------------------------------------------------------------------------

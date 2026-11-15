@@ -502,7 +502,30 @@ _SUGGESTED_BODY_SOURCE = {"events": "llm", "polish": "llm_polished", "hybrid": "
 
 
 async def generate_draft_for_entry(
-    entry_id: uuid.UUID, trigger: Literal["regenerate", "background"] = "background"
+    entry_id: uuid.UUID,
+    trigger: Literal["regenerate", "background"] = "background",
+    *,
+    reservation_key: str | None = None,
+) -> None:
+    """Draft an entry's text with the LLM, spending one of the owner's AI drafts.
+
+    The draft is reserved under *reservation_key* (the Celery task id, so a
+    retry never spends twice) and given back whenever no AI text is saved.
+    """
+    from app.services.ai_drafts import release_ai_draft
+
+    reservation_key = reservation_key or uuid.uuid4().hex
+    try:
+        await _generate_draft(entry_id, trigger, reservation_key)
+    except Exception:
+        # Something broke before the AI text was saved: give the draft back.
+        async with db_session() as db:
+            await release_ai_draft(db, reservation_key)
+        raise
+
+
+async def _generate_draft(
+    entry_id: uuid.UUID, trigger: Literal["regenerate", "background"], reservation_key: str
 ) -> None:
     """Draft an entry's text with the LLM.
 
@@ -518,7 +541,8 @@ async def generate_draft_for_entry(
     from sqlalchemy import select
     from sqlalchemy.orm import selectinload
 
-    from app.models import Diary, Entry, LLMGeneration
+    from app.models import Diary, Entry, LLMGeneration, User
+    from app.services.ai_drafts import AI_DRAFT_LIMIT_ERROR, release_ai_draft, reserve_ai_draft
     from app.services.read_only import is_diary_read_only
     from app.workers.event_changes import MACHINE_ONLY_BODY_SOURCES
 
@@ -592,6 +616,35 @@ async def generate_draft_for_entry(
                 error="no_inputs",
             )
             db.add(gen)
+            entry.updated_at = datetime.now(UTC)
+            return
+
+        # The owner's plan pays for the draft, whoever asked for it. The
+        # reservation commits with this session, before any provider is called.
+        owner = (
+            await db.execute(select(User).where(User.id == diary.owner_user_id))
+        ).scalar_one()
+        reserved = await reserve_ai_draft(
+            db, owner=owner, entry_id=entry.id, key=reservation_key
+        )
+        if not reserved:
+            # Out of AI drafts this month: no provider call. An empty entry still
+            # gets its events listed; text already there is left alone.
+            log.info("generate_draft_ai_draft_limit", entry_id=str(entry_id), mode=mode)
+            if mode == "events" and not has_body and write_in_place:
+                entry.title, entry.body_markdown = _build_fallback_body(events, entry.entry_date)
+                entry.body_source = "fallback"
+                entry.flagged_tokens = []
+            db.add(
+                LLMGeneration(
+                    entry_id=entry.id,
+                    model="none",
+                    prompt_hash="",
+                    status="failed",
+                    mode=mode,
+                    error=AI_DRAFT_LIMIT_ERROR,
+                )
+            )
             entry.updated_at = datetime.now(UTC)
             return
 
@@ -760,6 +813,7 @@ async def generate_draft_for_entry(
         entry_result = await db.execute(select(Entry).where(Entry.id == entry_id))
         entry_update = entry_result.scalar_one_or_none()
         if entry_update is None:
+            await release_ai_draft(db, reservation_key)
             return
 
         # The provider call above can take many seconds. If the entry was deleted
@@ -770,6 +824,7 @@ async def generate_draft_for_entry(
         ):
             log.info("generate_draft_discarded_entry_changed", entry_id=str(entry_id))
             entry_update.updated_at = datetime.now(UTC)
+            await release_ai_draft(db, reservation_key)
             return
 
         if entry_update.status == "published" or (
@@ -886,6 +941,9 @@ async def generate_draft_for_entry(
             )
 
         db.add(gen)
+        if gen.status != "success":
+            # No AI text was saved: the draft is given back.
+            await release_ai_draft(db, reservation_key)
         log.info(
             "generate_entry_draft_done",
             entry_id=str(entry_id),

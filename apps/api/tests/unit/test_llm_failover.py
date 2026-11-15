@@ -16,6 +16,16 @@ from app.workers.llm_providers import (
     LLMUnusableResponseError,
 )
 
+
+@pytest.fixture(autouse=True)
+def _ai_drafts_available():
+    """The AI-draft quota is covered in tests/integration/test_ai_drafts.py."""
+    with (
+        patch("app.services.ai_drafts.reserve_ai_draft", new=AsyncMock(return_value=True)),
+        patch("app.services.ai_drafts.release_ai_draft", new=AsyncMock()),
+    ):
+        yield
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
