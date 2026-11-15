@@ -15,7 +15,7 @@ import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote
 
 import httpx
 
@@ -181,13 +181,6 @@ def _check(resp: httpx.Response) -> None:
 GOOGLE_DOMAINS = ("googleusercontent.com", "google.com", "googleapis.com")
 
 
-def _host(url: str) -> str:
-    try:
-        return (urlsplit(url).hostname or "").lower()
-    except ValueError:
-        return ""
-
-
 def _is_google_host(host: str) -> bool:
     """Exactly a Google domain or a subdomain of one (not evilgoogle.com, not google.com.evil.x)."""
     return any(host == d or host.endswith("." + d) for d in GOOGLE_DOMAINS)
@@ -239,7 +232,10 @@ class GooglePhotosClient:
             f"{BASE_URL}/sessions",
             json={"pickingConfig": {"maxItemCount": str(max_items)}},
         )
-        return _session(self._json(resp))
+        session = _session(self._json(resp))
+        if not session.picker_uri:
+            raise GoogleError("unexpected reply")  # the parent could not open the picker
+        return session
 
     async def get_session(self, id: str) -> PickerSession:  # noqa: A002 — named by the interface
         resp = await self._request("GET", f"{BASE_URL}/sessions/{quote(id, safe='')}")
@@ -268,7 +264,11 @@ class GooglePhotosClient:
         if not item.base_url.startswith("https://"):
             # The bearer token must only ever travel over TLS.
             raise GoogleError("base url is not https")
-        host = _host(item.base_url)
+        try:
+            url = httpx.URL(f"{item.base_url}=d")
+        except httpx.InvalidURL:
+            raise GoogleError("unexpected host") from None
+        host = url.host.lower()
         if not _is_google_host(host):
             # httpx drops Authorization on cross-origin redirects, so the first host is the
             # one that matters. Only the host name is logged, never the URL.
@@ -277,7 +277,7 @@ class GooglePhotosClient:
         buf = bytearray()
         try:
             async with self._client(DOWNLOAD_TIMEOUT, follow_redirects=True) as client:
-                async with client.stream("GET", f"{item.base_url}=d") as resp:
+                async with client.stream("GET", url) as resp:
                     if resp.status_code in (401, 403):
                         await resp.aread()  # small error body, so _check can classify it
                     _check(resp)

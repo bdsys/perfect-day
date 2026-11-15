@@ -828,7 +828,7 @@ async def test_sweep_failed_is_not_overwritten(client, db_session):
 
 
 @pytest.mark.asyncio
-async def test_create_session_missing_field_is_503_not_500(client, db_session):
+async def test_create_session_missing_field_is_502_not_500(client, db_session):
     from app.services.google_photos import GooglePhotosClient
 
     auth, entry = await _owner_with_entry(client, db_session, "pi-bad-reply")
@@ -855,31 +855,85 @@ async def test_create_session_missing_field_is_503_not_500(client, db_session):
     queued.assert_not_called()
 
 
-@pytest.mark.asyncio
-async def test_losing_edit_rights_mid_copy_stops(client, db_session):
-    owner, entry = await _owner_with_entry(client, db_session, "pi-lose-owner", connected=False)
-    editor = await register_and_login(client, "pi-lose-editor@example.com")
-    await _connect_photos(db_session, "pi-lose-editor@example.com")
-    editor_id = (await _user(db_session, "pi-lose-editor@example.com")).id
+async def _editor_import(client, db_session, prefix: str, picks):
+    owner, entry = await _owner_with_entry(client, db_session, f"{prefix}-owner", connected=False)
+    email = f"{prefix}-editor@example.com"
+    editor = await register_and_login(client, email)
+    await _connect_photos(db_session, email)
+    editor_id = (await _user(db_session, email)).id
     db_session.add(
         DiaryPermission(diary_id=uuid.UUID(entry["diary_id"]), user_id=editor_id, role="editor")
     )
     await db_session.commit()
-    fake = FakeGoogle([_photo(1, read_fixture("sample.jpg")), _photo(2, jpeg_with_exif())])
+    fake = FakeGoogle(picks)
     imp = await _start(client, editor, entry["id"], fake)
+    return entry, editor_id, fake, imp
 
-    async def drop_rights_during_first(item):
-        if item.id == "g-item-1":
-            await db_session.execute(
-                sa_delete(DiaryPermission).where(DiaryPermission.user_id == editor_id)
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("how", ["removed", "downgraded"])
+async def test_losing_edit_rights_mid_copy_stops(client, db_session, how):
+    entry, editor_id, fake, imp = await _editor_import(
+        client,
+        db_session,
+        f"pi-lose-{how}",
+        [_photo(1, read_fixture("sample.jpg")), _photo(2, jpeg_with_exif())],
+    )
+
+    async def lose_rights_during_second_download(item):
+        if item.id != "g-item-2":
+            return
+        if how == "removed":
+            stmt = sa_delete(DiaryPermission).where(DiaryPermission.user_id == editor_id)
+        else:
+            stmt = (
+                update(DiaryPermission)
+                .where(DiaryPermission.user_id == editor_id)
+                .values(role="viewer")
             )
-            await db_session.commit()
+        await db_session.execute(stmt)
+        await db_session.commit()
 
-    fake.on_download = drop_rights_during_first
+    fake.on_download = lose_rights_during_second_download
     await _run_worker(imp["id"], fake)
 
     row = await _import_row(db_session, imp["id"])
     assert row.status == "failed"
     assert row.added_count == 1
-    assert fake.downloads == ["g-item-1"]
+    assert fake.downloads == ["g-item-1", "g-item-2"]
     assert len(await _entry_photos(db_session, entry["id"])) == 1
+
+
+@pytest.mark.asyncio
+async def test_can_still_edit_owner_editor_viewer(client, db_session):
+    from app.workers.photo_imports import _can_still_edit
+
+    owner, entry = await _owner_with_entry(client, db_session, "pi-cse-owner", connected=False)
+    entry_id = uuid.UUID(entry["id"])
+    owner_id = (await _user(db_session, "pi-cse-owner@example.com")).id
+    await register_and_login(client, "pi-cse-user@example.com")
+    user_id = (await _user(db_session, "pi-cse-user@example.com")).id
+    assert await _can_still_edit(db_session, entry_id, owner_id) is True
+    assert await _can_still_edit(db_session, entry_id, user_id) is False  # no permission
+
+    perm = DiaryPermission(diary_id=uuid.UUID(entry["diary_id"]), user_id=user_id, role="editor")
+    db_session.add(perm)
+    await db_session.commit()
+    assert await _can_still_edit(db_session, entry_id, user_id) is True
+
+    # Downgraded in place: the loaded row must not hand back the old role.
+    perm.role = "viewer"
+    await db_session.commit()
+    await db_session.refresh(perm)
+    await db_session.execute(
+        update(DiaryPermission).where(DiaryPermission.id == perm.id).values(role="editor")
+    )
+    assert await _can_still_edit(db_session, entry_id, user_id) is True
+    await db_session.execute(
+        update(DiaryPermission)
+        .where(DiaryPermission.id == perm.id)
+        .values(role="viewer")
+        .execution_options(synchronize_session=False)
+    )
+    assert perm.role == "editor"  # the identity map is stale on purpose
+    assert await _can_still_edit(db_session, entry_id, user_id) is False

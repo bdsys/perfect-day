@@ -377,3 +377,39 @@ async def test_item_missing_id_is_a_google_error():
 
     with pytest.raises(GoogleError, match="unexpected reply"):
         await _client(handler).list_items("s")
+
+
+async def test_download_checks_the_host_of_the_url_actually_requested():
+    # "=d" is appended to the base url: a path-less base must still be judged by its real host.
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("a request was made to a host that is not Google's")
+
+    for base in ("https://evil.example", "https://googleusercontent.com.evil.example"):
+        item = PickedItem("item-1", "PHOTO", None, base, None, "a.jpg")
+        with pytest.raises(GoogleError, match="unexpected host"):
+            await _client(handler).download(item)
+
+
+@pytest.mark.parametrize(
+    "base",
+    [
+        "https://lh3.googleusercontent.com",  # "=d" would become part of the host
+        "https://lh3.googleusercontent.com:443",  # ... or of the port
+        "https://lh3.googleusercontent.com@evil.example",
+    ],
+)
+async def test_download_path_less_base_url_is_judged_by_the_real_request_host(base):
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("a request was made with a host that is not Google's")
+
+    item = PickedItem("item-1", "PHOTO", None, base, None, "a.jpg")
+    with pytest.raises(GoogleError, match="unexpected host"):
+        await _client(handler).download(item)
+
+
+async def test_create_session_with_empty_picker_uri_is_a_google_error():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"id": "sess-1"})
+
+    with pytest.raises(GoogleError, match="unexpected reply"):
+        await _client(handler).create_session()

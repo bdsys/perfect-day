@@ -20,7 +20,16 @@ import structlog
 from sqlalchemy import CursorResult, and_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import EntryPhoto, OAuthToken, Photo, PhotoImport, User
+from app.models import (
+    Diary,
+    DiaryPermission,
+    Entry,
+    EntryPhoto,
+    OAuthToken,
+    Photo,
+    PhotoImport,
+    User,
+)
 from app.services import google_photos
 from app.services.google_photos import (
     GoogleAuthError,
@@ -271,13 +280,6 @@ async def _copy(
             await db.refresh(imp, ["status"])
             if imp.status != "copying":  # cancelled meanwhile
                 break
-            try:
-                # Rights can be taken away while the copy runs: check once per item.
-                await _get_entry_or_404(entry_id, user, db, require_editor=True)
-            except HTTPException:
-                # The worker has no HTTP context: a refusal is lost rights. Keep what was added.
-                await _set_status(db, imp, "failed")
-                break
             if item.type == "VIDEO":
                 imp.skipped_videos += 1
                 await db.commit()
@@ -296,6 +298,12 @@ async def _copy(
                         taken_at_fallback=item.create_time,
                     )
                     del data
+                # Rights can be taken away while the copy runs (a download takes up to a
+                # minute): check once per item, right before attaching. The photo just
+                # downloaded stays in the library; earlier photos stay attached.
+                if not await _can_still_edit(db, entry_id, imp.user_id):
+                    await _set_status(db, imp, "failed")
+                    break
                 if await _attach(db, entry_id, photo.id):
                     imp.added_count += 1
                     added_any = True
@@ -320,6 +328,31 @@ async def _copy(
         if added_any:
             queue_location_refresh(entry_id)
     return None
+
+
+async def _can_still_edit(db: AsyncSession, entry_id: uuid.UUID, user_id: uuid.UUID) -> bool:
+    """One scalar query mirroring _get_entry_or_404(require_editor=True).
+
+    The entry and its diary are not deleted and the user owns the diary or holds a
+    permission that is not "viewer". Scalars, not ORM objects, so a role changed
+    since an earlier load is never served from the identity map.
+    """
+    row = (
+        await db.execute(
+            select(Diary.owner_user_id, DiaryPermission.role)
+            .select_from(Entry)
+            .join(Diary, Diary.id == Entry.diary_id)
+            .outerjoin(
+                DiaryPermission,
+                and_(DiaryPermission.diary_id == Diary.id, DiaryPermission.user_id == user_id),
+            )
+            .where(Entry.id == entry_id, Entry.deleted_at.is_(None), Diary.deleted_at.is_(None))
+        )
+    ).first()
+    if row is None:
+        return False
+    owner_id, role = row
+    return owner_id == user_id or (role is not None and role != "viewer")
 
 
 def _name(item: PickedItem) -> str:
