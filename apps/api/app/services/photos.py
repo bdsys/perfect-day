@@ -134,9 +134,9 @@ except ImportError:
 
 
 def strip_location(data: bytes, mime: str) -> bytes:
-    """Return the image with its GPS location removed (other EXIF is kept for JPEG).
+    """Return the image with its location and device metadata removed.
 
-    JPEG: re-saved at the original quality with the EXIF minus the GPS IFD.
+    JPEG: re-saved at the original quality with the EXIF reduced to Orientation only.
     Other types: re-saved in the same format without metadata.
     Raises ValueError if the bytes are not a readable image.
     """
@@ -151,11 +151,17 @@ def strip_location(data: bytes, mime: str) -> bytes:
             icc_kw = {"icc_profile": icc} if icc else {}
             out = BytesIO()
             if fmt == "JPEG":
-                exif = img.getexif()
-                exif.pop(0x8825, None)
+                # Keep only Orientation. Make, MakerNote, GPS and the IFD1 thumbnail can
+                # identify a device or carry a location, so a fresh Exif drops them all.
+                orientation = img.getexif().get(0x0112)
+                kept = Image.Exif()
+                if orientation is not None:
+                    kept[0x0112] = orientation
+                exif_kw = {"exif": kept.tobytes()} if len(kept) else {}
+                img.info.pop("exif", None)
                 img.info.pop("xmp", None)
                 img.info.pop("XML:com.adobe.xmp", None)
-                img.save(out, "JPEG", quality="keep", exif=exif, **icc_kw)
+                img.save(out, "JPEG", quality="keep", **exif_kw, **icc_kw)
             else:
                 # Savers (pillow-heif, PNG, WebP) copy metadata out of img.info;
                 # clear everything that can carry a location.
