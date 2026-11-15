@@ -15,7 +15,6 @@ from app.core.database import get_db
 from app.models import Entry, Event, User
 from app.routers.v1.diaries import _get_diary_or_404
 from app.routers.v1.entries import EntryOut, _entry_out_from_orm
-from app.services.tier import enforce_entry_tier_limit
 from app.workers.tasks import generate_entry_draft
 
 router = APIRouter(tags=["calendar_events"])
@@ -121,13 +120,6 @@ async def create_entry_from_event(
 
     if event.ends_at is not None and event.ends_at > datetime.now(tz=UTC):
         raise HTTPException(status_code=409, detail="event_not_ended")
-
-    await enforce_entry_tier_limit(
-        owner_user_id=user.id,
-        source="manual",
-        db=db,
-        owner_subscription_tier=user.subscription_tier,
-    )
 
     p = event.payload or {}
     raw_event = {"start": p.get("start", {}), "end": p.get("end", {})}

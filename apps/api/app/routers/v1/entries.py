@@ -23,7 +23,6 @@ from app.models import (
 )
 from app.routers.v1.diaries import _get_diary_or_404
 from app.services.flagged_words import still_present
-from app.services.tier import enforce_entry_tier_limit
 from app.workers.tz_utils import entry_dates_from_events
 
 router = APIRouter(tags=["entries"])
@@ -464,13 +463,6 @@ async def create_entry(
     if role == "viewer":
         raise HTTPException(status_code=403, detail="forbidden")
 
-    await enforce_entry_tier_limit(
-        owner_user_id=user.id,
-        source="manual",
-        db=db,
-        owner_subscription_tier=user.subscription_tier,
-    )
-
     entry = Entry(
         diary_id=diary_id,
         entry_date=body.entry_date,
@@ -679,14 +671,6 @@ async def restore_entry(
     diary, role = await _get_diary_or_404(entry.diary_id, user, db, require_owner=False)
     if role == "viewer":
         raise HTTPException(status_code=403, detail="forbidden")
-    owner_result = await db.execute(select(User).where(User.id == diary.owner_user_id))
-    owner = owner_result.scalar_one()
-    await enforce_entry_tier_limit(
-        owner_user_id=owner.id,
-        source=entry.created_by,
-        db=db,
-        owner_subscription_tier=owner.subscription_tier,
-    )
     entry.deleted_at = None
     return _entry_out_from_orm(entry, can_edit=role != "viewer", exact_places=role is None)
 

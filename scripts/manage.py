@@ -105,7 +105,7 @@ def users_list() -> None:
 @click.option("--email", required=True, help="User email address.")
 @click.option("--password", required=True, help="Plain-text password (will be hashed).")
 @click.option("--tier", default="free", show_default=True,
-              type=click.Choice(["free", "tier1", "tier2"]), help="Subscription tier.")
+              type=click.Choice(["free", "plus", "family"]), help="Subscription tier.")
 @click.option("--admin", is_flag=True, default=False, help="Grant admin flag.")
 def users_create(email: str, password: str, tier: str, admin: bool) -> None:
     """Create a new user with email/password auth."""
@@ -175,7 +175,7 @@ def users_delete(email: str, hard: bool) -> None:
 
 @users.command("set-tier")
 @click.option("--email", required=True, help="Email of the user.")
-@click.option("--tier", required=True, type=click.Choice(["free", "tier1", "tier2"]),
+@click.option("--tier", required=True, type=click.Choice(["free", "plus", "family"]),
               help="New subscription tier.")
 def users_set_tier(email: str, tier: str) -> None:
     """Change a user's subscription tier."""

@@ -97,7 +97,7 @@ class User(TimestampMixin, SoftDeleteMixin, Base):
 
     __table_args__ = (
         CheckConstraint(
-            "subscription_tier IN ('free','tier1','tier2')",
+            "subscription_tier IN ('free','plus','family')",
             name="ck_users_subscription_tier",
         ),
     )
@@ -445,6 +445,27 @@ class Photo(TimestampMixin, SoftDeleteMixin, Base):
         ),
         CheckConstraint("source IN ('google_photos','upload')", name="ck_photos_source"),
     )
+
+
+class AiDraftSpend(Base):
+    """One AI draft spent in a calendar month. Outlives its entry so deletes never refund."""
+
+    __tablename__ = "ai_draft_spends"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    entry_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("entries.id", ondelete="SET NULL")
+    )
+    month: Mapped[str] = mapped_column(String(7), nullable=False)
+    key: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (Index("ix_ai_draft_spends_user_month", "user_id", "month"),)
 
 
 class PhotoImport(TimestampMixin, Base):

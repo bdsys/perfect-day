@@ -14,10 +14,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import get_current_user
 from app.core.database import get_db
 from app.models import AuditLog, Diary, DiaryPermission, ScanJob, User
+from app.services.tier import limits_for, tier_limit_error
 
 router = APIRouter(prefix="/diaries", tags=["diaries"])
-
-TIER_DIARY_LIMITS = {"free": 1, "tier1": 2, "tier2": 4}
 
 
 def _slugify(name: str) -> str:
@@ -191,7 +190,7 @@ async def create_diary(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> DiaryOut:
-    limit = TIER_DIARY_LIMITS.get(user.subscription_tier, 1)
+    limit = limits_for(user.subscription_tier).diaries
 
     # Advisory lock to prevent check-then-create race. The key is derived in
     # Postgres: Python's hash() of a str is salted per process, so two API
@@ -206,13 +205,7 @@ async def create_diary(
     )
     current = count_result.scalar_one()
     if current >= limit:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={
-                "code": "tier_limit",
-                "details": {"limit": limit, "current": current, "source": "diary", "required_tier": "tier1"},
-            },
-        )
+        raise tier_limit_error(source="diary", limit=limit, current=current, needed=current + 1)
 
     slug = _slugify(body.name)
     # Ensure unique slug per owner
@@ -347,7 +340,7 @@ async def restore_diary(
     if diary.hard_delete_after and diary.hard_delete_after < datetime.now(tz=UTC):
         raise HTTPException(status_code=410, detail="grace_period_expired")
     # Check tier limit before restoring
-    limit = TIER_DIARY_LIMITS.get(user.subscription_tier, 1)
+    limit = limits_for(user.subscription_tier).diaries
     await db.execute(
         text("SELECT pg_advisory_xact_lock(hashtext(:uid))").bindparams(uid=str(user.id))
     )
@@ -358,22 +351,7 @@ async def restore_diary(
     )
     current = count_result.scalar_one()
     if current >= limit:
-        required_tier = next(
-            (t for t, lim in TIER_DIARY_LIMITS.items() if lim > limit),
-            "tier1",
-        )
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={
-                "code": "tier_limit",
-                "details": {
-                    "limit": limit,
-                    "current": current,
-                    "source": "diary",
-                    "required_tier": required_tier,
-                },
-            },
-        )
+        raise tier_limit_error(source="diary", limit=limit, current=current, needed=current + 1)
     # If the slug is now taken by a different active diary, assign a new unique one
     slug = diary.slug
     base_slug = slug

@@ -1,98 +1,69 @@
-"""Tier/entitlement enforcement helpers."""
+"""Plan limits and the 403 raised when a request would exceed them."""
 
 from __future__ import annotations
 
-import uuid
+from dataclasses import dataclass
+from datetime import date
+from typing import Any, Literal
 
 from fastapi import HTTPException
-from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
 
-TIER_ENTRY_LIMITS: dict[str, dict[str, int | None]] = {
-    "free": {"manual": 5, "auto": 3},
-    "tier1": {"manual": None, "auto": None},
-    "tier2": {"manual": None, "auto": None},
+LimitSource = Literal["diary", "ai_draft", "photo", "diary_read_only"]
+
+
+@dataclass(frozen=True)
+class PlanLimits:
+    diaries: int
+    ai_drafts_per_month: int | None  # None = unlimited
+    photos_per_entry: int | None  # None = unlimited
+
+
+# Ordered cheapest first: required_tier() returns the first plan that fits.
+PLAN_LIMITS: dict[str, PlanLimits] = {
+    "free": PlanLimits(diaries=1, ai_drafts_per_month=5, photos_per_entry=1),
+    "plus": PlanLimits(diaries=2, ai_drafts_per_month=None, photos_per_entry=None),
+    "family": PlanLimits(diaries=4, ai_drafts_per_month=None, photos_per_entry=None),
 }
 
+PLAN_NAMES: dict[str, str] = {"free": "Free", "plus": "Plus", "family": "Family"}
 
-async def enforce_entry_tier_limit(
+
+def limits_for(tier: str) -> PlanLimits:
+    """The limits for *tier*; an unknown tier is treated as free."""
+    return PLAN_LIMITS.get(tier, PLAN_LIMITS["free"])
+
+
+def _limit_for_source(limits: PlanLimits, source: LimitSource) -> int | None:
+    if source in ("diary", "diary_read_only"):
+        return limits.diaries
+    if source == "ai_draft":
+        return limits.ai_drafts_per_month
+    return limits.photos_per_entry
+
+
+def required_tier(source: LimitSource, needed: int) -> str:
+    """The cheapest plan whose limit for *source* allows *needed* (family if none does)."""
+    for tier, limits in PLAN_LIMITS.items():
+        cap = _limit_for_source(limits, source)
+        if cap is None or cap >= needed:
+            return tier
+    return "family"
+
+
+def tier_limit_error(
     *,
-    owner_user_id: uuid.UUID,
-    source: str,
-    db: AsyncSession,
-    owner_subscription_tier: str = "free",
-) -> None:
-    """Raise 403 if the user has reached their entry limit for this source type.
-
-    source: 'manual' | 'auto'
-    """
-    limits = TIER_ENTRY_LIMITS.get(owner_subscription_tier, TIER_ENTRY_LIMITS["free"])
-    cap = limits.get(source)
-    if cap is None:
-        return  # unlimited tier
-
-    from app.models import Diary, Entry
-
-    count_result = await db.execute(
-        select(func.count())
-        .select_from(Entry)
-        .join(Diary, Diary.id == Entry.diary_id)
-        .where(
-            Diary.owner_user_id == owner_user_id,
-            Entry.created_by == source,
-            Entry.deleted_at.is_(None),
-        )
-    )
-    current = count_result.scalar_one()
-
-    if current >= cap:
-        required_tier = next(
-            (t for t, lims in TIER_ENTRY_LIMITS.items() if lims.get(source) is None),
-            "tier1",
-        )
-        raise HTTPException(
-            status_code=403,
-            detail={
-                "code": "tier_limit",
-                "details": {
-                    "limit": cap,
-                    "current": current,
-                    "source": source,
-                    "required_tier": required_tier,
-                },
-            },
-        )
-
-
-async def try_enforce_entry_tier_limit(
-    *,
-    owner_user_id: uuid.UUID,
-    source: str,
-    db: AsyncSession,
-    owner_subscription_tier: str = "free",
-) -> tuple[bool, str | None]:
-    """No-raise variant of enforce_entry_tier_limit for use in Celery workers.
-
-    Returns (True, None) if within limit, (False, reason_str) if over limit.
-    Catches HTTPException only — DB/infrastructure errors are intentionally
-    allowed to propagate so the worker surfaces real failures.
-    """
-    try:
-        await enforce_entry_tier_limit(
-            owner_user_id=owner_user_id,
-            source=source,
-            db=db,
-            owner_subscription_tier=owner_subscription_tier,
-        )
-        return True, None
-    except HTTPException as exc:
-        detail = exc.detail
-        if isinstance(detail, dict) and "details" in detail:
-            d = detail["details"]
-            reason_str = (
-                f"{detail.get('code', 'tier_limit')}: "
-                f"{d.get('source', '?')} limit {d.get('current', '?')}/{d.get('limit', '?')}"
-            )
-        else:
-            reason_str = str(detail)
-        return False, reason_str
+    source: LimitSource,
+    limit: int,
+    current: int,
+    needed: int,
+    resets_on: date | None = None,
+) -> HTTPException:
+    details: dict[str, Any] = {
+        "limit": limit,
+        "current": current,
+        "source": source,
+        "required_tier": required_tier(source, needed),
+    }
+    if resets_on is not None:
+        details["resets_on"] = resets_on.isoformat()
+    return HTTPException(status_code=403, detail={"code": "tier_limit", "details": details})

@@ -48,8 +48,8 @@ test.beforeAll(async () => {
   if (!diary.ok()) throw new Error(`Create diary failed: ${diary.status()} ${await diary.text()}`)
   shared.diaryId = ((await diary.json()) as { id: string }).id
   await ctx.dispose()
-  // This spec makes more entries than the free tier's 5.
-  sql(`UPDATE users SET subscription_tier = 'tier1' WHERE id = '${shared.owner.id}'`)
+  // Plus lifts the free plan's per-entry photo cap, which this spec's entries may exceed.
+  sql(`UPDATE users SET subscription_tier = 'plus' WHERE id = '${shared.owner.id}'`)
   sql(
     `INSERT INTO diary_permissions (id, diary_id, user_id, role) ` +
       `VALUES (gen_random_uuid(), '${shared.diaryId}', '${shared.viewer.id}', 'viewer')`,
