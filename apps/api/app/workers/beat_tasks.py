@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+
 import structlog
 
 from app.workers.celery_app import celery_app
@@ -20,13 +22,14 @@ async def _dispatch_due_scans() -> None:
     from sqlalchemy import func, select
 
     from app.models import Diary, ScanJob, User
+    from app.services.read_only import read_only_diary_ids
     from app.workers.tasks import scan_diary
     from app.workers.utils import db_session
 
     async with db_session() as db:
         now = func.now()
         result = await db.execute(
-            select(Diary.id)
+            select(Diary.id, Diary.owner_user_id, User.subscription_tier)
             .join(ScanJob, ScanJob.diary_id == Diary.id)
             .join(User, User.id == Diary.owner_user_id)
             .where(
@@ -37,7 +40,17 @@ async def _dispatch_due_scans() -> None:
                 (ScanJob.next_scan_after.is_(None)) | (ScanJob.next_scan_after <= now),
             )
         )
-        diary_ids = [str(r[0]) for r in result.fetchall()]
+        due = result.fetchall()
+        # One lookup per owner, not per diary.
+        read_only: dict[uuid.UUID, set[uuid.UUID]] = {}
+        diary_ids = []
+        for diary_id, owner_id, tier in due:
+            if owner_id not in read_only:
+                read_only[owner_id] = await read_only_diary_ids(db, owner_id, tier)
+            if diary_id in read_only[owner_id]:
+                log.info("diary_read_only_skip", diary_id=str(diary_id), where="beat")
+                continue
+            diary_ids.append(str(diary_id))
 
     log.info("dispatch_due_scans", count=len(diary_ids))
     for diary_id in diary_ids:

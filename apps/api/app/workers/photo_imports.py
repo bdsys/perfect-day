@@ -37,6 +37,7 @@ from app.services.google_photos import (
     GoogleUnavailable,
     PickedItem,
 )
+from app.services.read_only import is_diary_read_only
 
 log = structlog.get_logger()
 
@@ -335,11 +336,12 @@ async def _can_still_edit(db: AsyncSession, entry_id: uuid.UUID, user_id: uuid.U
 
     The entry and its diary are not deleted and the user owns the diary or holds a
     permission that is not "viewer". Scalars, not ORM objects, so a role changed
-    since an earlier load is never served from the identity map.
+    since an earlier load is never served from the identity map. A diary over its
+    owner's plan limit is read-only, so nobody can edit it.
     """
     row = (
         await db.execute(
-            select(Diary.owner_user_id, DiaryPermission.role)
+            select(Diary.id, Diary.owner_user_id, DiaryPermission.role)
             .select_from(Entry)
             .join(Diary, Diary.id == Entry.diary_id)
             .outerjoin(
@@ -351,8 +353,14 @@ async def _can_still_edit(db: AsyncSession, entry_id: uuid.UUID, user_id: uuid.U
     ).first()
     if row is None:
         return False
-    owner_id, role = row
-    return owner_id == user_id or (role is not None and role != "viewer")
+    diary_id, owner_id, role = row
+    if not (owner_id == user_id or (role is not None and role != "viewer")):
+        return False
+    diary = await db.get(Diary, diary_id)
+    if diary is not None and await is_diary_read_only(db, diary):
+        log.info("diary_read_only_skip", diary_id=str(diary_id), where="photo_import")
+        return False
+    return True
 
 
 def _name(item: PickedItem) -> str:

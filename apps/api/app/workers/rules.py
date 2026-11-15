@@ -18,6 +18,7 @@ from app.models import (
     Event,
     RuleSeriesClaim,
 )
+from app.services.read_only import is_diary_read_only
 from app.workers.tz_utils import google_event_to_entry_date
 
 log = structlog.get_logger()
@@ -102,6 +103,13 @@ async def evaluate_event_against_rules(
 
     event_uuid = uuid.UUID(event_id)
     diary_uuid = uuid.UUID(diary_id)
+
+    # A read-only diary makes no entries. The event stays unevaluated, so it is
+    # picked up if the owner upgrades.
+    diary = await db.get(Diary, diary_uuid)
+    if diary is not None and await is_diary_read_only(db, diary):
+        log.info("diary_read_only_skip", diary_id=diary_id, where="rules")
+        return
 
     # Row lock: two evaluations of one event must not both create an entry.
     result = await db.execute(

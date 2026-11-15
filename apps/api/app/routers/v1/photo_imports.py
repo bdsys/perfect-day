@@ -30,6 +30,7 @@ from app.services.google_photos import (
     GoogleSetupError,
     GoogleUnavailable,
 )
+from app.services.read_only import ensure_diary_writable
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["photo-imports"])
@@ -102,7 +103,8 @@ async def create_photo_import(
     from app.workers.photo_imports import poll_countdown
     from app.workers.tasks import process_photo_import
 
-    await _get_entry_or_404(entry_id, user, db, require_editor=True)  # 403 for viewers
+    _, diary, _ = await _get_entry_or_404(entry_id, user, db, require_editor=True)  # 403 for viewers
+    await ensure_diary_writable(db, diary)
     token = await _picker_access_token(user, db)
 
     client = google_photos.GooglePhotosClient(token)

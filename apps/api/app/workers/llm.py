@@ -519,6 +519,7 @@ async def generate_draft_for_entry(
     from sqlalchemy.orm import selectinload
 
     from app.models import Diary, Entry, LLMGeneration
+    from app.services.read_only import is_diary_read_only
     from app.workers.event_changes import MACHINE_ONLY_BODY_SOURCES
 
     async with db_session() as db:
@@ -552,6 +553,10 @@ async def generate_draft_for_entry(
         diary_result = await db.execute(select(Diary).where(Diary.id == entry.diary_id))
         diary = diary_result.scalar_one_or_none()
         if diary is None:
+            return
+
+        if await is_diary_read_only(db, diary):
+            log.info("diary_read_only_skip", diary_id=str(diary.id), where="draft")
             return
 
         events = sorted(

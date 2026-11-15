@@ -80,6 +80,7 @@ async def _scan_diary(
     from app.core.dependencies import get_redis
     from app.models import Diary, OAuthToken, ScanJob, ScanRun, User
     from app.services.calendar_connection import calendar_state
+    from app.services.read_only import is_diary_read_only
     from app.workers.calendar_sync import sync_calendar
     from app.workers.token_refresh import ensure_fresh_access_token
     from app.workers.utils import db_session
@@ -104,6 +105,10 @@ async def _scan_diary(
             )
             diary = result.scalar_one_or_none()
             if diary is None or not diary.scan_enabled:
+                return
+
+            if await is_diary_read_only(db, diary):
+                log.info("diary_read_only_skip", diary_id=diary_id_str, where="scan")
                 return
 
             owner_deleted_at = (
@@ -868,6 +873,7 @@ async def _backfill_diary(backfill_run_id_str: str) -> None:
     from sqlalchemy import select
 
     from app.models import BackfillRun, Diary, OAuthToken
+    from app.services.read_only import is_diary_read_only
     from app.workers.backfill import BackfillLocked, ingest_failures_message, run_backfill
     from app.workers.token_refresh import ensure_fresh_access_token
     from app.workers.utils import db_session
@@ -885,6 +891,12 @@ async def _backfill_diary(backfill_run_id_str: str) -> None:
         )
         diary = diary_result.scalar_one_or_none()
         if diary is None:
+            return
+
+        if await is_diary_read_only(db, diary):
+            log.info(
+                "diary_read_only_skip", diary_id=str(diary.id), where="backfill"
+            )
             return
 
         token_result = await db.execute(

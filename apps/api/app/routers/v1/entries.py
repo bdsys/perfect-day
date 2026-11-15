@@ -23,6 +23,7 @@ from app.models import (
 )
 from app.routers.v1.diaries import _get_diary_or_404
 from app.services.flagged_words import still_present
+from app.services.read_only import ensure_diary_writable
 from app.workers.tz_utils import entry_dates_from_events
 
 router = APIRouter(tags=["entries"])
@@ -462,6 +463,7 @@ async def create_entry(
     diary, role = await _get_diary_or_404(diary_id, user, db)
     if role == "viewer":
         raise HTTPException(status_code=403, detail="forbidden")
+    await ensure_diary_writable(db, diary)
 
     entry = Entry(
         diary_id=diary_id,
@@ -505,6 +507,7 @@ async def patch_entry(
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> EntryOut:
     entry, diary, role = await _get_entry_or_404(entry_id, user, db, require_editor=True)
+    await ensure_diary_writable(db, diary)
 
     updates = body.model_dump(exclude_unset=True)
     location_set = "location" in updates
@@ -572,6 +575,7 @@ async def publish_entry(
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> EntryOut:
     entry, diary, role = await _get_entry_or_404(entry_id, user, db, require_editor=True)
+    await ensure_diary_writable(db, diary)
     if entry.status == "published":
         return _entry_out_from_orm(entry, can_edit=True, exact_places=role is None)
 
@@ -592,7 +596,8 @@ async def accept_suggestion(
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> EntryOut:
     """Replace the entry's title and text with the AI's pending suggestion."""
-    entry, _, role = await _get_entry_or_404(entry_id, user, db, require_editor=True)
+    entry, diary, role = await _get_entry_or_404(entry_id, user, db, require_editor=True)
+    await ensure_diary_writable(db, diary)
     if entry.suggested_body_markdown is None:
         raise HTTPException(status_code=409, detail="no_suggestion")
 
@@ -619,7 +624,8 @@ async def dismiss_suggestion(
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> EntryOut:
     """Discard the AI's pending suggestion; the entry's text is unchanged."""
-    entry, _, role = await _get_entry_or_404(entry_id, user, db, require_editor=True)
+    entry, diary, role = await _get_entry_or_404(entry_id, user, db, require_editor=True)
+    await ensure_diary_writable(db, diary)
     if entry.suggested_body_markdown is None:
         raise HTTPException(status_code=409, detail="no_suggestion")
     _clear_suggestion(entry)
@@ -632,7 +638,8 @@ async def unpublish_entry(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> EntryOut:
-    entry, _, role = await _get_entry_or_404(entry_id, user, db, require_editor=True)
+    entry, diary, role = await _get_entry_or_404(entry_id, user, db, require_editor=True)
+    await ensure_diary_writable(db, diary)
     entry.status = "draft"
     entry.published_at = None
     return _entry_out_from_orm(entry, can_edit=True, exact_places=role is None)
@@ -671,6 +678,7 @@ async def restore_entry(
     diary, role = await _get_diary_or_404(entry.diary_id, user, db, require_owner=False)
     if role == "viewer":
         raise HTTPException(status_code=403, detail="forbidden")
+    await ensure_diary_writable(db, diary)
     entry.deleted_at = None
     return _entry_out_from_orm(entry, can_edit=role != "viewer", exact_places=role is None)
 
@@ -681,7 +689,8 @@ async def regenerate_entry(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> EntryOut:
-    entry, _, role = await _get_entry_or_404(entry_id, user, db, require_editor=True)
+    entry, diary, role = await _get_entry_or_404(entry_id, user, db, require_editor=True)
+    await ensure_diary_writable(db, diary)
     from app.workers.tasks import generate_entry_draft
 
     # Nothing about the entry changes here, so there is no commit to wait for.

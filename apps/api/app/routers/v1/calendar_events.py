@@ -15,6 +15,7 @@ from app.core.database import get_db
 from app.models import Entry, Event, User
 from app.routers.v1.diaries import _get_diary_or_404
 from app.routers.v1.entries import EntryOut, _entry_out_from_orm
+from app.services.read_only import ensure_diary_writable
 from app.workers.tasks import generate_entry_draft
 
 router = APIRouter(tags=["calendar_events"])
@@ -106,6 +107,7 @@ async def create_entry_from_event(
 
     # Owner only, like the list it is picked from (S-11, decision 2026-11-12).
     diary, _ = await _get_diary_or_404(diary_id, user, db, require_owner=True)
+    await ensure_diary_writable(db, diary)
 
     event_result = await db.execute(
         select(Event).where(Event.id == body.event_id).with_for_update()

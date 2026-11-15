@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import get_current_user
 from app.core.database import get_db
 from app.models import AuditLog, Diary, DiaryPermission, ScanJob, User
+from app.services.read_only import ensure_diary_writable
 from app.services.tier import limits_for, tier_limit_error
 
 router = APIRouter(prefix="/diaries", tags=["diaries"])
@@ -278,6 +279,7 @@ async def patch_diary(
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> DiaryOut:
     diary, _ = await _get_diary_or_404(diary_id, user, db, require_owner=True)
+    await ensure_diary_writable(db, diary)
 
     home_before = tuple(getattr(diary, f) for f in _HOME_PLACE_FIELDS)
     for field, value in _diary_updates(body).items():
