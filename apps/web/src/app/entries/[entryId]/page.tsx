@@ -60,6 +60,7 @@ function EntryDetailPageInner() {
 
   const [noticeKey, setNoticeKey] = useState(0)
   const [importInFlight, setImportInFlight] = useState(false)
+  const [importCopying, setImportCopying] = useState(false)
   const googleMsg = googleStatusMessage({
     status: searchParams.get('google'),
     missing: searchParams.get('missing'),
@@ -304,7 +305,7 @@ function EntryDetailPageInner() {
           <AddPhotos
             entry={entry}
             onChanged={setEntry}
-            googlePhotos={<GooglePhotosPick entry={entry} inFlight={importInFlight} onStarted={() => setNoticeKey((k) => k + 1)} />}
+            googlePhotos={<GooglePhotosPick entry={entry} inFlight={importInFlight} copying={importCopying} onStarted={() => setNoticeKey((k) => k + 1)} />}
           />
         )}
 
@@ -444,8 +445,6 @@ function EntryDetailPageInner() {
               />
             )}
 
-            {entry.can_edit && <PhotoImportNotice entryId={entry.id} refreshKey={noticeKey} onFinished={refreshAfterImport} onInFlightChange={setImportInFlight} />}
-
             {/* Photo strip */}
             {entry.photos && entry.photos.length > 0 && (
               <section>
@@ -571,6 +570,21 @@ function EntryDetailPageInner() {
               </button>
             </div>
           </>
+        )}
+
+        {/* Stays mounted in Edit mode so polling and the photo refresh keep working; just not shown. */}
+        {entry.can_edit && (
+          <div hidden={editing}>
+            <PhotoImportNotice
+              entryId={entry.id}
+              refreshKey={noticeKey}
+              onFinished={refreshAfterImport}
+              onInFlightChange={(inFlight, copying) => {
+                setImportInFlight(inFlight)
+                setImportCopying(copying)
+              }}
+            />
+          </div>
         )}
       </div>
     </>

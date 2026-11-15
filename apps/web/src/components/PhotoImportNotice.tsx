@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, type PhotoImport } from "../lib/api";
+import { api, ApiError, type PhotoImport } from "../lib/api";
 import { navigateTo } from "../lib/navigate";
 
 interface Props {
@@ -10,11 +10,13 @@ interface Props {
   onDismiss?: () => void;
   /** An import that was in flight has reached a final state: refresh the entry. */
   onFinished?: () => void;
-  /** True while any import is waiting or copying. */
-  onInFlightChange?: (inFlight: boolean) => void;
+  /** inFlight: any import is waiting or copying. copying: one of them has moved on to copying. */
+  onInFlightChange?: (inFlight: boolean, copying: boolean) => void;
 }
 
 const POLL_MS = 3000;
+const MAX_POLL_FAILURES = 3;
+const CANT_CHECK = "We can't check on your Google Photos pick right now.";
 const isInFlight = (i: PhotoImport) => i.status === "waiting" || i.status === "copying";
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
@@ -49,6 +51,8 @@ export function PhotoImportNotice({ entryId, refreshKey = 0, onDismiss, onFinish
   const [error, setError] = useState<string | null>(null);
   const [reconnecting, setReconnecting] = useState(false);
   const reconnectingRef = useRef(false);
+  const failuresRef = useRef(0);
+  const [gaveUp, setGaveUp] = useState(false);
 
   const onFinishedRef = useRef(onFinished);
   onFinishedRef.current = onFinished;
@@ -67,27 +71,40 @@ export function PhotoImportNotice({ entryId, refreshKey = 0, onDismiss, onFinish
     try {
       const list = await api.photoImports.listForEntry(entryId);
       if (!aliveRef.current) return;
+      failuresRef.current = 0;
       const now = new Set(list.filter(isInFlight).map((i) => i.id));
       const finished = [...inFlightIds.current].some((id) => !now.has(id));
       inFlightIds.current = now;
       setImports(list);
-      onInFlightRef.current?.(now.size > 0);
+      onInFlightRef.current?.(now.size > 0, list.some((i) => i.status === "copying"));
       if (finished) onFinishedRef.current?.();
-    } catch {
-      /* a notice that can't load is not worth an error on the entry */
+    } catch (e) {
+      if (!aliveRef.current) return;
+      if (e instanceof ApiError && e.status === 404) {
+        // The import is gone: nothing is in flight any more, and there is nothing to report.
+        failuresRef.current = 0;
+        inFlightIds.current = new Set();
+        setImports((prev) => prev.filter((i) => !isInFlight(i)));
+        onInFlightRef.current?.(false, false);
+        return;
+      }
+      failuresRef.current += 1;
+      if (failuresRef.current >= MAX_POLL_FAILURES) setGaveUp(true);
     }
   }, [entryId]);
 
   useEffect(() => {
+    failuresRef.current = 0;
+    setGaveUp(false);
     void load();
   }, [load, refreshKey]);
 
   const anyInFlight = imports.some(isInFlight);
   useEffect(() => {
-    if (!anyInFlight) return;
+    if (!anyInFlight || gaveUp) return;
     const id = setInterval(() => void load(), POLL_MS);
     return () => clearInterval(id);
-  }, [anyInFlight, load]);
+  }, [anyInFlight, gaveUp, load]);
 
   async function cancel(id: string) {
     setError(null);
@@ -126,7 +143,7 @@ export function PhotoImportNotice({ entryId, refreshKey = 0, onDismiss, onFinish
   }
 
   const shown = imports.filter((i) => isInFlight(i) || importMessage(i) !== null);
-  if (shown.length === 0) return null;
+  if (shown.length === 0 && !gaveUp) return null;
 
   return (
     <div style={{ display: "grid", gap: "0.5rem", margin: "0.75rem 0" }}>
@@ -156,6 +173,7 @@ export function PhotoImportNotice({ entryId, refreshKey = 0, onDismiss, onFinish
           )}
         </div>
       ))}
+      {gaveUp && <p role="alert" className="error-message">{CANT_CHECK}</p>}
       {error && <p role="alert" className="error-message">{error}</p>}
     </div>
   );

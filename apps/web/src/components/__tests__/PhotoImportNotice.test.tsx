@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { PhotoImportNotice } from '../PhotoImportNotice'
-import { api, type PhotoImport } from '../../lib/api'
+import { api, ApiError, type PhotoImport } from '../../lib/api'
 import { GooglePhotosPick } from '../GooglePhotosPick'
 import { navigateTo } from '../../lib/navigate'
 
@@ -164,5 +164,61 @@ describe('PhotoImportNotice', () => {
     await act(async () => { jest.advanceTimersByTime(3000) })
     expect(onFinished).toHaveBeenCalledTimes(1)
     expect(screen.getByText('4 photos added from Google Photos')).toBeInTheDocument()
+  })
+
+  describe('poll errors (TR-34)', () => {
+    const CANT_CHECK = "We can't check on your Google Photos pick right now."
+
+    it('a 404 ends the in-flight state silently and stops polling', async () => {
+      jest.useFakeTimers()
+      const onInFlightChange = jest.fn()
+      listForEntry
+        .mockResolvedValueOnce([imp({ status: 'copying' })])
+        .mockRejectedValue(new ApiError(404, 'not found', 'not_found'))
+      render(<PhotoImportNotice entryId="e1" onFinished={jest.fn()} onInFlightChange={onInFlightChange} />)
+      await act(async () => {})
+      await act(async () => { jest.advanceTimersByTime(3000) })
+      expect(onInFlightChange).toHaveBeenLastCalledWith(false, false)
+      expect(screen.queryByText(CANT_CHECK)).not.toBeInTheDocument()
+      expect(screen.queryByText('Copying photos from Google Photos…')).not.toBeInTheDocument()
+      const calls = listForEntry.mock.calls.length
+      await act(async () => { jest.advanceTimersByTime(12000) })
+      expect(listForEntry).toHaveBeenCalledTimes(calls)
+    })
+
+    it('three failures in a row show the message and stop polling', async () => {
+      jest.useFakeTimers()
+      listForEntry
+        .mockResolvedValueOnce([imp({ status: 'waiting' })])
+        .mockRejectedValue(new Error('network'))
+      render(<PhotoImportNotice entryId="e1" onFinished={jest.fn()} />)
+      await act(async () => {})
+      await act(async () => { jest.advanceTimersByTime(3000) })
+      await act(async () => { jest.advanceTimersByTime(3000) })
+      expect(screen.queryByText(CANT_CHECK)).not.toBeInTheDocument()
+      await act(async () => { jest.advanceTimersByTime(3000) })
+      expect(screen.getByText(CANT_CHECK)).toBeInTheDocument()
+      const calls = listForEntry.mock.calls.length
+      await act(async () => { jest.advanceTimersByTime(12000) })
+      expect(listForEntry).toHaveBeenCalledTimes(calls)
+    })
+
+    it('a success in between resets the count', async () => {
+      jest.useFakeTimers()
+      const waiting = [imp({ status: 'waiting' })]
+      listForEntry
+        .mockResolvedValueOnce(waiting)
+        .mockRejectedValueOnce(new Error('x'))
+        .mockRejectedValueOnce(new Error('x'))
+        .mockResolvedValueOnce(waiting)
+        .mockRejectedValueOnce(new Error('x'))
+        .mockRejectedValueOnce(new Error('x'))
+        .mockResolvedValue(waiting)
+      render(<PhotoImportNotice entryId="e1" onFinished={jest.fn()} />)
+      await act(async () => {})
+      for (let i = 0; i < 6; i++) await act(async () => { jest.advanceTimersByTime(3000) })
+      expect(screen.queryByText(CANT_CHECK)).not.toBeInTheDocument()
+      expect(screen.getByText('Waiting for you to finish in Google Photos…')).toBeInTheDocument()
+    })
   })
 })

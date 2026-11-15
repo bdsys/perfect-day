@@ -134,4 +134,42 @@ describe('GooglePhotosPick', () => {
     expect(await screen.findByText("Google Photos isn't responding. Try again in a minute.")).toBeInTheDocument()
     expect(tab.close).toHaveBeenCalled()
   })
+
+  it('a failed connection check says so and offers Try again, not Connect', async () => {
+    list.mockRejectedValueOnce(new Error('boom')).mockResolvedValueOnce(connected)
+    render(<GooglePhotosPick entry={entry} inFlight={false} onStarted={jest.fn()} />)
+    expect(await screen.findByText("Couldn't check your Google connection. Try again.")).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Connect Google Photos/ })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
+    expect(await screen.findByRole('button', { name: /Search Google Photos/ })).toBeInTheDocument()
+    expect(list).toHaveBeenCalledTimes(2)
+  })
+
+  it('the picker tab loses its opener before it navigates', async () => {
+    list.mockResolvedValue(connected)
+    create.mockResolvedValue({ id: 'i1', picker_uri: 'https://p', status: 'waiting' })
+    const order: string[] = []
+    const tab: { close: jest.Mock; opener: unknown; location: { href: string } } = {
+      close: jest.fn(),
+      opener: {},
+      location: {
+        set href(_v: string) { order.push(`location:${String(tab.opener)}`) },
+      } as { href: string },
+    }
+    jest.spyOn(window, 'open').mockReturnValue(tab as unknown as Window)
+    render(<GooglePhotosPick entry={entry} inFlight={false} onStarted={jest.fn()} />)
+    fireEvent.click(await screen.findByRole('button', { name: /Search Google Photos/ }))
+    await waitFor(() => expect(order.length).toBe(1))
+    expect(tab.opener).toBeNull()
+    expect(order[0]).toBe('location:null')
+  })
+
+  it('shows the waiting line only while waiting, and its own line while copying', async () => {
+    list.mockResolvedValue(connected)
+    const { rerender } = render(<GooglePhotosPick entry={entry} inFlight={true} onStarted={jest.fn()} />)
+    expect(await screen.findByText('Google Photos is open. Finish your pick there.')).toBeInTheDocument()
+    rerender(<GooglePhotosPick entry={entry} inFlight={true} copying={true} onStarted={jest.fn()} />)
+    expect(screen.getByText('Copying your photos from Google Photos…')).toBeInTheDocument()
+    expect(screen.queryByText('Google Photos is open. Finish your pick there.')).not.toBeInTheDocument()
+  })
 })

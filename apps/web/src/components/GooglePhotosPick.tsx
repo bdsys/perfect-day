@@ -19,13 +19,15 @@ interface Props {
   entry: Entry;
   /** True while the page knows of an import that is waiting or copying. */
   inFlight: boolean;
+  /** True once the import has moved from waiting for the user to copying. */
+  copying?: boolean;
   /** An import was created; the page now tracks it. */
   onStarted: () => void;
 }
 
-type Phase = "loading" | "not_connected" | "ready";
+type Phase = "loading" | "error" | "not_connected" | "ready";
 
-export function GooglePhotosPick({ entry, inFlight, onStarted }: Props) {
+export function GooglePhotosPick({ entry, inFlight, copying = false, onStarted }: Props) {
   const [phase, setPhase] = useState<Phase>("loading");
   const [starting, setStarting] = useState(false);
   const startingRef = useRef(false);
@@ -34,6 +36,8 @@ export function GooglePhotosPick({ entry, inFlight, onStarted }: Props) {
   const [fallbackUrl, setFallbackUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [offerConnect, setOfferConnect] = useState(false);
+
+  const [checkKey, setCheckKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -45,12 +49,17 @@ export function GooglePhotosPick({ entry, inFlight, onStarted }: Props) {
         setPhase(g?.photos ? "ready" : "not_connected");
       })
       .catch(() => {
-        if (!cancelled) setPhase("not_connected");
+        if (!cancelled) setPhase("error");
       });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [checkKey]);
+
+  function recheck() {
+    setPhase("loading");
+    setCheckKey((k) => k + 1);
+  }
 
   async function connect() {
     if (connectingRef.current) return; // two authorize calls would leave the wrong connect cookie
@@ -76,6 +85,8 @@ export function GooglePhotosPick({ entry, inFlight, onStarted }: Props) {
     setFallbackUrl(null);
     // Must be synchronous inside the click, or the browser blocks the new tab.
     const tab = window.open("", "_blank");
+    // The picker is Google's page: it must not be able to reach back into ours.
+    if (tab) tab.opener = null;
     void (async () => {
       try {
         const imp = await api.photoImports.create(entry.id);
@@ -106,6 +117,17 @@ export function GooglePhotosPick({ entry, inFlight, onStarted }: Props) {
 
   if (phase === "loading") return null;
 
+  if (phase === "error") {
+    return (
+      <div>
+        <p role="alert" className="error-message">{"Couldn't check your Google connection. Try again."}</p>
+        <button type="button" className="btn btn-secondary" onClick={recheck}>
+          Try again
+        </button>
+      </div>
+    );
+  }
+
   if (phase === "not_connected") {
     return (
       <div>
@@ -120,7 +142,7 @@ export function GooglePhotosPick({ entry, inFlight, onStarted }: Props) {
   if (inFlight) {
     return (
       <div>
-        <p>Google Photos is open. Finish your pick there.</p>
+        <p>{copying ? "Copying your photos from Google Photos…" : "Google Photos is open. Finish your pick there."}</p>
         {fallbackUrl && (
           <p>
             <a href={fallbackUrl} target="_blank" rel="noopener noreferrer">Open Google Photos</a>
