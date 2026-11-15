@@ -9,6 +9,7 @@ import { StatusPanel } from '@/components/StatusPanel'
 import { usePolling } from '@/lib/usePolling'
 import { formatDateRange } from '@/lib/date'
 import { navigateTo } from '@/lib/navigate'
+import { useResetOnBfcacheRestore } from '@/lib/useResetOnBfcacheRestore'
 
 // Must match the API's default page size for GET /v1/diaries/{id}/entries.
 const ENTRIES_PAGE_SIZE = 20
@@ -275,6 +276,11 @@ export default function DiaryDetailPage() {
     }, 60 * 60 * 1000)
     return () => clearTimeout(timer)
   }, [pollingBackfill])
+
+  useResetOnBfcacheRestore(() => {
+    connectingRef.current = false
+    setConnecting(false)
+  })
 
   async function connectCalendar() {
     if (connectingRef.current) return // two authorize calls would leave the wrong connect cookie

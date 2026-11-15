@@ -251,4 +251,19 @@ describe('PhotoImportNotice', () => {
       expect(screen.getByText('Waiting for you to finish in Google Photos…')).toBeInTheDocument()
     })
   })
+
+  it('Reconnect works again after Back from Google restores the page from bfcache', async () => {
+    listForEntry.mockResolvedValue([imp({ status: 'needs_reconnect' })])
+    authUrl.mockResolvedValue({ url: 'https://accounts.google.com/y' })
+    render(<PhotoImportNotice entryId="e1" onFinished={jest.fn()} onDismiss={jest.fn()} />)
+    const btn = await screen.findByRole('button', { name: 'Reconnect Google Photos' })
+    fireEvent.click(btn)
+    await waitFor(() => expect(navigateTo).toHaveBeenCalled())
+    expect(btn).toBeDisabled()
+    act(() => { window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })) })
+    expect(btn).not.toBeDisabled()
+    fireEvent.click(btn)
+    await waitFor(() => expect(authUrl).toHaveBeenCalledTimes(2))
+  })
+
 })

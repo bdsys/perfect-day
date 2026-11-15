@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError, type Entry } from "../lib/api";
 import { navigateTo } from "../lib/navigate";
+import { useResetOnBfcacheRestore } from "../lib/useResetOnBfcacheRestore";
 
 const MONTHS = [
   "January", "February", "March", "April", "May", "June",
@@ -60,6 +61,11 @@ export function GooglePhotosPick({ entry, inFlight, copying = false, onStarted }
     setPhase("loading");
     setCheckKey((k) => k + 1);
   }
+
+  useResetOnBfcacheRestore(() => {
+    connectingRef.current = false;
+    setConnecting(false);
+  });
 
   async function connect() {
     if (connectingRef.current) return; // two authorize calls would leave the wrong connect cookie

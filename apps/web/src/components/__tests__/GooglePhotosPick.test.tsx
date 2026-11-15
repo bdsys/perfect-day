@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { GooglePhotosPick } from '../GooglePhotosPick'
 import { api, ApiError, type Entry } from '../../lib/api'
 import { navigateTo } from '../../lib/navigate'
@@ -172,4 +172,21 @@ describe('GooglePhotosPick', () => {
     expect(screen.getByText('Copying your photos from Google Photos…')).toBeInTheDocument()
     expect(screen.queryByText('Google Photos is open. Finish your pick there.')).not.toBeInTheDocument()
   })
+
+  it('Connect works again after Back from Google restores the page from bfcache', async () => {
+    list.mockResolvedValue([{ ...connected[0], photos: false }])
+    authUrl.mockResolvedValue({ url: 'https://accounts.google.com/x' })
+    render(<GooglePhotosPick entry={entry} inFlight={false} onStarted={jest.fn()} />)
+    const btn = await screen.findByRole('button', { name: 'Connect Google Photos' })
+    fireEvent.click(btn)
+    await waitFor(() => expect(navigateTo).toHaveBeenCalled())
+    expect(btn).toBeDisabled()
+    act(() => { window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: false })) })
+    expect(btn).toBeDisabled()
+    act(() => { window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })) })
+    expect(btn).not.toBeDisabled()
+    fireEvent.click(btn)
+    await waitFor(() => expect(authUrl).toHaveBeenCalledTimes(2))
+  })
+
 })

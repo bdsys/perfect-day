@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError, type PhotoImport } from "../lib/api";
 import { navigateTo } from "../lib/navigate";
+import { useResetOnBfcacheRestore } from "../lib/useResetOnBfcacheRestore";
 
 interface Props {
   entryId: string;
@@ -130,6 +131,11 @@ export function PhotoImportNotice({ entryId, refreshKey = 0, onDismiss, onFinish
       setError("Couldn't dismiss this. Try again.");
     }
   }
+
+  useResetOnBfcacheRestore(() => {
+    reconnectingRef.current = false;
+    setReconnecting(false);
+  });
 
   async function reconnect() {
     if (reconnectingRef.current) return; // two authorize calls would leave the wrong connect cookie

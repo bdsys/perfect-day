@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import DiaryDetailPage from '../page'
 import { api, type BackfillRun, type ScanRun } from '@/lib/api'
 import { navigateTo } from '@/lib/navigate'
@@ -198,4 +198,32 @@ describe('DiaryDetailPage connect calendar', () => {
 
     await waitFor(() => expect(api.integrations.getGoogleAuthUrl).toHaveBeenCalledTimes(2))
   })
+
+  it('Connect works again after Back from Google restores the page from bfcache', async () => {
+    ;(api.diaries.getScanConfig as jest.Mock).mockResolvedValue({
+      can_scan: true,
+      calendar: 'none',
+      scan_enabled: true,
+      scan_interval_minutes: 60,
+      last_scan_status: null,
+      next_scan_after: null,
+      consecutive_failures: 0,
+    })
+    ;(api.integrations.getGoogleAuthUrl as jest.Mock).mockResolvedValue({
+      url: 'https://accounts.google.com/x',
+    })
+    render(<DiaryDetailPage />)
+    const connect = await screen.findByRole('button', { name: 'Connect Google Calendar' })
+    fireEvent.click(connect)
+    await waitFor(() => expect(navigateTo).toHaveBeenCalled())
+    expect(connect).toBeDisabled()
+
+    act(() => { window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: false })) })
+    expect(connect).toBeDisabled()
+    act(() => { window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })) })
+    expect(connect).not.toBeDisabled()
+    fireEvent.click(connect)
+    await waitFor(() => expect(api.integrations.getGoogleAuthUrl).toHaveBeenCalledTimes(2))
+  })
+
 })
