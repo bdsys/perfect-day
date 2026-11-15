@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
 import { api, type Diary, type Entry, ApiError } from '@/lib/api'
 import { useAuth } from '@/lib/auth-context'
+import { readOnlyBanner } from '@/lib/plan'
 
 function formatDate(d: string) {
   return new Date(d + 'T00:00:00').toLocaleDateString(undefined, {
@@ -87,10 +88,19 @@ export default function EntryRestorePage() {
 
         {tierLimitError && (
           <div className="error-message" style={{ marginBottom: '1rem' }}>
-            You&apos;re at your free-tier limit ({tierLimitError.current}/{tierLimitError.limit} {tierLimitError.source === 'diary' ? 'diaries' : tierLimitError.source} entries).
-            Free up a slot or{' '}
-            <a href="/account/upgrade" style={{ textDecoration: 'underline' }}>Upgrade</a>
-            {' '}to restore this one.
+            {tierLimitError.source === 'diary_read_only' ? (
+              <>
+                {readOnlyBanner(diary?.plan?.plan_name ?? 'Free')}{' '}
+                <Link href="/plans" style={{ textDecoration: 'underline' }}>Upgrade now</Link>
+              </>
+            ) : (
+              <>
+                You&apos;re at your free-tier limit ({tierLimitError.current}/{tierLimitError.limit} {tierLimitError.source === 'diary' ? 'diaries' : tierLimitError.source} entries).
+                Free up a slot or{' '}
+                <a href="/account/upgrade" style={{ textDecoration: 'underline' }}>Upgrade</a>
+                {' '}to restore this one.
+              </>
+            )}
           </div>
         )}
 

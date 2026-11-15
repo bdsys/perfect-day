@@ -1,6 +1,6 @@
 import { render, screen, fireEvent, act } from '@testing-library/react'
 import EntryDetailPage from '../page'
-import { api, type Entry, type PhotoImport } from '@/lib/api'
+import { api, ApiError, type Entry, type OwnerPlan, type PhotoImport } from '@/lib/api'
 
 jest.mock('@/lib/navigate', () => ({ navigateTo: jest.fn() }))
 jest.mock('@/components/PhotoThumbnail', () => ({ PhotoThumbnail: () => <span data-testid="thumb" /> }))
@@ -9,7 +9,7 @@ jest.mock('@/lib/api', () => {
   return {
     ...actual,
     api: {
-      entries: { get: jest.fn() },
+      entries: { get: jest.fn(), regenerate: jest.fn(), publish: jest.fn() },
       photoImports: { listForEntry: jest.fn(), create: jest.fn(), cancel: jest.fn(), dismiss: jest.fn() },
       integrations: { list: jest.fn(), getGoogleAuthUrl: jest.fn() },
       photos: { detachFromEntry: jest.fn(), list: jest.fn() },
@@ -97,5 +97,89 @@ describe('entry page: Google import notice in Edit mode', () => {
     expect(get).toHaveBeenCalledTimes(2) // the refresh ran
     expect(screen.getByLabelText('Title')).toHaveValue('My typed title')
     expect(screen.getByLabelText('Body')).toHaveValue('My typed body')
+  })
+})
+
+const freePlan = (over: Partial<OwnerPlan> = {}): OwnerPlan => ({
+  tier: 'free', plan_name: 'Free', ai_drafts_limit: 5, ai_drafts_left: 3, resets_on: '2026-12-01',
+  photos_per_entry: 1, read_only: false, ...over,
+})
+const withPlan = (plan: OwnerPlan | null, over: Partial<Entry> = {}): Entry =>
+  ({ ...entry([]), plan, ...over }) as Entry
+
+describe('entry page: plan limits', () => {
+  beforeEach(() => {
+    ;(api.integrations.list as jest.Mock).mockResolvedValue([])
+    listForEntry.mockResolvedValue([])
+  })
+
+  it('grays out the AI button at the limit and points it at the AI note', async () => {
+    get.mockResolvedValue(withPlan(freePlan({ ai_drafts_left: 0 }), { body_markdown: 'Body', events: [{ id: 'ev' }] as never }))
+    render(<EntryDetailPage />)
+    const btn = await screen.findByRole('button', { name: /regenerate with ai/i })
+    expect(btn).toBeDisabled()
+    const note = document.getElementById(btn.getAttribute('aria-describedby')!)
+    expect(note).toHaveTextContent('No AI drafts left this month. Resets Dec 1.')
+    expect(screen.getByRole('button', { name: 'AI drafts: 0 of 5 left · resets Dec 1' })).toBeInTheDocument()
+  })
+
+  it('shows the entry note only when the last generation hit the limit and none are left', async () => {
+    const failed = { status: 'failed', error: 'ai_draft_limit', created_at: 'x' } as never
+    get.mockResolvedValue(withPlan(freePlan({ ai_drafts_left: 0 }), { last_generation: failed }))
+    const { unmount } = render(<EntryDetailPage />)
+    expect(await screen.findByText('Out of AI drafts until Dec 1. Write it yourself, or generate it then.')).toBeInTheDocument()
+    unmount()
+
+    get.mockResolvedValue(withPlan(freePlan({ ai_drafts_left: 5 }), { last_generation: failed, events: [{ id: 'ev' }] as never }))
+    render(<EntryDetailPage />)
+    const btn = await screen.findByRole('button', { name: /regenerate with ai/i })
+    expect(screen.queryByText(/Out of AI drafts until/)).not.toBeInTheDocument()
+    expect(btn).toBeEnabled()
+  })
+
+  it('shows no badge on a Plus plan', async () => {
+    get.mockResolvedValue(withPlan(freePlan({ tier: 'plus', plan_name: 'Plus', ai_drafts_limit: null, ai_drafts_left: null, photos_per_entry: null })))
+    render(<EntryDetailPage />)
+    await screen.findByRole('button', { name: 'Edit' })
+    expect(screen.queryByText(/AI drafts:/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Upgrade now' })).not.toBeInTheDocument()
+  })
+
+  it('disables Add photos with the photo note when the entry is full', async () => {
+    get.mockResolvedValue(withPlan(freePlan(), { photos: [{ id: 'p1' }] as never }))
+    render(<EntryDetailPage />)
+    const btn = await screen.findByRole('button', { name: /add photos/i })
+    expect(btn).toBeDisabled()
+    expect(screen.getByText('Free plan: 1 photo per entry.')).toBeInTheDocument()
+  })
+
+  it('read-only disables Edit and Publish, leaves Delete enabled and shows the banner', async () => {
+    get.mockResolvedValue(withPlan(freePlan({ read_only: true })))
+    render(<EntryDetailPage />)
+    expect(await screen.findByText('This diary is read-only on the Free plan. Upgrade, or delete another diary, to use it again.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Edit' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Publish' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeEnabled()
+  })
+
+  it('a tier_limit from regenerate shows the AI note, never the raw code, and keeps the badge', async () => {
+    get.mockResolvedValue(withPlan(freePlan(), { events: [{ id: 'ev' }] as never }))
+    ;(api.entries.regenerate as jest.Mock).mockRejectedValue(
+      new ApiError(403, 'limit reached', 'tier_limit', { source: 'ai_draft', resets_on: '2026-12-01' }),
+    )
+    render(<EntryDetailPage />)
+    fireEvent.click(await screen.findByRole('button', { name: /regenerate with ai/i }))
+    expect((await screen.findAllByText('No AI drafts left this month. Resets Dec 1.')).length).toBeGreaterThan(0)
+    expect(screen.getByRole('button', { name: /AI drafts: 3 of 5 left/ })).toBeInTheDocument()
+  })
+
+  it('an action response with plan null does not blank the badge or re-enable controls', async () => {
+    get.mockResolvedValue(withPlan(freePlan({ ai_drafts_left: 0 }), { events: [{ id: 'ev' }] as never }))
+    ;(api.entries.publish as jest.Mock).mockResolvedValue(withPlan(null, { status: 'published', events: [{ id: 'ev' }] as never }))
+    render(<EntryDetailPage />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Publish' }))
+    await screen.findByRole('button', { name: 'Unpublish' })
+    expect(screen.getByRole('button', { name: /AI drafts: 0 of 5 left/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /regenerate with ai/i })).toBeDisabled()
   })
 })
