@@ -13,8 +13,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user
 from app.core.database import get_db
-from app.models import AutoCreationRule, Event, User
+from app.models import AutoCreationRule, Diary, Event, User
 from app.routers.v1.diaries import _get_diary_or_404
+from app.services.read_only import ensure_diary_writable
 
 log = structlog.get_logger()
 
@@ -125,7 +126,7 @@ async def _get_rule_or_404(
     rule_id: uuid.UUID,
     user: User,
     db: AsyncSession,
-) -> tuple[AutoCreationRule, str | None]:
+) -> tuple[AutoCreationRule, Diary]:
     """Load a rule the caller owns. Rules are the diary owner's alone (S-14):
     anyone else with access to the diary gets 403."""
     result = await db.execute(
@@ -136,8 +137,8 @@ async def _get_rule_or_404(
         raise HTTPException(status_code=404, detail="not_found")
 
     # Verify the requesting user has access to the diary this rule belongs to.
-    _, role = await _get_diary_or_404(rule.diary_id, user, db, require_owner=True)
-    return rule, role
+    diary, _ = await _get_diary_or_404(rule.diary_id, user, db, require_owner=True)
+    return rule, diary
 
 
 # ---------------------------------------------------------------------------
@@ -177,7 +178,8 @@ async def create_rule(
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> RuleOut:
     """Create a new auto-creation rule. Owner only (S-14)."""
-    await _get_diary_or_404(diary_id, user, db, require_owner=True)
+    diary, _ = await _get_diary_or_404(diary_id, user, db, require_owner=True)
+    await ensure_diary_writable(db, diary)
 
     try:
         _validate_condition(body.condition)
@@ -222,7 +224,8 @@ async def patch_rule(
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> RuleOut:
     """Partially update a rule."""
-    rule, _ = await _get_rule_or_404(rule_id, user, db)
+    rule, diary = await _get_rule_or_404(rule_id, user, db)
+    await ensure_diary_writable(db, diary)
 
     if body.condition is not None:
         try:
@@ -254,7 +257,8 @@ async def delete_rule(
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> None:
     """Hard-delete a rule (cascade handles EntryRuleMatch / RuleSeriesClaim)."""
-    rule, _ = await _get_rule_or_404(rule_id, user, db)
+    rule, diary = await _get_rule_or_404(rule_id, user, db)
+    await ensure_diary_writable(db, diary)
 
     await db.delete(rule)
     await db.commit()
@@ -274,7 +278,8 @@ async def preview_rule(
 
     Owner only: it searches the owner's whole synced calendar (S-14).
     """
-    await _get_diary_or_404(diary_id, user, db, require_owner=True)
+    diary, _ = await _get_diary_or_404(diary_id, user, db, require_owner=True)
+    await ensure_diary_writable(db, diary)
 
     try:
         _validate_condition(body.condition)
@@ -326,7 +331,8 @@ async def apply_rule(
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> dict:
     """Queue a backfill job to apply a rule over the past N days."""
-    rule, _ = await _get_rule_or_404(rule_id, user, db)
+    rule, diary = await _get_rule_or_404(rule_id, user, db)
+    await ensure_diary_writable(db, diary)
 
     try:
         from app.workers.tasks import apply_rule_backfill  # noqa: PLC0415

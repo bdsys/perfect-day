@@ -11,6 +11,8 @@ from unittest.mock import AsyncMock, patch
 import httpx
 from httpx import AsyncClient
 
+from tests.integration.google_helpers import connect_cookie_for
+
 
 def _make_id_token(email: str, name: str) -> str:
     def b64url(data: bytes) -> str:
@@ -66,6 +68,7 @@ class TestGoogleCallbackPersistsIdentity:
             r = await client.get(
                 f"/v1/integrations/google/callback?code=fake-code&state={state}"
                 f"&scope=https://www.googleapis.com/auth/calendar.readonly",
+                headers=connect_cookie_for(state),
                 follow_redirects=False,
             )
         # Should redirect on success
@@ -102,6 +105,7 @@ class TestGoogleCallbackPersistsIdentity:
             r = await client.get(
                 f"/v1/integrations/google/callback?code=fake-code&state={state}"
                 f"&scope=https://www.googleapis.com/auth/calendar.readonly",
+                headers=connect_cookie_for(state),
                 follow_redirects=False,
             )
         assert r.status_code in (302, 307)

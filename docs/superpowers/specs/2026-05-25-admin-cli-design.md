@@ -25,7 +25,7 @@ users
   list                          # table: id, email, tier, admin, deleted
   create  --email --password --tier [free] [--admin]
   delete  --email               # soft delete, requires "yes" confirmation
-  set-tier --email --tier       # free | tier1 | tier2
+  set-tier --email --tier       # free | plus | family
 
 diaries
   list    --email               # all diaries owned by user

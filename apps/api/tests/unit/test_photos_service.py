@@ -52,7 +52,6 @@ def test_constants():
     from app.services.photos import (
         ALLOWED_MIME,
         MAX_BYTES,
-        PRESIGN_TTL_SECONDS,
         THUMBNAIL_LONGEST_EDGE,
         THUMBNAIL_QUALITY,
     )
@@ -61,7 +60,6 @@ def test_constants():
     assert MAX_BYTES == 50 * 1024 * 1024
     assert THUMBNAIL_LONGEST_EDGE == 512
     assert THUMBNAIL_QUALITY == 80
-    assert PRESIGN_TTL_SECONDS == 900
 
 
 def _build_jpeg_with_exif(taken="2025:08:14 13:45:00", lat=37.7749, lon=-122.4194):

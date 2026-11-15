@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { api, type Diary, ApiError } from '@/lib/api'
 import { useAuth } from '@/lib/auth-context'
+import { diaryLimitNote } from '@/lib/plan'
 
 function daysRemaining(hardDeleteAfter: string): number {
   return Math.ceil((new Date(hardDeleteAfter).getTime() - Date.now()) / 86_400_000)
@@ -16,7 +17,7 @@ export default function DiaryRestorePage() {
   const [diaries, setDiaries] = useState<Diary[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [tierLimitError, setTierLimitError] = useState<{ limit: number; current: number; source: string } | null>(null)
+  const [limitNote, setLimitNote] = useState<string | null>(null)
   const [restoring, setRestoring] = useState<string | null>(null)
 
   useEffect(() => {
@@ -35,17 +36,16 @@ export default function DiaryRestorePage() {
   async function handleRestore(id: string) {
     setRestoring(id)
     setError('')
-    setTierLimitError(null)
+    setLimitNote(null)
     try {
       await api.diaries.restore(id)
       setDiaries((prev) => prev.filter((d) => d.id !== id))
     } catch (e: unknown) {
-      if (e instanceof ApiError && e.code === 'tier_limit' && e.details) {
-        setTierLimitError({
-          limit: typeof e.details.limit === 'number' ? e.details.limit : 0,
-          current: typeof e.details.current === 'number' ? e.details.current : 0,
-          source: typeof e.details.source === 'string' ? e.details.source : 'unknown',
-        })
+      if (e instanceof ApiError && e.code === 'tier_limit' && e.details?.source === 'diary') {
+        // The person restoring is the owner, so the note names their own plan.
+        const plan = await api.auth.myPlan().catch(() => null)
+        const limit = typeof e.details.limit === 'number' ? e.details.limit : plan?.diaries_limit ?? 1
+        setLimitNote(diaryLimitNote(plan?.plan_name ?? 'Free', limit))
       } else {
         setError(e instanceof Error ? e.message : 'Restore failed')
       }
@@ -71,12 +71,10 @@ export default function DiaryRestorePage() {
 
         {error && <p className="error-message" style={{ marginBottom: '1rem' }}>{error}</p>}
 
-        {tierLimitError && (
+        {limitNote && (
           <div className="error-message" style={{ marginBottom: '1rem' }}>
-            You&apos;re at your free-tier limit ({tierLimitError.current}/{tierLimitError.limit} {tierLimitError.source === 'diary' ? 'diaries' : 'entries'}).
-            Free up a slot or{' '}
-            <a href="/account/upgrade" style={{ textDecoration: 'underline' }}>Upgrade</a>
-            {' '}to restore this one.
+            {limitNote}{' '}
+            <Link href="/plans" style={{ textDecoration: 'underline' }}>Upgrade now</Link>
           </div>
         )}
 

@@ -1,0 +1,415 @@
+"""Google Photos Picker API client. Item 14."""
+
+from __future__ import annotations
+
+import json
+import logging
+from datetime import UTC, datetime
+
+import httpx
+import pytest
+
+from app.services.google_photos import (
+    BASE_URL,
+    GoogleAuthError,
+    GoogleError,
+    GooglePhotosClient,
+    GoogleSetupError,
+    GoogleUnavailable,
+    PhotoTooLarge,
+    PickedItem,
+    parse_duration,
+)
+
+SESSION = {
+    "id": "sess-1",
+    "pickerUri": "https://photos.google.com/picker/sess-1",
+    "pollingConfig": {"pollInterval": "5s", "timeoutIn": "1800s"},
+    "expireTime": "2026-11-13T11:00:00.123456789Z",
+    "mediaItemsSet": False,
+}
+
+
+def _item(i: int, kind: str = "PHOTO") -> dict:
+    return {
+        "id": f"item-{i}",
+        "createTime": "2026-05-16T10:00:00Z",
+        "type": kind,
+        "mediaFile": {
+            "baseUrl": f"https://lh3.googleusercontent.com/base-{i}",
+            "mimeType": "image/jpeg",
+            "filename": f"IMG_{i}.jpg",
+        },
+    }
+
+
+def _client(handler) -> GooglePhotosClient:
+    return GooglePhotosClient("ya29.token", transport=httpx.MockTransport(handler))
+
+
+async def test_create_session_sends_max_items_and_parses_picker_uri():
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["method"] = request.method
+        seen["url"] = str(request.url)
+        seen["auth"] = request.headers.get("authorization")
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json=SESSION)
+
+    session = await _client(handler).create_session()
+
+    assert seen["method"] == "POST"
+    assert seen["url"] == f"{BASE_URL}/sessions"
+    assert seen["auth"] == "Bearer ya29.token"
+    assert seen["body"] == {"pickingConfig": {"maxItemCount": "50"}}
+    assert session.id == "sess-1"
+    assert session.picker_uri == "https://photos.google.com/picker/sess-1"
+    assert session.items_set is False
+    assert session.poll_interval_s == 5.0
+    assert session.timeout_s == 1800.0
+    assert session.expire_time == datetime(2026, 11, 13, 11, 0, 0, 123456, tzinfo=UTC)
+
+
+async def test_duration_strings_parse():
+    assert parse_duration("5s") == 5.0
+    assert parse_duration("1.5s") == 1.5
+    assert parse_duration("0.250s") == 0.25
+    assert parse_duration(None) is None
+    assert parse_duration("") is None
+    assert parse_duration("soon") is None
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                **SESSION,
+                "mediaItemsSet": True,
+                "pollingConfig": {"pollInterval": "1.5s"},
+            },
+        )
+
+    session = await _client(handler).get_session("sess-1")
+    assert session.items_set is True
+    assert session.poll_interval_s == 1.5
+    assert session.timeout_s is None
+
+
+async def test_list_items_follows_pages():
+    calls: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        params = dict(request.url.params)
+        calls.append(params)
+        assert request.url.path == "/v1/mediaItems"
+        if "pageToken" not in params:
+            return httpx.Response(
+                200, json={"mediaItems": [_item(1), _item(2, "VIDEO")], "nextPageToken": "p2"}
+            )
+        return httpx.Response(200, json={"mediaItems": [_item(3)]})
+
+    items = await _client(handler).list_items("sess-1")
+
+    assert [c.get("pageToken") for c in calls] == [None, "p2"]
+    assert all(c["sessionId"] == "sess-1" and c["pageSize"] == "100" for c in calls)
+    assert [i.id for i in items] == ["item-1", "item-2", "item-3"]
+    assert items[1].type == "VIDEO"
+    assert items[0] == PickedItem(
+        id="item-1",
+        type="PHOTO",
+        create_time=datetime(2026, 5, 16, 10, 0, tzinfo=UTC),
+        base_url="https://lh3.googleusercontent.com/base-1",
+        mime_type="image/jpeg",
+        filename="IMG_1.jpg",
+    )
+
+
+async def test_download_uses_d_param_and_bearer():
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["url"] = str(request.url)
+        seen["auth"] = request.headers.get("authorization")
+        return httpx.Response(200, content=b"jpeg-bytes")
+
+    item = PickedItem("item-1", "PHOTO", None, "https://lh3.googleusercontent.com/b", None, "a.jpg")
+    data = await _client(handler).download(item)
+
+    assert data == b"jpeg-bytes"
+    assert seen["url"] == "https://lh3.googleusercontent.com/b=d"
+    assert seen["auth"] == "Bearer ya29.token"
+
+
+async def test_download_over_limit_raises(monkeypatch):
+    import app.services.google_photos as gp
+
+    monkeypatch.setattr(gp, "MAX_BYTES", 10)
+
+    async def chunks():
+        yield b"123456"
+        yield b"789012"  # passes 10 bytes here
+        raise AssertionError("read past the cap")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=chunks())  # no Content-Length
+
+    item = PickedItem("item-1", "PHOTO", None, "https://lh3.googleusercontent.com/b", None, "a.jpg")
+    with pytest.raises(PhotoTooLarge):
+        await _client(handler).download(item)
+
+    def declared(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"x" * 11)  # Content-Length 11
+
+    with pytest.raises(PhotoTooLarge):
+        await _client(declared).download(item)
+
+
+@pytest.mark.parametrize("status", [401, 403])
+async def test_401_raises_google_auth_error(status):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status, json={"error": {"status": "UNAUTHENTICATED"}})
+
+    with pytest.raises(GoogleAuthError):
+        await _client(handler).get_session("sess-1")
+
+
+@pytest.mark.parametrize("status", [429, 500, 503])
+async def test_5xx_and_rate_limit_raise_google_unavailable(status):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status)
+
+    with pytest.raises(GoogleUnavailable):
+        await _client(handler).create_session()
+
+
+async def test_timeout_raises_google_unavailable():
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("slow", request=request)
+
+    with pytest.raises(GoogleUnavailable):
+        await _client(handler).list_items("sess-1")
+
+
+async def test_delete_session_sends_delete():
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["method"] = request.method
+        seen["url"] = str(request.url)
+        return httpx.Response(200, json={})
+
+    await _client(handler).delete_session("sess-1")
+    assert seen == {"method": "DELETE", "url": f"{BASE_URL}/sessions/sess-1"}
+
+
+async def test_download_follows_redirect_without_sending_the_token_to_the_other_host():
+    seen: list[tuple[str, str | None]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.url.host, request.headers.get("authorization")))
+        if request.url.host == "lh3.googleusercontent.com":
+            return httpx.Response(302, headers={"location": "https://cdn.example.net/blob/xyz"})
+        return httpx.Response(200, content=b"jpeg-bytes")
+
+    item = PickedItem("item-1", "PHOTO", None, "https://lh3.googleusercontent.com/b", None, "a.jpg")
+    data = await _client(handler).download(item)
+
+    assert data == b"jpeg-bytes"
+    assert seen == [
+        ("lh3.googleusercontent.com", "Bearer ya29.token"),
+        ("cdn.example.net", None),  # the bearer token never reaches the second host
+    ]
+
+
+async def test_download_never_follows_a_redirect_to_plain_http():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.scheme == "https":
+            return httpx.Response(302, headers={"location": "http://cdn.example.net/blob"})
+        raise AssertionError("a plain-http request was made")
+
+    item = PickedItem("item-1", "PHOTO", None, "https://lh3.googleusercontent.com/b", None, "a.jpg")
+    with pytest.raises(GoogleError):
+        await _client(handler).download(item)
+
+
+@pytest.mark.parametrize("status", [301, 302, 303, 307, 308])
+async def test_bare_redirect_from_an_api_call_is_an_error(status):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status, headers={"location": "https://elsewhere.example.net/x"})
+
+    with pytest.raises(GoogleError):
+        await _client(handler).get_session("sess-1")
+
+
+def _info(reason: str, message: str = "Some message.") -> dict:
+    return {
+        "error": {
+            "code": 403,
+            "status": "PERMISSION_DENIED",
+            "message": message,
+            "details": [
+                {"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": reason}
+            ],
+        }
+    }
+
+
+async def test_service_disabled_403_is_setup_error():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, json=_info("SERVICE_DISABLED"))
+
+    with pytest.raises(GoogleSetupError):
+        await _client(handler).create_session()
+
+
+async def test_disabled_message_without_reason_is_setup_error():
+    def handler(request: httpx.Request) -> httpx.Response:
+        message = "Photos Picker API has not been used in project 1"
+        body = {"error": {"code": 403, "message": message}}
+        return httpx.Response(403, json=body)
+
+    with pytest.raises(GoogleSetupError):
+        await _client(handler).create_session()
+
+
+async def test_scope_403_is_auth_error():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, json=_info("ACCESS_TOKEN_SCOPE_INSUFFICIENT"))
+
+    with pytest.raises(GoogleAuthError) as exc:
+        await _client(handler).create_session()
+    assert not isinstance(exc.value, GoogleSetupError)
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        httpx.Response(401, json=_info("SERVICE_DISABLED")),
+        httpx.Response(403, text="<html>nope</html>"),
+        httpx.Response(403, json=["not", "an", "object"]),
+        httpx.Response(403, json={"error": "a string"}),
+        httpx.Response(403, json={"error": {"details": "x"}}),
+    ],
+)
+async def test_other_401_403_stay_auth_errors(response):
+    with pytest.raises(GoogleAuthError) as exc:
+        await _client(lambda request: response).create_session()
+    assert not isinstance(exc.value, GoogleSetupError)
+
+
+async def test_setup_error_is_detected_on_the_streamed_download_path():
+    item = PickedItem("i1", "PHOTO", None, "https://lh3.googleusercontent.com/b", None, None)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, json=_info("API_DISABLED"))
+
+    with pytest.raises(GoogleSetupError):
+        await _client(handler).download(item)
+
+
+async def test_refusal_logs_reason_only(caplog):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            403, json=_info("SERVICE_DISABLED", "enable at https://console.cloud.google.com/x")
+        )
+
+    # Alembic's fileConfig (run by the integration fixtures) disables existing loggers.
+    logging.getLogger("app.services.google_photos").disabled = False
+    with caplog.at_level("INFO", logger="app.services.google_photos"):
+        with pytest.raises(GoogleSetupError):
+            await _client(handler).create_session()
+
+    records = [r for r in caplog.records if "google_photos_refused" in r.getMessage()]
+    assert len(records) == 1
+    text = records[0].getMessage()
+    assert "reason=SERVICE_DISABLED" in text
+    assert "code=403" in text
+    assert "https://" not in caplog.text
+    assert "ya29" not in caplog.text
+    assert "enable at" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "https://evil.example/x",
+        "https://evilgoogleusercontent.com/x",
+        "https://googleusercontent.com.evil.example/x",
+        "https://lh3.googleusercontent.com@evil.example/x",
+    ],
+)
+async def test_download_refuses_unknown_host(base_url, caplog):
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("a request was made to a host that is not Google's")
+
+    item = PickedItem("item-1", "PHOTO", None, base_url, None, "a.jpg")
+    with caplog.at_level(logging.DEBUG), pytest.raises(GoogleError, match="unexpected host"):
+        await _client(handler).download(item)
+    assert "ya29.token" not in caplog.text
+    assert "/x" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "host",
+    ["lh3.googleusercontent.com", "googleusercontent.com", "photos.google.com", "a.googleapis.com"],
+)
+async def test_download_allows_googleusercontent(host):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"jpeg-bytes")
+
+    item = PickedItem("item-1", "PHOTO", None, f"https://{host}/b", None, "a.jpg")
+    assert await _client(handler).download(item) == b"jpeg-bytes"
+
+
+@pytest.mark.parametrize("call", ["create", "get"])
+async def test_session_reply_missing_id_is_a_google_error(call):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={})
+
+    c = _client(handler)
+    with pytest.raises(GoogleError, match="unexpected reply"):
+        await (c.create_session() if call == "create" else c.get_session("s"))
+
+
+async def test_item_missing_id_is_a_google_error():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"mediaItems": [{"type": "PHOTO"}]})
+
+    with pytest.raises(GoogleError, match="unexpected reply"):
+        await _client(handler).list_items("s")
+
+
+async def test_download_checks_the_host_of_the_url_actually_requested():
+    # "=d" is appended to the base url: a path-less base must still be judged by its real host.
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("a request was made to a host that is not Google's")
+
+    for base in ("https://evil.example", "https://googleusercontent.com.evil.example"):
+        item = PickedItem("item-1", "PHOTO", None, base, None, "a.jpg")
+        with pytest.raises(GoogleError, match="unexpected host"):
+            await _client(handler).download(item)
+
+
+@pytest.mark.parametrize(
+    "base",
+    [
+        "https://lh3.googleusercontent.com",  # "=d" would become part of the host
+        "https://lh3.googleusercontent.com:443",  # ... or of the port
+        "https://lh3.googleusercontent.com@evil.example",
+    ],
+)
+async def test_download_path_less_base_url_is_judged_by_the_real_request_host(base):
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("a request was made with a host that is not Google's")
+
+    item = PickedItem("item-1", "PHOTO", None, base, None, "a.jpg")
+    with pytest.raises(GoogleError, match="unexpected host"):
+        await _client(handler).download(item)
+
+
+async def test_create_session_with_empty_picker_uri_is_a_google_error():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"id": "sess-1"})
+
+    with pytest.raises(GoogleError, match="unexpected reply"):
+        await _client(handler).create_session()

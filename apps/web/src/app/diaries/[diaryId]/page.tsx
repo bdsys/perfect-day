@@ -8,6 +8,10 @@ import { useAuth } from '@/lib/auth-context'
 import { StatusPanel } from '@/components/StatusPanel'
 import { usePolling } from '@/lib/usePolling'
 import { formatDateRange } from '@/lib/date'
+import { navigateTo } from '@/lib/navigate'
+import { useResetOnBfcacheRestore } from '@/lib/useResetOnBfcacheRestore'
+import PlanBadge from '@/components/PlanBadge'
+import { formatResetDate, readOnlyBanner } from '@/lib/plan'
 
 // Must match the API's default page size for GET /v1/diaries/{id}/entries.
 const ENTRIES_PAGE_SIZE = 20
@@ -83,6 +87,8 @@ export default function DiaryDetailPage() {
   const [newEntryTitle, setNewEntryTitle] = useState('')
   const [newEntryError, setNewEntryError] = useState('')
   const pollFailuresRef = useRef(0)
+  const connectingRef = useRef(false)
+  const [connecting, setConnecting] = useState(false)
   const MAX_POLL_FAILURES = 5
 
   useEffect(() => {
@@ -273,11 +279,21 @@ export default function DiaryDetailPage() {
     return () => clearTimeout(timer)
   }, [pollingBackfill])
 
+  useResetOnBfcacheRestore(() => {
+    connectingRef.current = false
+    setConnecting(false)
+  })
+
   async function connectCalendar() {
+    if (connectingRef.current) return // two authorize calls would leave the wrong connect cookie
+    connectingRef.current = true
+    setConnecting(true)
     try {
       const { url } = await api.integrations.getGoogleAuthUrl('calendar')
-      window.location.href = url
+      navigateTo(url)
     } catch (e: unknown) {
+      connectingRef.current = false
+      setConnecting(false)
       setError(e instanceof Error ? e.message : 'Failed to get auth URL')
     }
   }
@@ -326,7 +342,8 @@ export default function DiaryDetailPage() {
   // start them (decision 2026-11-12). The hint says why they are switched off.
   const isOwner = scanAccess?.can_scan ?? false
   const calendar = scanAccess?.calendar
-  const calendarOff = !isOwner || calendar !== 'connected'
+  const readOnly = diary?.plan?.read_only ?? false
+  const calendarOff = readOnly || !isOwner || calendar !== 'connected'
   const scanHint = !scanAccess ? undefined
     : !isOwner ? OWNER_ONLY_HINT
     : calendar !== 'connected' ? CALENDAR_HINT
@@ -343,17 +360,47 @@ export default function DiaryDetailPage() {
         </div>
       </nav>
       <div className="container" style={{ paddingTop: '1.5rem' }}>
+        {readOnly && diary?.plan && (
+          <div className="error-message" style={{ marginBottom: '1rem' }}>
+            <p style={{ margin: 0 }}>{readOnlyBanner(diary.plan.plan_name)}</p>
+            <Link href="/plans" className="plan-upgrade">Upgrade now</Link>
+          </div>
+        )}
+        {diary?.plan && diary.plan.ai_drafts_limit != null && (
+          <div style={{ marginBottom: '0.75rem' }}>
+            <PlanBadge
+              label="AI drafts"
+              used={diary.plan.ai_drafts_limit - (diary.plan.ai_drafts_left ?? 0)}
+              limit={diary.plan.ai_drafts_limit}
+              resetsOn={diary.plan.resets_on}
+              details={[
+                {
+                  label: 'AI drafts',
+                  text: `${diary.plan.ai_drafts_left ?? 0} of ${diary.plan.ai_drafts_limit} left, resets ${formatResetDate(diary.plan.resets_on)}`,
+                },
+                {
+                  label: 'Photos per entry',
+                  text: diary.plan.photos_per_entry == null ? 'Unlimited' : String(diary.plan.photos_per_entry),
+                },
+              ]}
+            />
+          </div>
+        )}
         <div className="page-header">
           <h1 className="page-title">{diary?.name ?? 'Diary'}</h1>
           <div className="page-actions">
-            <Link href={`/diaries/${diaryId}/settings`} className="btn btn-secondary">Settings</Link>
+            {readOnly ? (
+              <button type="button" className="btn btn-secondary" disabled>Settings</button>
+            ) : (
+              <Link href={`/diaries/${diaryId}/settings`} className="btn btn-secondary">Settings</Link>
+            )}
             {isOwner && calendar === 'connected' ? (
               <span className="btn btn-secondary" style={{ cursor: 'default', opacity: 0.7 }}>
                 Connected: {googleIntegration?.google_name ?? 'Google account'}
                 {googleIntegration?.google_email ? ` (${googleIntegration.google_email})` : ''} ✓
               </span>
             ) : isOwner && calendar === 'none' ? (
-              <button className="btn btn-secondary" onClick={connectCalendar}>
+              <button className="btn btn-secondary" onClick={connectCalendar} disabled={connecting}>
                 Connect Google Calendar
               </button>
             ) : null}
@@ -458,7 +505,7 @@ export default function DiaryDetailPage() {
                   setNewEntryError('')
                   setShowNewEntryOptions((v) => !v)
                 }}
-                disabled={creating}
+                disabled={creating || readOnly}
               >
                 {creating ? 'Creating…' : 'New entry'}
               </button>
@@ -507,6 +554,7 @@ export default function DiaryDetailPage() {
               <button
                 className="btn btn-secondary"
                 onClick={() => router.push(`/diaries/${diaryId}/calendar-pick`)}
+                disabled={readOnly}
               >
                 New entry from Google Calendar
               </button>
@@ -516,6 +564,7 @@ export default function DiaryDetailPage() {
               <button
                 className="btn btn-secondary"
                 onClick={() => router.push(`/diaries/${diaryId}/rules`)}
+                disabled={readOnly}
               >
                 Auto-Creation Rules
               </button>
@@ -539,7 +588,7 @@ export default function DiaryDetailPage() {
                 <p style={{ margin: 0 }}>
                   Google Calendar is disconnected, so new events aren&apos;t being picked up.
                 </p>
-                <button className="btn btn-primary" style={{ marginTop: '0.5rem' }} onClick={connectCalendar}>
+                <button className="btn btn-primary" style={{ marginTop: '0.5rem' }} onClick={connectCalendar} disabled={connecting}>
                   Reconnect Google Calendar
                 </button>
               </>

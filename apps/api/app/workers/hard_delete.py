@@ -70,7 +70,7 @@ async def hard_delete_diary(diary_id: uuid.UUID) -> None:
                     photo = photo_result.scalar_one_or_none()
                     if photo:
                         s3 = get_s3()
-                        for key in [photo.s3_key, photo.thumbnail_s3_key]:
+                        for key in [photo.s3_key, photo.thumbnail_s3_key, photo.display_s3_key]:
                             if key:
                                 try:
                                     s3.delete_object(Bucket=settings.s3_bucket_photos, Key=key)

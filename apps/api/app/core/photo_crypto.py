@@ -44,6 +44,7 @@ MAGIC = b"PD02"
 MAGIC_V1 = b"PD01"  # legacy blobs: DEK used directly, no associated data
 PURPOSE_FULL = b"full"
 PURPOSE_THUMB = b"thumb"
+PURPOSE_DISPLAY = b"display"
 HEADER_FORMAT = "!4sIIQ"  # magic(4s), chunk_count(I), chunk_size(I), plaintext_total(Q)
 
 _HEADER_SIZE = struct.calcsize(HEADER_FORMAT)

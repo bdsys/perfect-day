@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+
 import structlog
 
 from app.workers.celery_app import celery_app
@@ -20,13 +22,14 @@ async def _dispatch_due_scans() -> None:
     from sqlalchemy import func, select
 
     from app.models import Diary, ScanJob, User
+    from app.services.read_only import read_only_diary_ids
     from app.workers.tasks import scan_diary
     from app.workers.utils import db_session
 
     async with db_session() as db:
         now = func.now()
         result = await db.execute(
-            select(Diary.id)
+            select(Diary.id, Diary.owner_user_id, User.subscription_tier)
             .join(ScanJob, ScanJob.diary_id == Diary.id)
             .join(User, User.id == Diary.owner_user_id)
             .where(
@@ -37,7 +40,17 @@ async def _dispatch_due_scans() -> None:
                 (ScanJob.next_scan_after.is_(None)) | (ScanJob.next_scan_after <= now),
             )
         )
-        diary_ids = [str(r[0]) for r in result.fetchall()]
+        due = result.fetchall()
+        # One lookup per owner, not per diary.
+        read_only: dict[uuid.UUID, set[uuid.UUID]] = {}
+        diary_ids = []
+        for diary_id, owner_id, tier in due:
+            if owner_id not in read_only:
+                read_only[owner_id] = await read_only_diary_ids(db, owner_id, tier)
+            if diary_id in read_only[owner_id]:
+                log.info("diary_read_only_skip", diary_id=str(diary_id), where="beat")
+                continue
+            diary_ids.append(str(diary_id))
 
     log.info("dispatch_due_scans", count=len(diary_ids))
     for diary_id in diary_ids:
@@ -95,6 +108,13 @@ async def _process_hard_deletes() -> None:
             log.exception("hard_delete_user_failed", user_id=str(user_id))
 
 
+@celery_app.task(name="app.workers.beat_tasks.sweep_stuck_photo_imports")
+def sweep_stuck_photo_imports() -> None:
+    from app.workers.photo_imports import sweep_stuck_imports
+
+    run_sync(sweep_stuck_imports())
+
+
 @celery_app.task(name="app.workers.beat_tasks.sweep_orphaned_photos")
 def sweep_orphaned_photos() -> None:
     run_sync(_sweep_orphaned_photos())
@@ -149,4 +169,57 @@ async def _sweep_orphaned_photos() -> int:
         pass
 
     log.info("sweep_orphaned_photos", deleted=deleted)
+    await create_missing_display_copies()
     return deleted
+
+
+async def create_missing_display_copies(limit: int = 20) -> int:
+    """Give HEIC/HEIF photos that lack a JPEG display copy one. Returns how many were made."""
+    import asyncio
+
+    from sqlalchemy import func, select
+
+    from app.core.photo_crypto import PURPOSE_DISPLAY, decrypt_stream, encrypt_stream, unwrap_dek
+    from app.models import Photo
+    from app.services.photos import get_object_bytes, make_display_jpeg, put_object_bytes
+    from app.workers.utils import db_session
+
+    loop = asyncio.get_running_loop()
+    made = 0
+    async with db_session() as db:
+        photos = (
+            await db.execute(
+                select(Photo)
+                .where(
+                    Photo.mime_type.in_(["image/heic", "image/heif"]),
+                    Photo.display_s3_key.is_(None),
+                    Photo.finalized_at.is_not(None),
+                    Photo.deleted_at.is_(None),
+                    Photo.dek_ciphertext.is_not(None),
+                )
+                .order_by(Photo.display_attempted_at.asc().nulls_first(), Photo.created_at)
+                .limit(limit)
+            )
+        ).scalars().all()
+        for photo in photos:
+            # Stamped on every attempt so a failing photo goes behind untried ones.
+            photo.display_attempted_at = func.now()
+            try:
+                dek = unwrap_dek(photo.dek_ciphertext, photo.user_id)
+                key = f"{photo.user_id}/{photo.id}_display.enc"
+
+                def _build(photo=photo, dek=dek, key=key) -> bool:
+                    original = decrypt_stream(get_object_bytes(photo.s3_key), dek)
+                    jpeg = make_display_jpeg(original, photo.mime_type)
+                    if jpeg is None:
+                        return False
+                    put_object_bytes(key, encrypt_stream(jpeg, dek, PURPOSE_DISPLAY))
+                    return True
+
+                if await loop.run_in_executor(None, _build):
+                    photo.display_s3_key = key
+                    made += 1
+            except Exception:  # noqa: BLE001 — one bad photo must not stop the rest
+                log.warning("display_copy_failed", photo_id=str(photo.id))
+    log.info("create_missing_display_copies", made=made)
+    return made

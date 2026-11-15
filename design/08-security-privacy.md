@@ -99,7 +99,8 @@ Day 30:  Celery process_hard_deletes():
            entries, entry_edit_diffs, scan_runs, backfill_runs,
            diary_permissions, invitations, diary_calendar_filters.
            Photos deleted from MinIO + photos table only if no other diary
-           links them (cross-diary check via diary_photos).
+           links them (cross-diary check: an entry_photos row on an
+           entry in another diary keeps the photo).
            Hard delete diaries row. Write audit_log.
 ```
 
@@ -107,7 +108,9 @@ Day 30:  Celery process_hard_deletes():
 
 ```
 Day 0:   deleted_at set, hard_delete_after = now() + 7d.
-         Immediately: revoke all refresh_tokens + oauth_tokens.
+         Immediately: revoke all refresh_tokens. Revoke the Google token at
+         Google and delete the oauth_tokens rows, so restoring within the
+         7 days needs a Google reconnect.
          Disable all scans. Confirmation email + restore link sent.
          Shared-diary members notified: "export your content now."
 Day 6:   deletion_grace notification (last chance).
@@ -120,7 +123,7 @@ Day 7:   Celery process_hard_deletes():
            Hard delete users row.
 ```
 
-Cross-diary photo check: `photos` row and MinIO object deleted only when the last linking `diary_photos` row is gone.
+Cross-diary photo check: the `photos` row and MinIO objects are deleted only when no entry in another diary still links the photo through `entry_photos` (`apps/api/app/workers/hard_delete.py`). The `diary_photos` table is not consulted.
 
 ## GDPR/CCPA posture
 

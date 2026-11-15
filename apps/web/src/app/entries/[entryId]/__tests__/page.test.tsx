@@ -1,0 +1,185 @@
+import { render, screen, fireEvent, act } from '@testing-library/react'
+import EntryDetailPage from '../page'
+import { api, ApiError, type Entry, type OwnerPlan, type PhotoImport } from '@/lib/api'
+
+jest.mock('@/lib/navigate', () => ({ navigateTo: jest.fn() }))
+jest.mock('@/components/PhotoThumbnail', () => ({ PhotoThumbnail: () => <span data-testid="thumb" /> }))
+jest.mock('@/lib/api', () => {
+  const actual = jest.requireActual('@/lib/api')
+  return {
+    ...actual,
+    api: {
+      entries: { get: jest.fn(), regenerate: jest.fn(), publish: jest.fn() },
+      photoImports: { listForEntry: jest.fn(), create: jest.fn(), cancel: jest.fn(), dismiss: jest.fn() },
+      integrations: { list: jest.fn(), getGoogleAuthUrl: jest.fn() },
+      photos: { detachFromEntry: jest.fn(), list: jest.fn() },
+    },
+  }
+})
+// Stable references: a fresh user/router object each render would re-run the page's load effect.
+jest.mock('@/lib/auth-context', () => {
+  const value = { user: { id: 'u1', email: 'a@b.com' }, loading: false }
+  return { useAuth: () => value }
+})
+jest.mock('next/navigation', () => {
+  const router = { push: jest.fn(), replace: jest.fn() }
+  const params = { entryId: 'e1' }
+  const search = new URLSearchParams()
+  return { useRouter: () => router, useParams: () => params, useSearchParams: () => search }
+})
+
+const get = api.entries.get as jest.Mock
+const listForEntry = api.photoImports.listForEntry as jest.Mock
+
+function entry(photos: { id: string }[]): Entry {
+  return {
+    id: 'e1', diary_id: 'd1', entry_date: '2026-05-16', entry_end_date: null, title: 'T', body_markdown: 'Body',
+    body_source: 'llm', status: 'draft', events: [], photos, enrichments: [], suggestion: null, location: null,
+    tz_override: null, can_edit: true, updated_at: '2026-05-16T00:00:00Z',
+  } as unknown as Entry
+}
+const imp = (over: Partial<PhotoImport>): PhotoImport =>
+  ({ id: 'i1', entry_id: 'e1', status: 'copying', added_count: 0, skipped_videos: 0, failed_names: [], ...over }) as PhotoImport
+
+afterEach(() => {
+  jest.clearAllMocks()
+  jest.useRealTimers()
+})
+
+describe('entry page: Google import notice in Edit mode', () => {
+  it('keeps polling while Edit is open, hides the notice, and refreshes photos after leaving Edit', async () => {
+    jest.useFakeTimers()
+    ;(api.integrations.list as jest.Mock).mockResolvedValue([])
+    get.mockResolvedValueOnce(entry([])).mockResolvedValue(entry([{ id: 'p1' }]))
+    listForEntry
+      .mockResolvedValueOnce([imp({ status: 'copying' })])
+      .mockResolvedValue([imp({ status: 'done', added_count: 1 })])
+    render(<EntryDetailPage />)
+    await act(async () => {})
+    expect(screen.getByText('Copying photos from Google Photos…')).toBeVisible()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
+    expect(screen.getByText('Copying photos from Google Photos…')).not.toBeVisible()
+    expect(screen.queryByTestId('thumb')).not.toBeInTheDocument()
+
+    await act(async () => { jest.advanceTimersByTime(3000) })
+    expect(listForEntry).toHaveBeenCalledTimes(2) // polling continued while editing
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    await act(async () => {})
+    expect(screen.getByTestId('thumb')).toBeInTheDocument()
+    expect(screen.getByText('1 photo added from Google Photos')).toBeVisible()
+  })
+
+  it('in view mode the notice comes before the Photos heading', async () => {
+    ;(api.integrations.list as jest.Mock).mockResolvedValue([])
+    get.mockResolvedValue(entry([{ id: 'p1' }]))
+    listForEntry.mockResolvedValue([imp({ status: 'copying' })])
+    render(<EntryDetailPage />)
+    const notice = await screen.findByText('Copying photos from Google Photos…')
+    const heading = screen.getByRole('heading', { name: 'Photos' })
+    expect(notice.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('an import finishing mid-edit does not wipe what was typed', async () => {
+    jest.useFakeTimers()
+    ;(api.integrations.list as jest.Mock).mockResolvedValue([])
+    get.mockResolvedValueOnce(entry([])).mockResolvedValue(entry([{ id: 'p1' }]))
+    listForEntry
+      .mockResolvedValueOnce([imp({ status: 'copying' })])
+      .mockResolvedValue([imp({ status: 'done', added_count: 1 })])
+    render(<EntryDetailPage />)
+    await act(async () => {})
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'My typed title' } })
+    fireEvent.change(screen.getByLabelText('Body'), { target: { value: 'My typed body' } })
+    await act(async () => { jest.advanceTimersByTime(3000) })
+    expect(get).toHaveBeenCalledTimes(2) // the refresh ran
+    expect(screen.getByLabelText('Title')).toHaveValue('My typed title')
+    expect(screen.getByLabelText('Body')).toHaveValue('My typed body')
+  })
+})
+
+const freePlan = (over: Partial<OwnerPlan> = {}): OwnerPlan => ({
+  tier: 'free', plan_name: 'Free', ai_drafts_limit: 5, ai_drafts_left: 3, resets_on: '2026-12-01',
+  photos_per_entry: 1, read_only: false, ...over,
+})
+const withPlan = (plan: OwnerPlan | null, over: Partial<Entry> = {}): Entry =>
+  ({ ...entry([]), plan, ...over }) as Entry
+
+describe('entry page: plan limits', () => {
+  beforeEach(() => {
+    ;(api.integrations.list as jest.Mock).mockResolvedValue([])
+    listForEntry.mockResolvedValue([])
+  })
+
+  it('grays out the AI button at the limit and points it at the AI note', async () => {
+    get.mockResolvedValue(withPlan(freePlan({ ai_drafts_left: 0 }), { body_markdown: 'Body', events: [{ id: 'ev' }] as never }))
+    render(<EntryDetailPage />)
+    const btn = await screen.findByRole('button', { name: /regenerate with ai/i })
+    expect(btn).toBeDisabled()
+    const note = document.getElementById(btn.getAttribute('aria-describedby')!)
+    expect(note).toHaveTextContent('No AI drafts left this month. Resets Dec 1.')
+    expect(screen.getByRole('button', { name: 'AI drafts: 0 of 5 left · resets Dec 1' })).toBeInTheDocument()
+  })
+
+  it('shows the entry note only when the last generation hit the limit and none are left', async () => {
+    const failed = { status: 'failed', error: 'ai_draft_limit', created_at: 'x' } as never
+    get.mockResolvedValue(withPlan(freePlan({ ai_drafts_left: 0 }), { last_generation: failed }))
+    const { unmount } = render(<EntryDetailPage />)
+    expect(await screen.findByText('Out of AI drafts until Dec 1. Write it yourself, or generate it then.')).toBeInTheDocument()
+    unmount()
+
+    get.mockResolvedValue(withPlan(freePlan({ ai_drafts_left: 5 }), { last_generation: failed, events: [{ id: 'ev' }] as never }))
+    render(<EntryDetailPage />)
+    const btn = await screen.findByRole('button', { name: /regenerate with ai/i })
+    expect(screen.queryByText(/Out of AI drafts until/)).not.toBeInTheDocument()
+    expect(btn).toBeEnabled()
+  })
+
+  it('shows no badge on a Plus plan', async () => {
+    get.mockResolvedValue(withPlan(freePlan({ tier: 'plus', plan_name: 'Plus', ai_drafts_limit: null, ai_drafts_left: null, photos_per_entry: null })))
+    render(<EntryDetailPage />)
+    await screen.findByRole('button', { name: 'Edit' })
+    expect(screen.queryByText(/AI drafts:/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Upgrade now' })).not.toBeInTheDocument()
+  })
+
+  it('disables Add photos with the photo note when the entry is full', async () => {
+    get.mockResolvedValue(withPlan(freePlan(), { photos: [{ id: 'p1' }] as never }))
+    render(<EntryDetailPage />)
+    const btn = await screen.findByRole('button', { name: /add photos/i })
+    expect(btn).toBeDisabled()
+    expect(screen.getByText('Free plan: 1 photo per entry.')).toBeInTheDocument()
+  })
+
+  it('read-only disables Edit and Publish, leaves Delete enabled and shows the banner', async () => {
+    get.mockResolvedValue(withPlan(freePlan({ read_only: true })))
+    render(<EntryDetailPage />)
+    expect(await screen.findByText('This diary is read-only on the Free plan. Upgrade, or delete another diary, to use it again.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Edit' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Publish' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeEnabled()
+  })
+
+  it('a tier_limit from regenerate shows the AI note, never the raw code, and keeps the badge', async () => {
+    get.mockResolvedValue(withPlan(freePlan(), { events: [{ id: 'ev' }] as never }))
+    ;(api.entries.regenerate as jest.Mock).mockRejectedValue(
+      new ApiError(403, 'limit reached', 'tier_limit', { source: 'ai_draft', resets_on: '2026-12-01' }),
+    )
+    render(<EntryDetailPage />)
+    fireEvent.click(await screen.findByRole('button', { name: /regenerate with ai/i }))
+    expect((await screen.findAllByText('No AI drafts left this month. Resets Dec 1.')).length).toBeGreaterThan(0)
+    expect(screen.getByRole('button', { name: /AI drafts: 3 of 5 left/ })).toBeInTheDocument()
+  })
+
+  it('an action response with plan null does not blank the badge or re-enable controls', async () => {
+    get.mockResolvedValue(withPlan(freePlan({ ai_drafts_left: 0 }), { events: [{ id: 'ev' }] as never }))
+    ;(api.entries.publish as jest.Mock).mockResolvedValue(withPlan(null, { status: 'published', events: [{ id: 'ev' }] as never }))
+    render(<EntryDetailPage />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Publish' }))
+    await screen.findByRole('button', { name: 'Unpublish' })
+    expect(screen.getByRole('button', { name: /AI drafts: 0 of 5 left/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /regenerate with ai/i })).toBeDisabled()
+  })
+})

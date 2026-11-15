@@ -8,11 +8,8 @@ CalendarState = Literal["connected", "lost", "none"]
 
 
 def calendar_state(oauth_token) -> CalendarState:
-    """'none': never connected. 'lost': connected, but revoked or without calendar access."""
-    if oauth_token is None:
+    """'none': no connection, or one without calendar access (e.g. photos only).
+    'lost': a calendar connection that was revoked. 'connected': usable."""
+    if oauth_token is None or "calendar.readonly" not in (oauth_token.scopes_granted or []):
         return "none"
-    if oauth_token.revoked_at is None and "calendar.readonly" in (
-        oauth_token.scopes_granted or []
-    ):
-        return "connected"
-    return "lost"
+    return "lost" if oauth_token.revoked_at is not None else "connected"

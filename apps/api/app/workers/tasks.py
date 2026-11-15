@@ -80,6 +80,7 @@ async def _scan_diary(
     from app.core.dependencies import get_redis
     from app.models import Diary, OAuthToken, ScanJob, ScanRun, User
     from app.services.calendar_connection import calendar_state
+    from app.services.read_only import is_diary_read_only
     from app.workers.calendar_sync import sync_calendar
     from app.workers.token_refresh import ensure_fresh_access_token
     from app.workers.utils import db_session
@@ -104,6 +105,10 @@ async def _scan_diary(
             )
             diary = result.scalar_one_or_none()
             if diary is None or not diary.scan_enabled:
+                return
+
+            if await is_diary_read_only(db, diary):
+                log.info("diary_read_only_skip", diary_id=diary_id_str, where="scan")
                 return
 
             owner_deleted_at = (
@@ -161,9 +166,14 @@ async def _scan_diary(
                             OAuthToken.provider == "google",
                         )
                     )
-                    oauth_token_fresh = token_result.scalar_one()
-                    access_token = await ensure_fresh_access_token(oauth_token_fresh, db)
-                    grant_gone = oauth_token_fresh.revoked_at is not None
+                    oauth_token_fresh = token_result.scalar_one_or_none()
+                    if oauth_token_fresh is None:
+                        # Disconnected while the scan ran.
+                        access_token = None
+                        grant_gone = True
+                    else:
+                        access_token = await ensure_fresh_access_token(oauth_token_fresh, db)
+                        grant_gone = oauth_token_fresh.revoked_at is not None
 
                 if access_token:
                     kwargs = {}
@@ -698,10 +708,13 @@ def generate_entry_draft(self, entry_id: str, trigger: str = "background") -> No
 
     Tasks queued before 25.3 carry no trigger and run as background redrafts.
     """
-    run_sync(_generate_entry_draft(entry_id, trigger))
+    # The task id keys the AI-draft reservation, so a redelivery never spends twice.
+    run_sync(_generate_entry_draft(entry_id, trigger, reservation_key=self.request.id))
 
 
-async def _generate_entry_draft(entry_id_str: str, trigger: str = "background") -> None:
+async def _generate_entry_draft(
+    entry_id_str: str, trigger: str = "background", *, reservation_key: str | None = None
+) -> None:
     from app.services.entry_location import update_place_and_weather
     from app.workers.llm import generate_draft_for_entry
     from app.workers.utils import db_session
@@ -722,7 +735,7 @@ async def _generate_entry_draft(entry_id_str: str, trigger: str = "background") 
             entry_id=entry_id_str,
             error=str(exc),
         )
-    await generate_draft_for_entry(entry_uuid, trigger=why)
+    await generate_draft_for_entry(entry_uuid, trigger=why, reservation_key=reservation_key)
 
 
 # ---------------------------------------------------------------------------
@@ -850,12 +863,20 @@ async def _fail_locked_backfill(backfill_run_id_str: str) -> None:
         run.error = BACKFILL_LOCKED_MESSAGE
 
 
+_BACKFILL_DISCONNECTED_MESSAGE = (
+    "Google Calendar was disconnected during the backfill. "
+    "Reconnect it and run the backfill again."
+)
+_BACKFILL_FAILED_MESSAGE = "The backfill stopped because of a problem. Try again later."
+
+
 async def _backfill_diary(backfill_run_id_str: str) -> None:
     from datetime import UTC, datetime
 
     from sqlalchemy import select
 
     from app.models import BackfillRun, Diary, OAuthToken
+    from app.services.read_only import is_diary_read_only
     from app.workers.backfill import BackfillLocked, ingest_failures_message, run_backfill
     from app.workers.token_refresh import ensure_fresh_access_token
     from app.workers.utils import db_session
@@ -873,6 +894,12 @@ async def _backfill_diary(backfill_run_id_str: str) -> None:
         )
         diary = diary_result.scalar_one_or_none()
         if diary is None:
+            return
+
+        if await is_diary_read_only(db, diary):
+            log.info(
+                "diary_read_only_skip", diary_id=str(diary.id), where="backfill"
+            )
             return
 
         token_result = await db.execute(
@@ -911,8 +938,21 @@ async def _backfill_diary(backfill_run_id_str: str) -> None:
                 OAuthToken.provider == "google",
             )
         )
-        oauth_token_fresh = token_result.scalar_one()
-        access_token = await ensure_fresh_access_token(oauth_token_fresh, db)
+        oauth_token_fresh = token_result.scalar_one_or_none()
+        if oauth_token_fresh is None:
+            access_token = None
+        else:
+            access_token = await ensure_fresh_access_token(oauth_token_fresh, db)
+
+    if oauth_token_fresh is None:
+        # Disconnected while the backfill waited to start.
+        async with db_session() as db:
+            result = await db.execute(select(BackfillRun).where(BackfillRun.id == backfill_run_id))
+            run = result.scalar_one()
+            run.status = "failed"
+            run.completed_at = datetime.now(tz=UTC)
+            run.error = "No valid Google OAuth token"
+        return
 
     if not access_token:
         async with db_session() as db:
@@ -953,12 +993,70 @@ async def _backfill_diary(backfill_run_id_str: str) -> None:
                 run.started_at = None
         raise
     except Exception as e:
-        log.error("backfill_error", backfill_run_id=backfill_run_id_str, error=str(e))
+        # Never log or store str(e): an HTTP error's text carries the Calendar URL,
+        # and the calendar id is often an email address.
+        import httpx
+
+        log_extra: dict[str, object] = {"error_class": type(e).__name__}
+        if isinstance(e, httpx.HTTPStatusError):
+            log_extra["status_code"] = e.response.status_code
+        log.error("backfill_error", backfill_run_id=backfill_run_id_str, **log_extra)
+        if isinstance(e, httpx.HTTPStatusError) and e.response.status_code in (401, 403):
+            message = _BACKFILL_DISCONNECTED_MESSAGE
+        else:
+            message = _BACKFILL_FAILED_MESSAGE
         async with db_session() as db:
             result = await db.execute(select(BackfillRun).where(BackfillRun.id == backfill_run_id))
             run = result.scalar_one()
             run.status = "failed"
             run.completed_at = datetime.now(tz=UTC)
-            run.error = str(e)
+            run.error = message
         raise
 
+
+
+# ---------------------------------------------------------------------------
+# process_photo_import (item 14: Google Photos picks)
+# ---------------------------------------------------------------------------
+
+
+@celery_app.task(name="app.workers.tasks.process_photo_import", bind=True)
+def process_photo_import(
+    self, import_id: str, list_attempt: int = 0, poll_s: float | None = None
+) -> None:
+    """Poll a Google Photos pick until it's done, then copy the photos onto the entry.
+
+    Re-queues itself at Google's poll interval, so it finishes without the
+    parent's page open.
+    """
+    run_sync(_process_photo_import(import_id, list_attempt=list_attempt, poll_s=poll_s))
+
+
+async def _process_photo_import(
+    import_id_str: str, list_attempt: int = 0, poll_s: float | None = None
+) -> None:
+    from app.workers.photo_imports import mark_failed, run_photo_import
+
+    import_id = uuid.UUID(import_id_str)
+    try:
+        nxt = await run_photo_import(import_id, list_attempt=list_attempt, poll_s=poll_s)
+    except Exception:
+        # Nothing re-queues a crashed run: end it visibly rather than leave it waiting.
+        log.exception("photo_import_crashed", import_id=import_id_str)
+        try:
+            await mark_failed(import_id)
+        except Exception:
+            log.exception("photo_import_mark_failed_failed", import_id=import_id_str)
+        raise
+    if nxt is None:
+        return
+    try:
+        process_photo_import.apply_async(
+            args=(import_id_str,),
+            kwargs={"list_attempt": nxt.list_attempt, "poll_s": nxt.poll_s},
+            countdown=nxt.countdown,
+        )
+    except Exception:
+        # Nothing else would ever pick it up again: say so instead of waiting forever.
+        log.exception("photo_import_requeue_failed", import_id=import_id_str)
+        await mark_failed(import_id)

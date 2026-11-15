@@ -16,6 +16,7 @@ from app.core.dependencies import get_redis
 from app.models import BackfillRun, OAuthToken, ScanJob, ScanRun, User
 from app.routers.v1.diaries import _get_diary_or_404
 from app.services.calendar_connection import calendar_state
+from app.services.read_only import ensure_diary_writable
 
 router = APIRouter(tags=["scan"])
 
@@ -83,6 +84,7 @@ async def trigger_scan(
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> dict:
     diary, _ = await _get_diary_or_404(diary_id, user, db, require_owner=True)
+    await ensure_diary_writable(db, diary)
 
     r = get_redis()
     lock_key = f"scan_lock:{diary_id}"
@@ -174,7 +176,8 @@ async def trigger_backfill(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> BackfillRun:
-    await _get_diary_or_404(diary_id, user, db, require_owner=True)
+    diary, _ = await _get_diary_or_404(diary_id, user, db, require_owner=True)
+    await ensure_diary_writable(db, diary)
 
     r = get_redis()
     lock_key = f"scan_lock:{diary_id}"

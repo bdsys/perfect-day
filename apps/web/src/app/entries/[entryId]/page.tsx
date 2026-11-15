@@ -1,13 +1,13 @@
 'use client'
 
-import { Suspense, useCallback, useEffect, useState } from 'react'
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
-import { api, type Entry, type Photo } from '@/lib/api'
+import { api, ApiError, type Entry, type OwnerPlan } from '@/lib/api'
 import { formatEventTime } from '@/lib/eventTime'
 import { PhotoThumbnail } from '@/components/PhotoThumbnail'
 import { PhotoLightbox } from '@/components/PhotoLightbox'
-import { PhotoUploadButton } from '@/components/PhotoUploadButton'
+import { AddPhotos } from '@/components/AddPhotos'
 import { useAuth } from '@/lib/auth-context'
 import { StatusPanel } from '@/components/StatusPanel'
 import { usePolling } from '@/lib/usePolling'
@@ -15,6 +15,25 @@ import { formatDateRange } from '@/lib/date'
 import { WeatherBadge } from '@/components/WeatherBadge'
 import { SuggestionBox } from '@/components/SuggestionBox'
 import { EntryPlace } from '@/components/EntryPlace'
+import { GooglePhotosPick } from '@/components/GooglePhotosPick'
+import { PhotoImportNotice } from '@/components/PhotoImportNotice'
+import { googleStatusMessage } from '@/lib/googleStatus'
+import PlanBadge from '@/components/PlanBadge'
+import LimitNote from '@/components/LimitNote'
+import { aiEntryNote, aiLimitNote, formatResetDate, readOnlyBanner } from '@/lib/plan'
+
+function planDetails(plan: OwnerPlan & { ai_drafts_limit: number }) {
+  return [
+    {
+      label: 'AI drafts',
+      text: `${plan.ai_drafts_left ?? 0} of ${plan.ai_drafts_limit} left, resets ${formatResetDate(plan.resets_on)}`,
+    },
+    {
+      label: 'Photos per entry',
+      text: plan.photos_per_entry == null ? 'Unlimited' : String(plan.photos_per_entry),
+    },
+  ]
+}
 
 export default function EntryDetailPage() {
   return (
@@ -32,6 +51,11 @@ function EntryDetailPageInner() {
   const fromPick = searchParams.get('fromPick') === '1'
 
   const [entry, setEntry] = useState<Entry | null>(null)
+  // Only GET /entries/{id} carries the plan; action responses have plan: null.
+  // Keep the last real one so an action never blanks the badge or re-enables a grayed control.
+  const planRef = useRef<OwnerPlan | null>(null)
+  if (entry?.plan) planRef.current = entry.plan
+  const plan = planRef.current
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
@@ -55,9 +79,18 @@ function EntryDetailPageInner() {
   const [deleting, setDeleting] = useState(false)
   const [answeringSuggestion, setAnsweringSuggestion] = useState(false)
 
+  const [noticeKey, setNoticeKey] = useState(0)
+  const [importInFlight, setImportInFlight] = useState(false)
+  const [importCopying, setImportCopying] = useState(false)
+  const googleMsg = googleStatusMessage({
+    status: searchParams.get('google'),
+    missing: searchParams.get('missing'),
+    reason: searchParams.get('reason'),
+    expected: searchParams.get('expected'),
+    page: 'entry',
+  })
+
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null)
-  const [showAttachPicker, setShowAttachPicker] = useState(false)
-  const [libraryPhotos, setLibraryPhotos] = useState<Photo[]>([])
   const [removingIds, setRemovingIds] = useState<Set<string>>(new Set())
 
   useEffect(() => {
@@ -165,7 +198,11 @@ function EntryDetailPageInner() {
       setPollingRegen(true)
       setError('')
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Regenerate failed')
+      if (e instanceof ApiError && e.code === 'tier_limit') {
+        setError(plan ? aiLimitNote(plan.resets_on) : 'No AI drafts left this month.')
+      } else {
+        setError(e instanceof Error ? e.message : 'Regenerate failed')
+      }
     }
   }
 
@@ -244,6 +281,10 @@ function EntryDetailPageInner() {
     }
   }
 
+  const refreshAfterImport = useCallback(() => {
+    api.entries.get(entryId).then(setEntry).catch(() => {})
+  }, [entryId])
+
   async function handleDelete() {
     if (!entry) return
     if (!confirm('Delete this entry? You can restore it within 30 days.')) return
@@ -257,25 +298,16 @@ function EntryDetailPageInner() {
     }
   }
 
-  async function handlePickerUpload(p: Photo) {
-    try {
-      await api.photos.attachToEntry(entry!.id, p.id)
-      const refreshed = await api.entries.get(entry!.id)
-      setEntry(refreshed)
-      const lib = await api.photos.listForUser()
-      const attachedIds = new Set(refreshed.photos?.map((ph) => ph.id) ?? [])
-      setLibraryPhotos(lib.filter((ph) => !attachedIds.has(ph.id)))
-      setShowAttachPicker(false)
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to attach uploaded photo')
-    }
-  }
-
   if (authLoading || loading) return <div className="loading">Loading…</div>
   if (!user) return null
   if (!entry) return <div className="container" style={{ paddingTop: '1.5rem' }}><p className="error-message">{error || 'Entry not found.'}</p></div>
 
   const diaryHref = `/diaries/${entry.diary_id}`
+  const readOnly = plan?.read_only ?? false
+  const aiOut = plan?.ai_drafts_left === 0
+  const photoRoom = plan == null || plan.photos_per_entry == null
+    ? null
+    : Math.max(0, plan.photos_per_entry - entry.photos.length)
 
   return (
     <>
@@ -287,6 +319,24 @@ function EntryDetailPageInner() {
 
       <div className="container" style={{ paddingTop: '1.5rem', maxWidth: 720 }}>
         {error && <p className="error-message" style={{ marginBottom: '1rem' }}>{error}</p>}
+        {googleMsg && (
+          <p className={googleMsg.isError ? 'error-message' : 'success-message'} style={{ marginBottom: '1rem' }}>
+            {googleMsg.text}
+          </p>
+        )}
+
+        {readOnly && plan && <p className="error-message" style={{ marginBottom: '1rem' }}>{readOnlyBanner(plan.plan_name)}</p>}
+        {plan && plan.ai_drafts_limit != null && (
+          <div style={{ marginBottom: '0.75rem' }}>
+            <PlanBadge
+              label="AI drafts"
+              used={plan.ai_drafts_limit - (plan.ai_drafts_left ?? 0)}
+              limit={plan.ai_drafts_limit}
+              resetsOn={plan.resets_on}
+              details={planDetails(plan as OwnerPlan & { ai_drafts_limit: number })}
+            />
+          </div>
+        )}
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.25rem', flexWrap: 'wrap' }}>
           <span className={`status-badge status-${entry.status}`}>{entry.status}</span>
@@ -294,6 +344,14 @@ function EntryDetailPageInner() {
           <WeatherBadge enrichments={entry.enrichments ?? []} />
         </div>
         {!editing && <EntryPlace entry={entry} onUpdated={setEntry} />}
+        {!editing && entry.can_edit && (
+          <AddPhotos
+            entry={entry}
+            onChanged={setEntry}
+            room={readOnly ? 0 : photoRoom}
+            googlePhotos={<GooglePhotosPick entry={entry} inFlight={importInFlight} copying={importCopying} disabled={readOnly || photoRoom === 0} onStarted={() => setNoticeKey((k) => k + 1)} />}
+          />
+        )}
 
         {editing ? (
           <div className="card" style={{ marginTop: '1rem' }}>
@@ -390,13 +448,19 @@ function EntryDetailPageInner() {
               </div>
             )}
 
+            {entry.last_generation?.error === 'ai_draft_limit' && aiOut && plan && (
+              <LimitNote>{aiEntryNote(plan.resets_on)}</LimitNote>
+            )}
+
             {regenErrorMessage && (
               <div
                 className="bg-red-50 border border-red-200 text-red-800 rounded p-3 text-sm flex items-start gap-2"
                 style={{ marginBottom: '1rem' }}
               >
                 <span style={{ flex: 1 }}>
-                  AI generation failed: {regenErrorMessage}. Your text was not changed.
+                  {regenErrorMessage === 'ai_draft_limit' && plan
+                    ? aiLimitNote(plan.resets_on)
+                    : `AI generation failed: ${regenErrorMessage}. Your text was not changed.`}
                 </span>
                 <button
                   onClick={() => setRegenErrorMessage(null)}
@@ -431,6 +495,26 @@ function EntryDetailPageInner() {
               />
             )}
 
+          </>
+        )}
+
+        {/* Stays mounted in Edit mode so polling and the photo refresh keep working; just not shown. */}
+        {entry.can_edit && (
+          <div hidden={editing}>
+            <PhotoImportNotice
+              entryId={entry.id}
+              refreshKey={noticeKey}
+              onFinished={refreshAfterImport}
+              onInFlightChange={(inFlight, copying) => {
+                setImportInFlight(inFlight)
+                setImportCopying(copying)
+              }}
+            />
+          </div>
+        )}
+
+        {!editing && (
+          <>
             {/* Photo strip */}
             {entry.photos && entry.photos.length > 0 && (
               <section>
@@ -471,58 +555,6 @@ function EntryDetailPageInner() {
                 </ul>
               </section>
             )}
-
-            {/* Attach from library */}
-            <div>
-              <button
-                onClick={async () => {
-                  try {
-                    if (!showAttachPicker) {
-                      const lib = await api.photos.listForUser()
-                      const attachedIds = new Set(entry.photos?.map(p => p.id) ?? [])
-                      setLibraryPhotos(lib.filter(p => !attachedIds.has(p.id)))
-                    }
-                    setShowAttachPicker(s => !s)
-                  } catch (e: unknown) {
-                    setError(e instanceof Error ? e.message : 'Failed to load photo library')
-                  }
-                }}
-              >
-                Attach photo
-              </button>
-              {showAttachPicker && (
-                <div>
-                  <div style={{ marginBottom: "0.5rem" }}>
-                    <PhotoUploadButton onUploaded={handlePickerUpload} label="Upload new" />
-                  </div>
-                  {libraryPhotos.length === 0 ? (
-                    <p>No photos in library yet.</p>
-                  ) : (
-                    <ul className="photo-grid">
-                      {libraryPhotos.map(p => (
-                        <li key={p.id}>
-                          <PhotoThumbnail
-                            photoId={p.id}
-                            alt=""
-                            onClick={async () => {
-                              try {
-                                await api.photos.attachToEntry(entry.id, p.id)
-                                const refreshed = await api.entries.get(entry.id)
-                                setEntry(refreshed)
-                                setShowAttachPicker(false)
-                              } catch (e: unknown) {
-                                setError(e instanceof Error ? e.message : 'Failed to attach photo')
-                              }
-                            }}
-                            className="thumbnail"
-                          />
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              )}
-            </div>
 
             {lightboxIndex !== null && entry.photos && (
               <PhotoLightbox
@@ -575,22 +607,23 @@ function EntryDetailPageInner() {
               />
             )}
             <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1.25rem', flexWrap: 'wrap' }}>
-              <button className="btn btn-secondary" onClick={startEdit}>
+              <button className="btn btn-secondary" onClick={startEdit} disabled={readOnly}>
                 Edit
               </button>
               {entry.status === 'draft' ? (
-                <button className="btn btn-primary" onClick={handlePublish} disabled={publishing}>
+                <button className="btn btn-primary" onClick={handlePublish} disabled={publishing || readOnly}>
                   {publishing ? 'Publishing…' : 'Publish'}
                 </button>
               ) : (
-                <button className="btn btn-secondary" onClick={handleUnpublish} disabled={publishing}>
+                <button className="btn btn-secondary" onClick={handleUnpublish} disabled={publishing || readOnly}>
                   {publishing ? 'Unpublishing…' : 'Unpublish'}
                 </button>
               )}
               <button
                 className="btn btn-secondary"
                 onClick={handleRegenerate}
-                disabled={pollingRegen || (!entry.events.length && !entry.body_markdown)}
+                disabled={pollingRegen || readOnly || aiOut || (!entry.events.length && !entry.body_markdown)}
+                aria-describedby={aiOut && plan ? 'ai-limit-note' : undefined}
                 title={(!entry.events.length && !entry.body_markdown) ? 'Add events or write something first' : undefined}
               >
                 {pollingRegen
@@ -607,6 +640,7 @@ function EntryDetailPageInner() {
                 {deleting ? 'Deleting…' : 'Delete'}
               </button>
             </div>
+            {aiOut && plan && <LimitNote id="ai-limit-note">{aiLimitNote(plan.resets_on)}</LimitNote>}
           </>
         )}
       </div>
