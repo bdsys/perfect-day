@@ -107,7 +107,9 @@ Day 30:  Celery process_hard_deletes():
 
 ```
 Day 0:   deleted_at set, hard_delete_after = now() + 7d.
-         Immediately: revoke all refresh_tokens + oauth_tokens.
+         Immediately: revoke all refresh_tokens. Revoke the Google token at
+         Google and delete the oauth_tokens rows, so restoring within the
+         7 days needs a Google reconnect.
          Disable all scans. Confirmation email + restore link sent.
          Shared-diary members notified: "export your content now."
 Day 6:   deletion_grace notification (last chance).

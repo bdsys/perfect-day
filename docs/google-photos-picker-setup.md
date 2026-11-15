@@ -4,7 +4,7 @@ Written 2026-11-14 from Google's docs. The sources are linked under each step.
 
 **Do this once in each Google Cloud project that runs picks.** That means `perfect-day-dev` (localhost) now, and `perfect-day-prod` (the NUC) before the phone checks. CI never calls Google, so `perfect-day-test` doesn't need it. Google turns APIs on per project. `docs/local-dev.md` plans three projects, but whether all three exist hasn't been checked.
 
-**Why:** if the API isn't enabled, connecting Google Photos still "works", but starting a pick fails. Google refuses, and the app currently shows "Google Photos isn't connected yet." Plan B Task 0 changes that message so it says the API is off.
+**Why:** if the API isn't enabled, connecting Google Photos still "works", but starting a pick fails. Google refuses, and the app shows "Google Photos isn't set up for this app yet. The app's owner needs to turn on the Photos Picker API in Google Cloud." (A lost or missing connection still shows the reconnect message.)
 
 ## 1. Enable the Photos Picker API
 
@@ -54,7 +54,7 @@ One rule to keep in mind: *"Resources created through any of the Google Photos A
 3. Click **Search Google Photos**. A Google Photos tab should open.
 4. Pick a photo and click Done. Back in the app, the photo should appear on the entry within a few seconds.
 
-If it still says "not connected", tell Claude. The next step is to read Google's actual refusal reason, which Plan B Task 0 logs.
+If it still says "isn't set up for this app yet", check step 1 and that you enabled the API in the same project the OAuth client belongs to. The API log has the refusal Google gave: a line `google_photos_refused code= status= reason=` (from `services/google_photos.py`). Tell Claude what it says.
 
 ## Before going public (not needed for the PoC)
 

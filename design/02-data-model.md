@@ -137,6 +137,7 @@ INDEX on (`diary_id`, `entry_date` DESC) for timeline. Timeline order: `entry_da
 - `external_id` text NULL  *(Google Photos media item id; the Picker item id for imported photos)*
 - `thumbnail_s3_key` text NULL
 - `display_s3_key` text NULL  *(encrypted JPEG display copy of a HEIC/HEIF photo; served for `kind=full`. NULL for other types.)*
+- `display_attempted_at` timestamptz NULL  *(migration 0016; stamped on every display-copy attempt. The backfill orders by `display_attempted_at NULLS FIRST, created_at`, so never-tried photos go before ones that already failed.)*
 - `ai_description` text NULL  *(reserved for future vision LLM L3; unused in PoC)*
 - `dek_ciphertext` bytea NULL  *(wrapped DEK for AES-GCM photo encryption; see security doc)*
 - `finalized_at` timestamptz NULL  *(set after upload confirmed; orphan sweeper uses this)*
@@ -170,6 +171,7 @@ INDEX on (`diary_id`, `entry_date` DESC) for timeline. Timeline order: `entry_da
 - `photo_id` UUID FK → photos
 - `position` int  *(display order; worker sets from `taken_at`)*
 - PK (`entry_id`, `photo_id`)
+- INDEX `ix_entry_photos_photo_id` (`photo_id`)  *(migration 0016; the PK leads with `entry_id`, so lookups by photo, such as the read-authorization check and photo deletes, need their own index)*
 
 ### `enrichments`
 - `id` UUID PK
