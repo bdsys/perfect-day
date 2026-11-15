@@ -25,6 +25,7 @@ from app.core.photo_crypto import (
 )
 from app.models import Diary, DiaryPermission, Entry, EntryPhoto, Photo, User
 from app.services.photo_ingest import UnsupportedPhoto, ingest_photo
+from app.services.photo_limits import ensure_photo_room
 from app.services.photos import MAX_BYTES, stream_object, strip_location
 from app.services.read_only import ensure_diary_writable
 
@@ -318,6 +319,10 @@ async def attach_photo_to_entry(
     )
     existing = existing_result.scalar_one_or_none()
     if existing is None:
+        # The plan is the diary owner's, whoever attaches.
+        owner = await db.get(User, diary.owner_user_id)
+        assert owner is not None
+        await ensure_photo_room(db, entry_id, owner)
         ep = EntryPhoto(entry_id=entry_id, photo_id=body.photo_id, position=body.position)
         db.add(ep)
         await db.flush()

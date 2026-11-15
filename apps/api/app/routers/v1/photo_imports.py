@@ -30,6 +30,7 @@ from app.services.google_photos import (
     GoogleSetupError,
     GoogleUnavailable,
 )
+from app.services.photo_limits import ensure_photo_room, photo_room
 from app.services.read_only import ensure_diary_writable
 
 logger = logging.getLogger(__name__)
@@ -105,11 +106,19 @@ async def create_photo_import(
 
     _, diary, _ = await _get_entry_or_404(entry_id, user, db, require_editor=True)  # 403 for viewers
     await ensure_diary_writable(db, diary)
+    # The plan is the diary owner's, whoever imports. A full entry cannot start an import.
+    # No row lock: it would be held across the calls to Google below.
+    owner = await db.get(User, diary.owner_user_id)
+    assert owner is not None
+    await ensure_photo_room(db, entry_id, owner, lock=False)
+    room = await photo_room(db, entry_id, owner, lock=False)
     token = await _picker_access_token(user, db)
 
     client = google_photos.GooglePhotosClient(token)
     try:
-        session = await client.create_session(max_items=MAX_PICK)
+        session = await client.create_session(
+            max_items=MAX_PICK if room is None else min(MAX_PICK, room)
+        )
     except GoogleAuthError:
         raise HTTPException(status_code=409, detail="photos_not_connected") from None
     except GoogleSetupError:

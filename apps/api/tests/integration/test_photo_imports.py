@@ -68,6 +68,7 @@ class FakeGoogle:
         self.get_errors: list[Exception] = []  # raised once each, before get_error
         self.list_errors: list[Exception] = []  # raised once each
         self.sessions: list[str] = []
+        self.max_items: list[int] = []
         self.get_calls = 0
         self.list_calls = 0
         self.downloads: list[str] = []
@@ -85,7 +86,7 @@ class _FakeClient:
         self.g = google
 
     async def create_session(self, max_items: int = 50) -> PickerSession:
-        assert max_items == 50
+        self.g.max_items.append(max_items)
         if self.g.create_error is not None:
             raise self.g.create_error
         sid = f"sess-{len(self.g.sessions) + 1}"
@@ -179,6 +180,11 @@ async def _entry(
 async def _owner_with_entry(client, db_session, prefix: str, *, connected: bool = True):
     email = f"{prefix}@example.com"
     auth = await register_and_login(client, email)
+    # Plus: these tests are about the import, not the Free plan's one-photo limit.
+    await db_session.execute(
+        update(User).where(User.email == email).values(subscription_tier="plus")
+    )
+    await db_session.commit()
     _, entry = await _entry(client, auth)
     if connected:
         await _connect_photos(db_session, email)
