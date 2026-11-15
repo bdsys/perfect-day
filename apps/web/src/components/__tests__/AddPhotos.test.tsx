@@ -226,3 +226,31 @@ describe('shared upload pool', () => {
     expect(max).toBe(3)
   })
 })
+
+it('a double tap on Try again while every slot is busy uploads the photo once', async () => {
+  const held: Record<string, Array<(p: Photo) => void>> = {}
+  let failA = true
+  upload.mockImplementation((f: File) => {
+    if (f.name === 'a.jpg' && failA) { failA = false; return Promise.reject(new Error('boom')) }
+    return new Promise<Photo>((res) => { (held[f.name] ??= []).push(res) })
+  })
+  await open()
+  await act(async () => {
+    fireEvent.change(input(), { target: { files: ['a', 'b', 'c', 'd'].map((n) => file(`${n}.jpg`)) } })
+  })
+  // a failed, so b, c and d now hold all three slots.
+  const retry = await screen.findByRole('button', { name: /try again/i })
+  expect(upload).toHaveBeenCalledTimes(4)
+  await act(async () => { fireEvent.click(retry); fireEvent.click(retry) })
+  expect(screen.queryByRole('button', { name: /try again/i })).toBeNull()
+  expect(upload).toHaveBeenCalledTimes(4)
+  await act(async () => { held['b.jpg'][0](photo('pb')) })
+  await waitFor(() => expect(upload).toHaveBeenCalledTimes(5))
+  await act(async () => { held['a.jpg'][0](photo('pa')) })
+  await act(async () => { held['c.jpg'][0](photo('pc')); held['d.jpg'][0](photo('pd')) })
+  await waitFor(() => expect(getEntry).toHaveBeenCalled())
+  expect(upload).toHaveBeenCalledTimes(5)
+  expect(upload.mock.calls.filter((c) => (c[0] as File).name === 'a.jpg')).toHaveLength(2)
+  expect(screen.queryByRole('alert')).toBeNull()
+  expect(screen.getAllByText('Added')).toHaveLength(4)
+})

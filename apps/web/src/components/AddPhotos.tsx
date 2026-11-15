@@ -75,6 +75,7 @@ export function AddPhotos({ entry, onChanged, googlePhotos }: Props) {
   // uploads run at once no matter how many picks or retries happen.
   const queueRef = useRef<number[]>([]);
   const activeRef = useRef(0);
+  const activeIdsRef = useRef<Set<number>>(new Set());
   const anyDoneRef = useRef(false);
 
   const pump = useCallback(() => {
@@ -82,6 +83,7 @@ export function AddPhotos({ entry, onChanged, googlePhotos }: Props) {
       const id = queueRef.current.shift()!;
       const file = filesRef.current.get(id)!;
       activeRef.current++;
+      activeIdsRef.current.add(id);
       patch(id, { status: "uploading", progress: 0, error: undefined });
       void (async () => {
         try {
@@ -104,6 +106,7 @@ export function AddPhotos({ entry, onChanged, googlePhotos }: Props) {
           patch(id, { status: "error", error: friendlyUploadError(e) });
         } finally {
           activeRef.current--;
+          activeIdsRef.current.delete(id);
           pump();
           if (activeRef.current === 0 && queueRef.current.length === 0 && anyDoneRef.current) {
             anyDoneRef.current = false;
@@ -120,7 +123,10 @@ export function AddPhotos({ entry, onChanged, googlePhotos }: Props) {
 
   const enqueue = useCallback(
     (ids: number[]) => {
-      queueRef.current.push(...ids);
+      // A photo already waiting or uploading must not be queued a second time.
+      for (const id of ids) {
+        if (!queueRef.current.includes(id) && !activeIdsRef.current.has(id)) queueRef.current.push(id);
+      }
       pump();
     },
     [pump],
@@ -181,7 +187,14 @@ export function AddPhotos({ entry, onChanged, googlePhotos }: Props) {
                       <>
                         <span role="alert" style={{ color: "var(--error)" }}>{it.error}</span>
                         {it.file.size <= MAX_BYTES && (
-                        <button type="button" onClick={() => enqueue([it.id])}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            // Hide the button at once, so a second tap can't queue it again.
+                            patch(it.id, { status: "queued", error: undefined });
+                            enqueue([it.id]);
+                          }}
+                        >
                           Try again
                         </button>
                         )}
