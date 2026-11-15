@@ -136,7 +136,8 @@ except ImportError:
 def strip_location(data: bytes, mime: str) -> bytes:
     """Return the image with its location and device metadata removed.
 
-    JPEG (and multi-picture MPO, saved as plain JPEG): re-saved at the original quality with the EXIF reduced to Orientation only.
+    JPEG (and multi-picture MPO, saved as plain JPEG): re-saved at the original quality
+    with the EXIF reduced to Orientation only.
     Other types: re-saved in the same format without metadata.
     Raises ValueError if the bytes are not a readable image.
     """
@@ -166,7 +167,7 @@ def strip_location(data: bytes, mime: str) -> bytes:
                     # A multi-picture JPEG (e.g. a gain-map secondary image) is saved as a
                     # plain JPEG of its first frame; "keep" only works on a real JPEG.
                     img.save(
-                        out, "JPEG", qtables=img.quantization,
+                        out, "JPEG", qtables=img.quantization,  # type: ignore[attr-defined]
                         subsampling=JpegImagePlugin.get_sampling(img), **exif_kw, **icc_kw,
                     )
                 else:
