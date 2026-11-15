@@ -22,11 +22,11 @@ from app.models import (
     User,
 )
 from app.routers.v1.diaries import _get_diary_or_404
-from app.services.ai_drafts import ai_drafts_left, drafts_used, usage_period
+from app.services.ai_drafts import ai_draft_usage
 from app.services.flagged_words import still_present
 from app.services.plan_view import OwnerPlanOut, owner_plan_out
 from app.services.read_only import ensure_diary_writable
-from app.services.tier import limits_for, tier_limit_error
+from app.services.tier import tier_limit_error
 from app.workers.tz_utils import entry_dates_from_events
 
 router = APIRouter(tags=["entries"])
@@ -702,17 +702,16 @@ async def regenerate_entry(
     # The owner's quota pays for the draft, whoever clicks. The worker is the authority
     # on spending; this is an early 403 so nothing is queued at 0 left.
     owner = await db.get(User, diary.owner_user_id)
-    if owner is not None and await ai_drafts_left(db, owner) == 0:
-        limit = limits_for(owner.subscription_tier).ai_drafts_per_month or 0
-        period = await usage_period(db, owner.id)
-        used = await drafts_used(db, owner.id, period.month)
-        raise tier_limit_error(
-            source="ai_draft",
-            limit=limit,
-            current=used,
-            needed=used + 1,
-            resets_on=period.resets_on,
-        )
+    if owner is not None:
+        usage = await ai_draft_usage(db, owner.id, owner.subscription_tier)
+        if usage.left == 0:
+            raise tier_limit_error(
+                source="ai_draft",
+                limit=usage.limit or 0,
+                current=usage.used,
+                needed=usage.used + 1,
+                resets_on=usage.period.resets_on,
+            )
     from app.workers.tasks import generate_entry_draft
 
     # Nothing about the entry changes here, so there is no commit to wait for.

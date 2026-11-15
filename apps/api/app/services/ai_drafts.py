@@ -66,13 +66,28 @@ async def drafts_used(db: AsyncSession, owner_user_id: uuid.UUID, month: str) ->
     return int(count)
 
 
+@dataclass(frozen=True)
+class AiDraftUsage:
+    limit: int | None  # None = unlimited
+    used: int
+    left: int | None  # None = unlimited; never below 0
+    period: UsagePeriod
+
+
+async def ai_draft_usage(
+    db: AsyncSession, owner_user_id: uuid.UUID, tier: str, now: datetime | None = None
+) -> AiDraftUsage:
+    """The one place that turns a plan limit and this month's spend into 'drafts left'."""
+    limit = limits_for(tier).ai_drafts_per_month
+    period = await usage_period(db, owner_user_id, now)
+    used = await drafts_used(db, owner_user_id, period.month)
+    left = None if limit is None else max(0, limit - used)
+    return AiDraftUsage(limit=limit, used=used, left=left, period=period)
+
+
 async def ai_drafts_left(db: AsyncSession, owner: User, now: datetime | None = None) -> int | None:
     """Drafts left this month on the owner's plan; None means unlimited. Never below 0."""
-    limit = limits_for(owner.subscription_tier).ai_drafts_per_month
-    if limit is None:
-        return None
-    period = await usage_period(db, owner.id, now)
-    return max(0, limit - await drafts_used(db, owner.id, period.month))
+    return (await ai_draft_usage(db, owner.id, owner.subscription_tier, now)).left
 
 
 async def reserve_ai_draft(
