@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import DiariesPage from '../page'
 import { api, type MyPlan } from '@/lib/api'
 
@@ -73,6 +73,23 @@ describe('DiariesPage plan', () => {
     expect(btn).toBeDisabled()
     expect(document.getElementById(btn.getAttribute('aria-describedby')!)).toHaveTextContent('Free plan: 1 diary.')
     expect(screen.queryByRole('link', { name: /new diary/i })).not.toBeInTheDocument()
+  })
+
+  it('tapping the Free badge shows every limit', async () => {
+    ;(api.auth.myPlan as jest.Mock).mockResolvedValue({
+      ...plusPlan, tier: 'free', plan_name: 'Free', diaries_limit: 1, diaries_used: 0,
+      ai_drafts_limit: 5, ai_drafts_used: 2, ai_drafts_left: 3, photos_per_entry: 1,
+    })
+    render(<DiariesPage />)
+    const badge = await screen.findByRole('button', { name: 'Diaries: 1 of 1 left' })
+    expect(badge).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.click(badge)
+    const items = screen.getAllByRole('listitem').map((li) => li.textContent)
+    expect(items).toEqual([
+      'Diaries 1 of 1 left',
+      'AI drafts 3 of 5 left · resets Dec 1',
+      'Photos per entry 1',
+    ])
   })
 
   it('Plus below the limit shows no badge and a New diary link', async () => {

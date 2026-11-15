@@ -8,7 +8,7 @@ import { useAuth } from '@/lib/auth-context'
 import { googleStatusMessage } from '@/lib/googleStatus'
 import PlanBadge from '@/components/PlanBadge'
 import LimitNote from '@/components/LimitNote'
-import { diaryLimitNote } from '@/lib/plan'
+import { diaryLimitNote, formatResetDate } from '@/lib/plan'
 
 function GoogleStatusBanner() {
   const searchParams = useSearchParams()
@@ -24,6 +24,25 @@ function GoogleStatusBanner() {
       {msg.text}
     </p>
   )
+}
+
+/** Every limit on the person's own plan, shown when the badge is tapped. */
+function planDetails(plan: MyPlan) {
+  const details = [
+    { label: 'Diaries', text: `${Math.max(0, plan.diaries_limit - plan.diaries_used)} of ${plan.diaries_limit} left` },
+  ]
+  if (plan.ai_drafts_limit != null) {
+    const left = plan.ai_drafts_left ?? Math.max(0, plan.ai_drafts_limit - plan.ai_drafts_used)
+    details.push({
+      label: 'AI drafts',
+      text: `${left} of ${plan.ai_drafts_limit} left · resets ${formatResetDate(plan.resets_on)}`,
+    })
+  }
+  details.push({
+    label: 'Photos per entry',
+    text: plan.photos_per_entry == null ? 'Unlimited' : String(plan.photos_per_entry),
+  })
+  return details
 }
 
 function Nav({ onLogout }: { onLogout: () => void }) {
@@ -93,7 +112,7 @@ export default function DiariesPage() {
 
         {plan?.tier === 'free' && (
           <div style={{ marginBottom: '0.75rem' }}>
-            <PlanBadge label="Diaries" used={plan.diaries_used} limit={plan.diaries_limit} />
+            <PlanBadge label="Diaries" used={plan.diaries_used} limit={plan.diaries_limit} details={planDetails(plan)} />
           </div>
         )}
         {atLimit && plan && <LimitNote id="diary-limit-note">{diaryLimitNote(plan.plan_name, plan.diaries_limit)}</LimitNote>}
