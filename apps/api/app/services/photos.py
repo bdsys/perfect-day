@@ -136,11 +136,11 @@ except ImportError:
 def strip_location(data: bytes, mime: str) -> bytes:
     """Return the image with its location and device metadata removed.
 
-    JPEG: re-saved at the original quality with the EXIF reduced to Orientation only.
+    JPEG (and multi-picture MPO, saved as plain JPEG): re-saved at the original quality with the EXIF reduced to Orientation only.
     Other types: re-saved in the same format without metadata.
     Raises ValueError if the bytes are not a readable image.
     """
-    from PIL import Image
+    from PIL import Image, JpegImagePlugin
 
     try:
         with Image.open(BytesIO(data)) as img:
@@ -150,7 +150,7 @@ def strip_location(data: bytes, mime: str) -> bytes:
             icc = img.info.get("icc_profile")
             icc_kw = {"icc_profile": icc} if icc else {}
             out = BytesIO()
-            if fmt == "JPEG":
+            if fmt in ("JPEG", "MPO"):
                 # Keep only Orientation. Make, MakerNote, GPS and the IFD1 thumbnail can
                 # identify a device or carry a location, so a fresh Exif drops them all.
                 orientation = img.getexif().get(0x0112)
@@ -161,7 +161,16 @@ def strip_location(data: bytes, mime: str) -> bytes:
                 img.info.pop("exif", None)
                 img.info.pop("xmp", None)
                 img.info.pop("XML:com.adobe.xmp", None)
-                img.save(out, "JPEG", quality="keep", **exif_kw, **icc_kw)
+                img.info.pop("mpinfo", None)
+                if fmt == "MPO":
+                    # A multi-picture JPEG (e.g. a gain-map secondary image) is saved as a
+                    # plain JPEG of its first frame; "keep" only works on a real JPEG.
+                    img.save(
+                        out, "JPEG", qtables=img.quantization,
+                        subsampling=JpegImagePlugin.get_sampling(img), **exif_kw, **icc_kw,
+                    )
+                else:
+                    img.save(out, "JPEG", quality="keep", **exif_kw, **icc_kw)
             else:
                 # Savers (pillow-heif, PNG, WebP) copy metadata out of img.info;
                 # clear everything that can carry a location.

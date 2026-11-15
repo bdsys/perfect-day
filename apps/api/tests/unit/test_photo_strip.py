@@ -92,3 +92,28 @@ def test_jpeg_without_exif_stays_without():
     img = Image.open(io.BytesIO(out))
     assert len(img.getexif()) == 0
     assert b"Exif\x00\x00" not in out
+
+
+def test_mpo_keeps_orientation_and_becomes_plain_jpeg():
+    icc = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()
+    exif = Image.Exif()
+    exif[0x0112] = 6
+    gps = exif.get_ifd(0x8825)
+    gps[1], gps[2] = "N", (47.0, 36.0, 0.0)
+    buf = io.BytesIO()
+    Image.new("RGB", (64, 48), (10, 120, 200)).save(
+        buf, "MPO", save_all=True, append_images=[Image.new("RGB", (8, 8))],
+        exif=exif.tobytes(), icc_profile=icc,
+    )
+    src = buf.getvalue()
+    assert Image.open(io.BytesIO(src)).format == "MPO"
+
+    out = strip_location(src, "image/jpeg")
+
+    img = Image.open(io.BytesIO(out))
+    assert img.format == "JPEG"
+    assert set(img.getexif().keys()) == {0x0112}
+    assert img.getexif()[0x0112] == 6
+    assert not dict(img.getexif().get_ifd(0x8825))
+    assert b"MPF" not in out
+    assert img.info.get("icc_profile") == icc
