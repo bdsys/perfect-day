@@ -502,7 +502,8 @@ input:focus {
 /* Plan limits: badge, note and plans table */
 :root {
   --limit-green: #2e7d32;
-  --limit-yellow: #f9a825;
+  --limit-yellow: #8a5a00; /* dark amber: text and border, 5.7:1 on --bg */
+  --limit-yellow-bg: #fff3cd; /* pale amber fill keeps the badge visibly yellow */
   --limit-red: #c62828;
 }
 
@@ -522,7 +523,7 @@ input:focus {
 }
 
 .plan-badge[data-color='green'] { color: var(--limit-green); }
-.plan-badge[data-color='yellow'] { color: var(--limit-yellow); }
+.plan-badge[data-color='yellow'] { color: var(--limit-yellow); background: var(--limit-yellow-bg); }
 .plan-badge[data-color='red'] { color: var(--limit-red); }
 
 .plan-upgrade {
