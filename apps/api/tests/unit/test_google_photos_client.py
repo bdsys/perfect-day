@@ -327,3 +327,53 @@ async def test_refusal_logs_reason_only(caplog):
     assert "https://" not in caplog.text
     assert "ya29" not in caplog.text
     assert "enable at" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "https://evil.example/x",
+        "https://evilgoogleusercontent.com/x",
+        "https://googleusercontent.com.evil.example/x",
+        "https://lh3.googleusercontent.com@evil.example/x",
+    ],
+)
+async def test_download_refuses_unknown_host(base_url, caplog):
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("a request was made to a host that is not Google's")
+
+    item = PickedItem("item-1", "PHOTO", None, base_url, None, "a.jpg")
+    with caplog.at_level(logging.DEBUG), pytest.raises(GoogleError, match="unexpected host"):
+        await _client(handler).download(item)
+    assert "ya29.token" not in caplog.text
+    assert "/x" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "host",
+    ["lh3.googleusercontent.com", "googleusercontent.com", "photos.google.com", "a.googleapis.com"],
+)
+async def test_download_allows_googleusercontent(host):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"jpeg-bytes")
+
+    item = PickedItem("item-1", "PHOTO", None, f"https://{host}/b", None, "a.jpg")
+    assert await _client(handler).download(item) == b"jpeg-bytes"
+
+
+@pytest.mark.parametrize("call", ["create", "get"])
+async def test_session_reply_missing_id_is_a_google_error(call):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={})
+
+    c = _client(handler)
+    with pytest.raises(GoogleError, match="unexpected reply"):
+        await (c.create_session() if call == "create" else c.get_session("s"))
+
+
+async def test_item_missing_id_is_a_google_error():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"mediaItems": [{"type": "PHOTO"}]})
+
+    with pytest.raises(GoogleError, match="unexpected reply"):
+        await _client(handler).list_items("s")

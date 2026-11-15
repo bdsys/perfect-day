@@ -11,6 +11,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
+import httpx
 import pytest
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import select, update
@@ -72,6 +73,7 @@ class FakeGoogle:
         self.downloads: list[str] = []
         self.deleted: list[str] = []
         self.tokens: list[str] = []
+        self.on_download = None  # async callable(item), awaited before each download
 
     def client(self, access_token: str, transport=None):
         self.tokens.append(access_token)
@@ -120,6 +122,8 @@ class _FakeClient:
 
     async def download(self, item: PickedItem) -> bytes:
         self.g.downloads.append(item.id)
+        if self.g.on_download is not None:
+            await self.g.on_download(item)
         data = self.g.bytes[item.id]
         if isinstance(data, Exception):
             raise data
@@ -773,3 +777,109 @@ def test_imports_are_indexed_by_entry_and_user(sync_engine):
             text("SELECT indexdef FROM pg_indexes WHERE indexname = 'ix_photo_imports_entry_user'")
         ).scalar_one()
     assert "(entry_id, user_id)" in indexdef
+
+
+# ---------------------------------------------------------------------------
+# Worker hardening (TR-32)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_cancel_is_not_overwritten_by_done(client, db_session):
+    auth, entry = await _owner_with_entry(client, db_session, "pi-cancel-last")
+    fake = FakeGoogle([_photo(1, read_fixture("sample.jpg"))])
+    imp = await _start(client, auth, entry["id"], fake)
+
+    async def cancel_while_copying(item):
+        r = await client.post(f"/v1/photo-imports/{imp['id']}/cancel", headers=auth)
+        assert r.json()["status"] == "cancelled"
+
+    fake.on_download = cancel_while_copying
+    await _run_worker(imp["id"], fake)
+
+    assert (await _import_row(db_session, imp["id"])).status == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_sweep_failed_is_not_overwritten(client, db_session):
+    from sqlalchemy import text
+
+    from app.workers.photo_imports import sweep_stuck_imports
+
+    auth, entry = await _owner_with_entry(client, db_session, "pi-sweep-last")
+    fake = FakeGoogle([_photo(1, read_fixture("sample.jpg"))])
+    imp = await _start(client, auth, entry["id"], fake)
+
+    async def sweep_while_copying(item):
+        trg = "trg_photo_imports_updated_at"
+        await db_session.execute(text(f"ALTER TABLE photo_imports DISABLE TRIGGER {trg}"))
+        await db_session.execute(
+            text("UPDATE photo_imports SET updated_at = :t WHERE id = :i"),
+            {"t": datetime.now(tz=UTC) - timedelta(hours=2), "i": uuid.UUID(imp["id"])},
+        )
+        await db_session.execute(text(f"ALTER TABLE photo_imports ENABLE TRIGGER {trg}"))
+        await db_session.commit()
+        assert await sweep_stuck_imports() >= 1
+
+    fake.on_download = sweep_while_copying
+    await _run_worker(imp["id"], fake)
+
+    assert (await _import_row(db_session, imp["id"])).status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_create_session_missing_field_is_503_not_500(client, db_session):
+    from app.services.google_photos import GooglePhotosClient
+
+    auth, entry = await _owner_with_entry(client, db_session, "pi-bad-reply")
+
+    def handler(request):
+        if request.url.path.endswith("/sessions"):
+            return httpx.Response(200, json={})
+        raise AssertionError("unexpected request")
+
+    real = GooglePhotosClient
+    transport = httpx.MockTransport(handler)
+    with (
+        patch(
+            "app.services.google_photos.GooglePhotosClient",
+            side_effect=lambda token, transport_=None: real(token, transport=transport),
+        ),
+        patch("app.workers.tasks.process_photo_import.apply_async") as queued,
+    ):
+        r = await client.post(f"/v1/entries/{entry['id']}/photo-imports", headers=auth)
+
+    # The router's existing generic GoogleError answer is 502 google_error (not a 500).
+    assert r.status_code == 502, r.text
+    assert r.json()["error"]["message"] == "google_error"
+    queued.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_losing_edit_rights_mid_copy_stops(client, db_session):
+    owner, entry = await _owner_with_entry(client, db_session, "pi-lose-owner", connected=False)
+    editor = await register_and_login(client, "pi-lose-editor@example.com")
+    await _connect_photos(db_session, "pi-lose-editor@example.com")
+    editor_id = (await _user(db_session, "pi-lose-editor@example.com")).id
+    db_session.add(
+        DiaryPermission(diary_id=uuid.UUID(entry["diary_id"]), user_id=editor_id, role="editor")
+    )
+    await db_session.commit()
+    fake = FakeGoogle([_photo(1, read_fixture("sample.jpg")), _photo(2, jpeg_with_exif())])
+    imp = await _start(client, editor, entry["id"], fake)
+
+    async def drop_rights_during_first(item):
+        if item.id == "g-item-1":
+            await db_session.execute(
+                sa_delete(DiaryPermission).where(DiaryPermission.user_id == editor_id)
+            )
+            await db_session.commit()
+
+    fake.on_download = drop_rights_during_first
+    await _run_worker(imp["id"], fake)
+
+    row = await _import_row(db_session, imp["id"])
+    assert row.status == "failed"
+    assert row.added_count == 1
+    assert fake.downloads == ["g-item-1"]
+    assert len(await _entry_photos(db_session, entry["id"])) == 1

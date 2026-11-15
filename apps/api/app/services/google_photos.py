@@ -15,7 +15,7 @@ import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import httpx
 
@@ -102,8 +102,13 @@ def _parse_time(value: str | None) -> datetime | None:
         return None
 
 
-def _session(data: dict) -> PickerSession:
-    polling = data.get("pollingConfig") or {}
+def _session(data: object) -> PickerSession:
+    """Parse a session reply; a reply without its id is a Google error, never a 500."""
+    if not isinstance(data, dict) or not isinstance(data.get("id"), str):
+        raise GoogleError("unexpected reply")
+    polling = data.get("pollingConfig")
+    if not isinstance(polling, dict):
+        polling = {}
     return PickerSession(
         id=data["id"],
         picker_uri=data.get("pickerUri", ""),
@@ -114,8 +119,12 @@ def _session(data: dict) -> PickerSession:
     )
 
 
-def _item(data: dict) -> PickedItem:
-    media = data.get("mediaFile") or {}
+def _item(data: object) -> PickedItem:
+    if not isinstance(data, dict) or not isinstance(data.get("id"), str):
+        raise GoogleError("unexpected reply")
+    media = data.get("mediaFile")
+    if not isinstance(media, dict):
+        media = {}
     return PickedItem(
         id=data["id"],
         type=data.get("type", "TYPE_UNSPECIFIED"),
@@ -169,6 +178,21 @@ def _check(resp: httpx.Response) -> None:
     raise GoogleError(f"google photos {code}")
 
 
+GOOGLE_DOMAINS = ("googleusercontent.com", "google.com", "googleapis.com")
+
+
+def _host(url: str) -> str:
+    try:
+        return (urlsplit(url).hostname or "").lower()
+    except ValueError:
+        return ""
+
+
+def _is_google_host(host: str) -> bool:
+    """Exactly a Google domain or a subdomain of one (not evilgoogle.com, not google.com.evil.x)."""
+    return any(host == d or host.endswith("." + d) for d in GOOGLE_DOMAINS)
+
+
 async def _require_https(request: httpx.Request) -> None:
     """Refuse any hop (including a redirect) that is not TLS: these are a child's photos."""
     if request.url.scheme != "https":
@@ -202,17 +226,24 @@ class GooglePhotosClient:
         _check(resp)
         return resp
 
+    @staticmethod
+    def _json(resp: httpx.Response) -> object:
+        try:
+            return resp.json()
+        except ValueError:
+            raise GoogleError("unexpected reply") from None
+
     async def create_session(self, max_items: int = 50) -> PickerSession:
         resp = await self._request(
             "POST",
             f"{BASE_URL}/sessions",
             json={"pickingConfig": {"maxItemCount": str(max_items)}},
         )
-        return _session(resp.json())
+        return _session(self._json(resp))
 
     async def get_session(self, id: str) -> PickerSession:  # noqa: A002 — named by the interface
         resp = await self._request("GET", f"{BASE_URL}/sessions/{quote(id, safe='')}")
-        return _session(resp.json())
+        return _session(self._json(resp))
 
     async def delete_session(self, id: str) -> None:  # noqa: A002 — named by the interface
         await self._request("DELETE", f"{BASE_URL}/sessions/{quote(id, safe='')}")
@@ -224,7 +255,9 @@ class GooglePhotosClient:
             params = {"sessionId": session_id, "pageSize": str(PAGE_SIZE)}
             if page_token:
                 params["pageToken"] = page_token
-            data = (await self._request("GET", f"{BASE_URL}/mediaItems", params=params)).json()
+            data = self._json(await self._request("GET", f"{BASE_URL}/mediaItems", params=params))
+            if not isinstance(data, dict):
+                raise GoogleError("unexpected reply")
             items.extend(_item(raw) for raw in data.get("mediaItems") or [])
             page_token = data.get("nextPageToken")
             if not page_token:
@@ -235,6 +268,12 @@ class GooglePhotosClient:
         if not item.base_url.startswith("https://"):
             # The bearer token must only ever travel over TLS.
             raise GoogleError("base url is not https")
+        host = _host(item.base_url)
+        if not _is_google_host(host):
+            # httpx drops Authorization on cross-origin redirects, so the first host is the
+            # one that matters. Only the host name is logged, never the URL.
+            logger.warning("google_photos_unexpected_host host=%s", host)
+            raise GoogleError("unexpected host")
         buf = bytearray()
         try:
             async with self._client(DOWNLOAD_TIMEOUT, follow_redirects=True) as client:

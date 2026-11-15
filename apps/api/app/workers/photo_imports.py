@@ -107,17 +107,37 @@ async def _load(db: AsyncSession, import_id: uuid.UUID) -> PhotoImport | None:
     ).scalar_one_or_none()
 
 
-async def _set_status(db: AsyncSession, imp: PhotoImport, status: str) -> None:
-    imp.status = status
-    await db.commit()
-    log.info(
-        "photo_import_finished",
-        import_id=str(imp.id),
-        status=status,
-        added=imp.added_count,
-        skipped_videos=imp.skipped_videos,
-        failed=len(imp.failed_names or []),
+async def _set_status(
+    db: AsyncSession,
+    imp: PhotoImport,
+    status: str,
+    *,
+    only_from: tuple[str, ...] = ACTIVE,
+) -> bool:
+    """End (or move) the import, but only from *only_from*; True if this call changed it.
+
+    A guarded UPDATE, so a cancel or a sweep that got there first is never
+    overwritten. *imp* is refreshed either way, so after a no-op it shows what
+    the database holds and the caller can see it did not win.
+    """
+    result = await db.execute(
+        update(PhotoImport)
+        .where(PhotoImport.id == imp.id, PhotoImport.status.in_(only_from))
+        .values(status=status)
     )
+    await db.commit()
+    await db.refresh(imp)
+    changed = cast(CursorResult, result).rowcount == 1
+    if changed:
+        log.info(
+            "photo_import_finished",
+            import_id=str(imp.id),
+            status=status,
+            added=imp.added_count,
+            skipped_videos=imp.skipped_videos,
+            failed=len(imp.failed_names or []),
+        )
+    return changed
 
 
 async def mark_failed(import_id: uuid.UUID) -> None:
@@ -251,6 +271,13 @@ async def _copy(
             await db.refresh(imp, ["status"])
             if imp.status != "copying":  # cancelled meanwhile
                 break
+            try:
+                # Rights can be taken away while the copy runs: check once per item.
+                await _get_entry_or_404(entry_id, user, db, require_editor=True)
+            except HTTPException:
+                # The worker has no HTTP context: a refusal is lost rights. Keep what was added.
+                await _set_status(db, imp, "failed")
+                break
             if item.type == "VIDEO":
                 imp.skipped_videos += 1
                 await db.commit()
@@ -285,10 +312,10 @@ async def _copy(
                     "photo_import_item_failed", import_id=str(imp.id), error=type(exc).__name__
                 )
         else:
-            await delete_session_quietly(db, imp)
-            await _set_status(db, imp, "done")
-        if imp.status == "cancelled":
-            await delete_session_quietly(db, imp)
+            await _set_status(db, imp, "done")  # no-op if a cancel or the sweep got there first
+        # Every way out has ended the import (done, cancelled, swept or failed): the
+        # Google session is not needed any more.
+        await delete_session_quietly(db, imp)
     finally:
         if added_any:
             queue_location_refresh(entry_id)
