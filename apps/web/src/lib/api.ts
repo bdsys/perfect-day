@@ -407,6 +407,9 @@ export interface BackfillRun {
 // API functions
 // ---------------------------------------------------------------------------
 
+/** A phone on a dead connection must not hold an upload slot forever. */
+export const UPLOAD_TIMEOUT_MS = 120000
+
 export const api = {
   auth: {
     async register(email: string, password: string, displayName?: string): Promise<TokenPair> {
@@ -688,6 +691,7 @@ export const api = {
           const xhr = new XMLHttpRequest()
           xhr.open('POST', `${API_BASE}/v1/photos`)
           xhr.withCredentials = true
+          xhr.timeout = UPLOAD_TIMEOUT_MS
           xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream')
           if (_accessToken) xhr.setRequestHeader('Authorization', `Bearer ${_accessToken}`)
           xhr.upload.onprogress = (e) => {

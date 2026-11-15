@@ -31,6 +31,8 @@ type Item = {
   status: "queued" | "uploading" | "done" | "error";
   progress: number;
   error?: string;
+  /** Set once the upload succeeds, so Try again only re-attaches. */
+  photoId?: string;
 };
 
 export function AddPhotos({ entry, onChanged, googlePhotos }: Props) {
@@ -46,6 +48,7 @@ export function AddPhotos({ entry, onChanged, googlePhotos }: Props) {
   const onChangedRef = useRef(onChanged);
   onChangedRef.current = onChanged;
   const filesRef = useRef(new Map<number, File>());
+  const photoIdsRef = useRef(new Map<number, string>());
 
   useEffect(() => {
     if (!open) return;
@@ -83,10 +86,17 @@ export function AddPhotos({ entry, onChanged, googlePhotos }: Props) {
       patch(id, { status: "uploading", progress: 0, error: undefined });
       void (async () => {
         try {
-          const photo = await api.photos.upload(file, (p) => patch(id, { progress: p }));
-          await api.photos.attachToEntry(entryRef.current.id, photo.id);
+          let photoId = photoIdsRef.current.get(id);
+          if (!photoId) {
+            const photo = await api.photos.upload(file, (p) => patch(id, { progress: p }));
+            photoId = photo.id;
+            photoIdsRef.current.set(id, photoId);
+            patch(id, { photoId });
+          }
+          await api.photos.attachToEntry(entryRef.current.id, photoId);
           anyDoneRef.current = true;
           filesRef.current.delete(id);
+          photoIdsRef.current.delete(id);
           patch(id, { status: "done", progress: 1 });
         } catch (e) {
           patch(id, { status: "error", error: friendlyUploadError(e) });

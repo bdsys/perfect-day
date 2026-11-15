@@ -1,4 +1,4 @@
-import { api, setAccessToken, refreshAccessToken, type Photo } from "../api";
+import { api, setAccessToken, refreshAccessToken, UPLOAD_TIMEOUT_MS, type Photo } from "../api";
 
 const MOCK_TOKEN = "test-token";
 
@@ -106,6 +106,7 @@ describe("api.photos.upload", () => {
     headers: Record<string, string> = {};
     withCredentials = false;
     status = 0;
+    timeout = 0;
     responseText = "";
     sent: unknown;
     upload = {} as { onprogress?: unknown };
@@ -148,6 +149,22 @@ describe("api.photos.upload", () => {
     const p = api.photos.upload(new File(["a"], "a.jpg", { type: "image/jpeg" }));
     FakeXHR.instances[0].respond(413, { error: { code: "http_error", message: "size_exceeds_limit" } });
     await expect(p).rejects.toMatchObject({ status: 413, code: "size_exceeds_limit" });
+  });
+
+  it("sets a timeout on the request and on the 401 retry, and a timeout settles the call", async () => {
+    expect(UPLOAD_TIMEOUT_MS).toBe(120000);
+    global.fetch = jest.fn().mockResolvedValueOnce({
+      ok: true, status: 200, json: async () => ({ access_token: "new-token" }),
+    } as unknown as Response);
+    const p = api.photos.upload(new File(["a"], "a.jpg", { type: "image/jpeg" }));
+    const first = FakeXHR.instances[0];
+    expect(first.timeout).toBe(UPLOAD_TIMEOUT_MS);
+    first.respond(401, {});
+    await new Promise((r) => setTimeout(r, 0));
+    const second = FakeXHR.instances[1];
+    expect(second.timeout).toBe(UPLOAD_TIMEOUT_MS);
+    second.ontimeout?.();
+    await expect(p).rejects.toThrow("upload network error");
   });
 
   it("settles when the XHR is aborted or times out", async () => {

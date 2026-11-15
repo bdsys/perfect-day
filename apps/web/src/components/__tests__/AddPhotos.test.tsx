@@ -93,6 +93,31 @@ it('a failed file shows its name and Try again re-uploads only it', async () => 
   expect((upload.mock.calls[2][0] as File).name).toBe('bad.jpg')
 })
 
+it('a timed-out upload shows the network message and frees its slot', async () => {
+  upload.mockImplementation((f: File) =>
+    f.name === 'slow.jpg' ? Promise.reject(new Error('upload network error'))
+      : f.name === 'next.jpg' ? Promise.resolve(photo('n')) : new Promise<Photo>(() => {}))
+  await open()
+  await act(async () => {
+    fireEvent.change(input(), { target: { files: [file('a.jpg'), file('b.jpg'), file('slow.jpg'), file('next.jpg')] } })
+  })
+  await screen.findByText("The upload didn't finish. Check your connection and try again.")
+  await waitFor(() => expect(upload).toHaveBeenCalledTimes(4))
+})
+
+it('Try again after an attach failure re-attaches without re-uploading', async () => {
+  upload.mockResolvedValue(photo('p1'))
+  attach.mockRejectedValueOnce(new Error('boom'))
+  await open()
+  await act(async () => { fireEvent.change(input(), { target: { files: [file('a.jpg')] } }) })
+  await screen.findByRole('alert')
+  attach.mockResolvedValue(photo('p1'))
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: /try again/i })) })
+  await waitFor(() => expect(attach).toHaveBeenCalledTimes(2))
+  expect(upload).toHaveBeenCalledTimes(1)
+  expect(attach).toHaveBeenLastCalledWith('e1', 'p1')
+})
+
 it('library is asked for photos near the entry date and hides attached ones', async () => {
   listForUser.mockResolvedValue([photo('a'), photo('b')])
   await open(entry({ photos: [photo('a')] }))
