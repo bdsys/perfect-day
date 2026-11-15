@@ -84,8 +84,11 @@ export function refreshAccessToken(): Promise<boolean> {
     try {
       const res = await fetch(`${API_BASE}/v1/auth/refresh`, { method: 'POST', credentials: 'include' })
       if (res.ok) {
-        setAccessToken(((await res.json()) as TokenPair).access_token)
-        return true
+        const token = ((await res.json()) as Partial<TokenPair>).access_token
+        if (typeof token === 'string' && token) {
+          setAccessToken(token)
+          return true
+        }
       }
     } catch {}
     _accessToken = null

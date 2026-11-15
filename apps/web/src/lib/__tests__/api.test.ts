@@ -203,4 +203,32 @@ describe("shared token refresh", () => {
     expect(await refreshAccessToken()).toBe(true);
     expect(global.fetch).toHaveBeenCalledTimes(2);
   });
+
+  it("a 200 without an access_token is a failed refresh", async () => {
+    global.fetch = jest.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({}),
+    })) as unknown as typeof fetch;
+
+    expect(await refreshAccessToken()).toBe(false);
+  });
+
+  it.each([
+    ["a 401", () => ({ ok: false, status: 401, json: async () => ({}) })],
+    ["a network error", () => { throw new Error("net"); }],
+  ])("a failed refresh (%s) clears the in-flight promise", async (_n, first) => {
+    global.fetch = jest
+      .fn()
+      .mockImplementationOnce(async () => first())
+      .mockImplementationOnce(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({ access_token: "t2" }),
+      })) as unknown as typeof fetch;
+
+    expect(await refreshAccessToken()).toBe(false);
+    expect(await refreshAccessToken()).toBe(true);
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+  });
 });
