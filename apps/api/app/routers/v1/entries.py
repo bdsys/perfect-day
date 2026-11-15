@@ -22,8 +22,11 @@ from app.models import (
     User,
 )
 from app.routers.v1.diaries import _get_diary_or_404
+from app.services.ai_drafts import ai_drafts_left, drafts_used, usage_period
 from app.services.flagged_words import still_present
+from app.services.plan_view import OwnerPlanOut, owner_plan_out
 from app.services.read_only import ensure_diary_writable
+from app.services.tier import limits_for, tier_limit_error
 from app.workers.tz_utils import entry_dates_from_events
 
 router = APIRouter(tags=["entries"])
@@ -118,7 +121,7 @@ class LLMGenerationSummaryOut(BaseModel):
     status: str  # "success" | "failed"
     error: str | None
     created_at: datetime
-    mode: str   # "events" | "polish" | "hybrid" | "none"
+    mode: str  # "events" | "polish" | "hybrid" | "none"
     model: str | None
 
     model_config = ConfigDict(from_attributes=True)
@@ -169,6 +172,7 @@ class EntryOut(BaseModel):
     location: LocationOut | None = None
     tz_override: str | None = None
     can_edit: bool = False  # the caller may edit this entry (not a viewer)
+    plan: OwnerPlanOut | None = None  # the diary owner's plan; set on GET /entries/{id} only
 
     model_config = {"from_attributes": True}
 
@@ -479,7 +483,9 @@ async def create_entry(
     )
     db.add(entry)
     await db.flush()
-    await db.refresh(entry, ["events", "rule_matches", "llm_generations", "entry_photos", "enrichments"])
+    await db.refresh(
+        entry, ["events", "rule_matches", "llm_generations", "entry_photos", "enrichments"]
+    )
     out = _entry_out_from_orm(entry, can_edit=True, exact_places=role is None)
     # Work out its place (home place, for now) so it gets weather (item 24).
     await db.commit()  # so the worker sees the entry
@@ -495,8 +501,10 @@ async def get_entry(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> EntryOut:
-    entry, _, role = await _get_entry_or_404(entry_id, user, db)
-    return _entry_out_from_orm(entry, can_edit=role != "viewer", exact_places=role is None)
+    entry, diary, role = await _get_entry_or_404(entry_id, user, db)
+    out = _entry_out_from_orm(entry, can_edit=role != "viewer", exact_places=role is None)
+    out.plan = await owner_plan_out(db, diary)
+    return out
 
 
 @router.patch("/entries/{entry_id}", response_model=EntryOut)
@@ -691,6 +699,20 @@ async def regenerate_entry(
 ) -> EntryOut:
     entry, diary, role = await _get_entry_or_404(entry_id, user, db, require_editor=True)
     await ensure_diary_writable(db, diary)
+    # The owner's quota pays for the draft, whoever clicks. The worker is the authority
+    # on spending; this is an early 403 so nothing is queued at 0 left.
+    owner = await db.get(User, diary.owner_user_id)
+    if owner is not None and await ai_drafts_left(db, owner) == 0:
+        limit = limits_for(owner.subscription_tier).ai_drafts_per_month or 0
+        period = await usage_period(db, owner.id)
+        used = await drafts_used(db, owner.id, period.month)
+        raise tier_limit_error(
+            source="ai_draft",
+            limit=limit,
+            current=used,
+            needed=used + 1,
+            resets_on=period.resets_on,
+        )
     from app.workers.tasks import generate_entry_draft
 
     # Nothing about the entry changes here, so there is no commit to wait for.

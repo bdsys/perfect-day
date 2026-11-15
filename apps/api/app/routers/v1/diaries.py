@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import get_current_user
 from app.core.database import get_db
 from app.models import AuditLog, Diary, DiaryPermission, ScanJob, User
+from app.services.plan_view import OwnerPlanOut, owner_plan_out
 from app.services.read_only import ensure_diary_writable
 from app.services.tier import limits_for, tier_limit_error
 
@@ -91,6 +92,7 @@ class DiaryOut(BaseModel):
     deleted_at: datetime | None
     hard_delete_after: datetime | None
     created_at: datetime
+    plan: OwnerPlanOut | None = None  # the owner's plan; set on GET /diaries/{id} only
 
     model_config = {"from_attributes": True}
 
@@ -268,7 +270,9 @@ async def get_diary(
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> DiaryOut:
     diary, role = await _get_diary_or_404(diary_id, user, db)
-    return _diary_out(diary, is_owner=role is None)
+    out = _diary_out(diary, is_owner=role is None)
+    out.plan = await owner_plan_out(db, diary)
+    return out
 
 
 @router.patch("/{diary_id}", response_model=DiaryOut)
