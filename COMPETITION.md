@@ -110,10 +110,10 @@ Replaces the Free / Tier 1 / Tier 2 structure in `docs/archive/OPUS_INITIAL_PLAN
 
 **Design intent:**
 - Free = acquisition-grade. Unlimited manual entries + 5 AI drafts/month means a real user hits the magic moment before a paywall.
-- AI auto-generation is the upgrade hook — not enrichments (too obscure) or photo limits (too annoying).
+- AI auto-generation is the main upgrade hook — not enrichments (too obscure). Andrew decided Free keeps 1 photo per entry as a second upgrade reason (2026-11-15).
 - Plus vs. Family = solo vs. household. Simple mental model.
 
-> **Implementation note:** Tier enforcement is `design/09-poc-scope.md` item 18 (Wave C). Free-tier AI draft limit requires a monthly counter per diary. Schema: `diaries.ai_drafts_this_month` (int) + `diaries.ai_draft_month_reset_at` (timestamp), or a `usage_counters` table if multi-metric. Decide at item 18.
+> **Implementation note:** Tier enforcement is `design/09-poc-scope.md` item 18 (Wave C). **Built** on `feat/18-tier-enforcement`. Usage is one row per spent draft in `ai_draft_spends` (per owner, month in the owner's oldest diary's timezone); see `docs/superpowers/specs/2026-11-15-tier-enforcement-design.md`.
 
 ---
 

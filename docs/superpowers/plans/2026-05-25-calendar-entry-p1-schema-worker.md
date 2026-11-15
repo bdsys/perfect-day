@@ -788,7 +788,7 @@ async def test_unlimited_tier_returns_true():
         diary_id=uuid.uuid4(),
         source="auto",
         db=mock_db,
-        subscription_tier="tier1",
+        subscription_tier="plus",
     )
     assert ok is True
     assert reason is None

@@ -86,7 +86,7 @@ Every finding was confirmed by reading the code. Three were also reproduced with
 | L-3 | The synchronous Anthropic client is called inside an `async` function. `max_tokens=1024` with no `stop_reason` check means a long multi-event entry is cut mid-JSON and falls to the fallback list. Invalid JSON skips straight to the next provider instead of the one retry the design specifies. | `workers/llm_providers.py`, `workers/llm.py` | Fixed, tested (25.2) |
 | L-4 | The system prompt says "use only facts in EVENTS" and "do not invent weather", then supplies weather under "ENRICHMENTS (use if helpful)". The model has no way to cite an enrichment. | `workers/llm.py` | Closed, won't fix (TR-15): reworded in 25.2; the validator already counts enrichments as a source. Checked with two live drafts, no automated test |
 | L-5 | Attendee email addresses are sent to the model when no display name exists. Fixed (TR-8): nameless attendees become "and N other(s)" or "N people"; no emails reach the prompt. | `workers/llm.py` `_format_event_line` | Fixed, tested (tests/unit/test_llm_text_rules.py) |
-| L-6 | Regenerate has no rate limit and no tier check; item 18's "5 AI drafts per month" is not enforced anywhere. | `routers/v1/entries.py` | Open (item 18) |
+| L-6 | Regenerate has no rate limit and no tier check; item 18's "5 AI drafts per month" is not enforced anywhere. | `routers/v1/entries.py` | Done (item 18) |
 
 ## Deployment
 
@@ -105,7 +105,7 @@ None of this was verified on the NUC.
 
 ## Design drift
 
-- **Tiers.** Code uses `free / tier1 / tier2` with Free capped at 5 manual and 3 auto entries for the lifetime of the account. `COMPETITION.md` says Free / Plus / Family, unlimited manual entries, 5 AI drafts per month. Photo uploads are not gated. (Item 18.)
+- **Tiers.** Code uses `free / tier1 / tier2` (now `free / plus / family`, item 18) with Free capped at 5 manual and 3 auto entries for the lifetime of the account. `COMPETITION.md` says Free / Plus / Family, unlimited manual entries, 5 AI drafts per month. Photo uploads are not gated. (Item 18.)
 - **Google Photos.** `photoslibrary.readonly` was removed by Google on 2025-03-31; item 14 needs a redesign around the Picker API. Source: <https://developers.google.com/photos/support/updates>
 - **Edit diffs.** `entry_edit_diffs` is never written. (`publish_entry` used to run a query and discard the result; that dead query is removed.)
 - **Markdown.** `body_markdown` is shown as plain text, so the fallback body's `**bold**` markers appeared literally. Fixed (TR-9): the fallback body has no Markdown, the prompt says "Do not use Markdown", and paired `**`/`__` and leading `#` heading markers are stripped from the model's title and body before they are stored. The sanitising render pipeline in `03-api-surface.md` is not built. (No XSS exposure as a result.)
@@ -157,12 +157,12 @@ The item 24 and 25.3 minors were listed only in a git-ignored build folder that 
 | TR-9 | Markdown shown literally (design drift) | **Fix** ⓐ | The fallback body stops producing Markdown; Markdown markers are stripped from model text before it is stored. **Built** on fix/review-triage-2026-11-14. |
 | TR-10 | Account deletion doesn't revoke Google access | **Fix** ⓑ | Reuse item 14's disconnect-revoke (S-8). **Built** on feat/14-photos-on-drafts (97775d0): account deletion revokes at Google and deletes the token rows through `services/google_revoke.py`, so restoring within 7 days needs a Google reconnect. |
 | TR-11 | Google's one-time OAuth code in API access logs | Later (NUC logging) | Single-use, and needs the client secret. |
-| TR-12 | S-9 diary-limit lock untested | Later (item 18) | Only matters with more than one API process. |
+| TR-12 | S-9 diary-limit lock untested | Done (item 18) | Only matters with more than one API process. |
 | TR-13 | S-10 refresh accepts a missing `Origin` | Won't fix | The refresh cookie is `SameSite=Strict` (`routers/v1/auth.py` `_set_refresh_cookie`), so a cross-site request never carries it. |
 | TR-14 | L-2 prompt caching never caches | Later (item 18) | Correct the 70% hit-rate assumption in `04-llm-integration.md` when item 18's cost work starts. |
 | TR-15 | L-4 enrichments | Won't fix (closed) | Reworded in 25.2. The validator already counts enrichments as a source. |
 | TR-16 | Edit diffs never written (design drift) | Later | Nothing reads them yet. |
-| TR-17 | Tiers (design drift) | Later (item 18) | |
+| TR-17 | Tiers (design drift) | Done (item 18) | |
 | TR-18 | Google Photos library scope (design drift) | Resolved by item 14 | Close when #51 merges. |
 
 P-2, P-4, P-6, P-7, D-5, D-6 and S-6 stay with the NUC deployment work. L-6 is item 18.
@@ -207,4 +207,4 @@ Noted, not bugs: the sweep ends a killed import sooner than Celery's one-hour re
 |---|---|---|
 | TR-39 | P-12: local tests on Python 3.14 with unlocked versions; the image and CI use 3.12 and the lock | **Fix** ⓐ: `scripts/bootstrap-local.sh` builds `.venv` with Python 3.12 (via `uv`) from `requirements-dev.lock`  Built on fix/review-triage-2026-11-14. |
 | TR-40 | `__Host-` prefix for the Google-connect cookie (item 14 Task 6) | **Fix** ⓑ: `__Host-pd_google_connect`, path `/`. Stops a sibling `*.andrewlass.com` site planting a connect cookie, which would defeat S-5. **Built** on feat/14-photos-on-drafts (97775d0): the cookie is `__Host-pd_google_connect`, path `/`, Secure, compared as bytes. |
-| TR-41 | Open-Meteo licence (free API is non-commercial) | Later: decide in item 18, before any paid tier ships; re-check their terms then |
+| TR-41 | Open-Meteo licence (free API is non-commercial) | Later: moved to billing (decide before any paid tier ships; re-check their terms then) |
