@@ -17,9 +17,8 @@ from app.models import (
     EntryRuleMatch,
     Event,
     RuleSeriesClaim,
-    User,
 )
-from app.services.tier import try_enforce_entry_tier_limit
+from app.services.read_only import is_diary_read_only
 from app.workers.tz_utils import google_event_to_entry_date
 
 log = structlog.get_logger()
@@ -105,6 +104,13 @@ async def evaluate_event_against_rules(
     event_uuid = uuid.UUID(event_id)
     diary_uuid = uuid.UUID(diary_id)
 
+    # A read-only diary makes no entries. The event stays unevaluated, so it is
+    # picked up if the owner upgrades.
+    diary = await db.get(Diary, diary_uuid)
+    if diary is not None and await is_diary_read_only(db, diary):
+        log.info("diary_read_only_skip", diary_id=diary_id, where="rules")
+        return
+
     # Row lock: two evaluations of one event must not both create an entry.
     result = await db.execute(
         select(Event).where(Event.id == event_uuid).with_for_update()
@@ -176,17 +182,12 @@ async def _entry_for_event(
     """Find or create the entry *event* belongs to, grouped as *rule* says.
 
     Returns ``(entry_id, needs_draft, joined_without_draft)``. ``entry_id`` is
-    None when a new entry was needed but the owner's tier limit does not allow
-    one. ``joined_without_draft`` is True when the event joined an existing
+    None only when the diary no longer exists; a new entry is always created
+    when none matches (plans cap AI drafts, not entries). ``joined_without_draft`` is True when the event joined an existing
     series entry that is not being redrafted, so its place needs a refresh.
     """
     diary = (await db.execute(select(Diary).where(Diary.id == diary_id))).scalar_one_or_none()
     if diary is None:
-        return None, False, False
-    user = (
-        await db.execute(select(User).where(User.id == diary.owner_user_id))
-    ).scalar_one_or_none()
-    if user is None:
         return None, False, False
 
     payload = event.payload or {}
@@ -203,16 +204,7 @@ async def _entry_for_event(
     )
     spanning = options.get("multi_day") == "spanning"
 
-    async def _new_entry(end_date: _date | None) -> uuid.UUID | None:
-        ok, reason = await try_enforce_entry_tier_limit(
-            owner_user_id=user.id,
-            source="auto",
-            db=db,
-            owner_subscription_tier=user.subscription_tier,
-        )
-        if not ok:
-            log.warning("evaluate_rules_tier_limit", rule_id=str(rule.id), reason=reason)
-            return None
+    async def _new_entry(end_date: _date | None) -> uuid.UUID:
         entry = Entry(
             diary_id=diary_id,
             entry_date=entry_date,
@@ -239,8 +231,6 @@ async def _entry_for_event(
             return claim.entry_id, False, True
 
         new_id = await _new_entry(None)  # series entries don't span
-        if new_id is None:
-            return None, False, False
         db.add(
             RuleSeriesClaim(
                 rule_id=rule.id, recurring_event_id=recurring_event_id, entry_id=new_id
@@ -288,4 +278,4 @@ async def _entry_for_event(
             return existing.id, True, False
 
     new_id = await _new_entry(entry_end_date if spanning else None)
-    return new_id, new_id is not None, False
+    return new_id, True, False

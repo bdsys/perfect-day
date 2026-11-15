@@ -39,14 +39,14 @@ To completely reset your local DB instead, run `make down -v` followed by `make 
 ### Create a user
 ```bash
 ./scripts/admin.sh users create --email alice@example.com --password secret123 --tier free
-./scripts/admin.sh users create --email admin@example.com --password secret123 --tier tier2 --admin
+./scripts/admin.sh users create --email admin@example.com --password secret123 --tier family --admin
 ```
 
-Tiers: `free` | `tier1` | `tier2`
+Tiers: `free` | `plus` | `family`
 
 ### Change a user's tier
 ```bash
-./scripts/admin.sh users set-tier --email alice@example.com --tier tier1
+./scripts/admin.sh users set-tier --email alice@example.com --tier plus
 ```
 
 ### Delete a user

@@ -43,7 +43,7 @@ The "make the diary actually useful" phase. Photos, multi-day entries, weather, 
 | 15 | **Multi-day entry support** | `entry_end_date`, multi-day grouping in worker, timeline display. |
 | 16 | **Weather enrichment (Open-Meteo)** | No API key. Unlimited calls. Historical data going back decades — critical for backfill. Writes to `enrichments` table. As part of this, extend backfill (item 17) to enrich each chunk with weather. |
 | 17 | **Backfill — slice 1 (Calendar-only, spec-compliant)** | Endpoint, `BackfillRun` table, and basic worker already exist. This slice fixes three gaps from the current implementation (see `design/06-scan-worker.md`): switch request body to `{from_date, to_date, sources}`, add weekly chunking with 2s sleep between chunks, acquire `scan_lock:{diary_id}` so backfill and regular scans serialize, and add `DELETE /v1/diaries/{id}/scan/backfill/{runId}` with chunk-boundary cancellation. Photos and weather sources are added with items 14 and 16, not here. |
-| 18 | **Tier enforcement** | Entitlement checks on entry + diary creation. HTTP 403 with structured error. Upgrade prompt in UI. |
+| 18 | **Tier enforcement** | **Built** (Free / Plus / Family): diaries, AI drafts per month (Free 5, counted per owner in `ai_draft_spends`) and photos per entry (Free 1), enforced in the API and the worker; manual entries unlimited. HTTP 403 `detail.code = tier_limit`. Plan badge, grayed-out controls and `/plans` page in the web UI. Spec `docs/superpowers/specs/2026-11-15-tier-enforcement-design.md`. |
 | 22 | **Gemini fallback for LLM** | Add after Anthropic integration is stable and tested. |
 
 ---

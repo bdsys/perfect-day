@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
 import { api, type Diary, type Entry, ApiError } from '@/lib/api'
 import { useAuth } from '@/lib/auth-context'
+import { readOnlyBanner } from '@/lib/plan'
 
 function formatDate(d: string) {
   return new Date(d + 'T00:00:00').toLocaleDateString(undefined, {
@@ -28,7 +29,7 @@ export default function EntryRestorePage() {
   const [entries, setEntries] = useState<Entry[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [tierLimitError, setTierLimitError] = useState<{ limit: number; current: number; source: string } | null>(null)
+  const [readOnly, setReadOnly] = useState(false)
   const [restoring, setRestoring] = useState<string | null>(null)
 
   useEffect(() => {
@@ -49,17 +50,14 @@ export default function EntryRestorePage() {
   async function handleRestore(id: string) {
     setRestoring(id)
     setError('')
-    setTierLimitError(null)
+    setReadOnly(false)
     try {
       await api.entries.restore(id)
       setEntries((prev) => prev.filter((e) => e.id !== id))
     } catch (e: unknown) {
-      if (e instanceof ApiError && e.code === 'tier_limit' && e.details) {
-        setTierLimitError({
-          limit: typeof e.details.limit === 'number' ? e.details.limit : 0,
-          current: typeof e.details.current === 'number' ? e.details.current : 0,
-          source: typeof e.details.source === 'string' ? e.details.source : 'unknown',
-        })
+      // Manual entries are unlimited: the only plan reason a restore fails is a read-only diary.
+      if (e instanceof ApiError && e.code === 'tier_limit' && e.details?.source === 'diary_read_only') {
+        setReadOnly(true)
       } else {
         setError(e instanceof Error ? e.message : 'Restore failed')
       }
@@ -85,12 +83,10 @@ export default function EntryRestorePage() {
 
         {error && <p className="error-message" style={{ marginBottom: '1rem' }}>{error}</p>}
 
-        {tierLimitError && (
+        {readOnly && (
           <div className="error-message" style={{ marginBottom: '1rem' }}>
-            You&apos;re at your free-tier limit ({tierLimitError.current}/{tierLimitError.limit} {tierLimitError.source === 'diary' ? 'diaries' : tierLimitError.source} entries).
-            Free up a slot or{' '}
-            <a href="/account/upgrade" style={{ textDecoration: 'underline' }}>Upgrade</a>
-            {' '}to restore this one.
+            {readOnlyBanner(diary?.plan?.plan_name ?? 'Free')}{' '}
+            <Link href="/plans" style={{ textDecoration: 'underline' }}>Upgrade now</Link>
           </div>
         )}
 

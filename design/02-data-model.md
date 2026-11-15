@@ -27,7 +27,7 @@ users ──┬──< social_identities
 - `email_verified_at` timestamptz NULL
 - `password_hash` text NULL  *(NULL when only social login is used)*
 - `display_name` text
-- `subscription_tier` text NOT NULL DEFAULT `'free'`  *(`free | tier1 | tier2`)*
+- `subscription_tier` text NOT NULL DEFAULT `'free'`  *(`free | plus | family`)*
 - `stripe_customer_id` text NULL  *(placeholder, not used in PoC)*
 - `is_admin` boolean NOT NULL DEFAULT false
 - `deleted_at` timestamptz NULL
@@ -71,7 +71,7 @@ users ──┬──< social_identities
 - `deleted_at` timestamptz NULL
 - `hard_delete_after` timestamptz NULL  *(set on diary deletion request; 30-day grace)*
 
-App-layer check: per-user diary count vs tier (free=1, tier1=2, tier2=4).
+App-layer check: per-user diary count vs tier (free=1, plus=2, family=4).
 
 Display URLs: `diary.perfectday.andrewlass.com/d/{slug}/entries/{entry_date}`. Internal IDs remain UUIDs. Slugs are UNIQUE per `(owner_user_id, slug)` — not globally unique. A global slug uniqueness constraint leaks diary existence across users (if a slug is taken, an attacker can enumerate whether a user with a given diary name exists).
 

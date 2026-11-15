@@ -1,9 +1,9 @@
 'use client'
 
-import { Suspense, useCallback, useEffect, useState } from 'react'
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
-import { api, type Entry } from '@/lib/api'
+import { api, ApiError, type Entry, type OwnerPlan } from '@/lib/api'
 import { formatEventTime } from '@/lib/eventTime'
 import { PhotoThumbnail } from '@/components/PhotoThumbnail'
 import { PhotoLightbox } from '@/components/PhotoLightbox'
@@ -18,6 +18,22 @@ import { EntryPlace } from '@/components/EntryPlace'
 import { GooglePhotosPick } from '@/components/GooglePhotosPick'
 import { PhotoImportNotice } from '@/components/PhotoImportNotice'
 import { googleStatusMessage } from '@/lib/googleStatus'
+import PlanBadge from '@/components/PlanBadge'
+import LimitNote from '@/components/LimitNote'
+import { aiEntryNote, aiLimitNote, formatResetDate, readOnlyBanner } from '@/lib/plan'
+
+function planDetails(plan: OwnerPlan & { ai_drafts_limit: number }) {
+  return [
+    {
+      label: 'AI drafts',
+      text: `${plan.ai_drafts_left ?? 0} of ${plan.ai_drafts_limit} left, resets ${formatResetDate(plan.resets_on)}`,
+    },
+    {
+      label: 'Photos per entry',
+      text: plan.photos_per_entry == null ? 'Unlimited' : String(plan.photos_per_entry),
+    },
+  ]
+}
 
 export default function EntryDetailPage() {
   return (
@@ -35,6 +51,11 @@ function EntryDetailPageInner() {
   const fromPick = searchParams.get('fromPick') === '1'
 
   const [entry, setEntry] = useState<Entry | null>(null)
+  // Only GET /entries/{id} carries the plan; action responses have plan: null.
+  // Keep the last real one so an action never blanks the badge or re-enables a grayed control.
+  const planRef = useRef<OwnerPlan | null>(null)
+  if (entry?.plan) planRef.current = entry.plan
+  const plan = planRef.current
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
@@ -177,7 +198,11 @@ function EntryDetailPageInner() {
       setPollingRegen(true)
       setError('')
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Regenerate failed')
+      if (e instanceof ApiError && e.code === 'tier_limit') {
+        setError(plan ? aiLimitNote(plan.resets_on) : 'No AI drafts left this month.')
+      } else {
+        setError(e instanceof Error ? e.message : 'Regenerate failed')
+      }
     }
   }
 
@@ -278,6 +303,11 @@ function EntryDetailPageInner() {
   if (!entry) return <div className="container" style={{ paddingTop: '1.5rem' }}><p className="error-message">{error || 'Entry not found.'}</p></div>
 
   const diaryHref = `/diaries/${entry.diary_id}`
+  const readOnly = plan?.read_only ?? false
+  const aiOut = plan?.ai_drafts_left === 0
+  const photoRoom = plan == null || plan.photos_per_entry == null
+    ? null
+    : Math.max(0, plan.photos_per_entry - entry.photos.length)
 
   return (
     <>
@@ -295,6 +325,19 @@ function EntryDetailPageInner() {
           </p>
         )}
 
+        {readOnly && plan && <p className="error-message" style={{ marginBottom: '1rem' }}>{readOnlyBanner(plan.plan_name)}</p>}
+        {plan && plan.ai_drafts_limit != null && (
+          <div style={{ marginBottom: '0.75rem' }}>
+            <PlanBadge
+              label="AI drafts"
+              used={plan.ai_drafts_limit - (plan.ai_drafts_left ?? 0)}
+              limit={plan.ai_drafts_limit}
+              resetsOn={plan.resets_on}
+              details={planDetails(plan as OwnerPlan & { ai_drafts_limit: number })}
+            />
+          </div>
+        )}
+
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.25rem', flexWrap: 'wrap' }}>
           <span className={`status-badge status-${entry.status}`}>{entry.status}</span>
           <span style={{ fontSize: '0.875rem', color: 'var(--text-muted)' }}>{formatDateRange(entry.entry_date, entry.entry_end_date)}</span>
@@ -305,7 +348,8 @@ function EntryDetailPageInner() {
           <AddPhotos
             entry={entry}
             onChanged={setEntry}
-            googlePhotos={<GooglePhotosPick entry={entry} inFlight={importInFlight} copying={importCopying} onStarted={() => setNoticeKey((k) => k + 1)} />}
+            room={readOnly ? 0 : photoRoom}
+            googlePhotos={<GooglePhotosPick entry={entry} inFlight={importInFlight} copying={importCopying} disabled={readOnly || photoRoom === 0} onStarted={() => setNoticeKey((k) => k + 1)} />}
           />
         )}
 
@@ -404,13 +448,19 @@ function EntryDetailPageInner() {
               </div>
             )}
 
+            {entry.last_generation?.error === 'ai_draft_limit' && aiOut && plan && (
+              <LimitNote>{aiEntryNote(plan.resets_on)}</LimitNote>
+            )}
+
             {regenErrorMessage && (
               <div
                 className="bg-red-50 border border-red-200 text-red-800 rounded p-3 text-sm flex items-start gap-2"
                 style={{ marginBottom: '1rem' }}
               >
                 <span style={{ flex: 1 }}>
-                  AI generation failed: {regenErrorMessage}. Your text was not changed.
+                  {regenErrorMessage === 'ai_draft_limit' && plan
+                    ? aiLimitNote(plan.resets_on)
+                    : `AI generation failed: ${regenErrorMessage}. Your text was not changed.`}
                 </span>
                 <button
                   onClick={() => setRegenErrorMessage(null)}
@@ -557,22 +607,23 @@ function EntryDetailPageInner() {
               />
             )}
             <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1.25rem', flexWrap: 'wrap' }}>
-              <button className="btn btn-secondary" onClick={startEdit}>
+              <button className="btn btn-secondary" onClick={startEdit} disabled={readOnly}>
                 Edit
               </button>
               {entry.status === 'draft' ? (
-                <button className="btn btn-primary" onClick={handlePublish} disabled={publishing}>
+                <button className="btn btn-primary" onClick={handlePublish} disabled={publishing || readOnly}>
                   {publishing ? 'Publishing…' : 'Publish'}
                 </button>
               ) : (
-                <button className="btn btn-secondary" onClick={handleUnpublish} disabled={publishing}>
+                <button className="btn btn-secondary" onClick={handleUnpublish} disabled={publishing || readOnly}>
                   {publishing ? 'Unpublishing…' : 'Unpublish'}
                 </button>
               )}
               <button
                 className="btn btn-secondary"
                 onClick={handleRegenerate}
-                disabled={pollingRegen || (!entry.events.length && !entry.body_markdown)}
+                disabled={pollingRegen || readOnly || aiOut || (!entry.events.length && !entry.body_markdown)}
+                aria-describedby={aiOut && plan ? 'ai-limit-note' : undefined}
                 title={(!entry.events.length && !entry.body_markdown) ? 'Add events or write something first' : undefined}
               >
                 {pollingRegen
@@ -589,6 +640,7 @@ function EntryDetailPageInner() {
                 {deleting ? 'Deleting…' : 'Delete'}
               </button>
             </div>
+            {aiOut && plan && <LimitNote id="ai-limit-note">{aiLimitNote(plan.resets_on)}</LimitNote>}
           </>
         )}
       </div>

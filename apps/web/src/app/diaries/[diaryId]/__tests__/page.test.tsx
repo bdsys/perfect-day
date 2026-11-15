@@ -227,3 +227,34 @@ describe('DiaryDetailPage connect calendar', () => {
   })
 
 })
+
+describe('diary page: read-only plan', () => {
+  it('shows the banner, disables the write controls and leaves Delete diary enabled', async () => {
+    ;(api.diaries.get as jest.Mock).mockResolvedValue({
+      id: 'diary-1', name: 'Emma diary',
+      plan: { tier: 'free', plan_name: 'Free', ai_drafts_limit: 5, ai_drafts_left: 2, resets_on: '2026-12-01', photos_per_entry: 1, read_only: true },
+    })
+    ;(api.entries.list as jest.Mock).mockResolvedValue([])
+    ;(api.integrations.list as jest.Mock).mockResolvedValue([])
+    render(<DiaryDetailPage />)
+    expect(await screen.findByText('This diary is read-only on the Free plan. Upgrade, or delete another diary, to use it again.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Scan now' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Backfill' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'New entry' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Settings' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Delete diary' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'AI drafts: 2 of 5 left · resets Dec 1' })).toBeInTheDocument()
+  })
+
+  it('a Plus diary that is not read-only has no badge and enabled controls', async () => {
+    ;(api.diaries.get as jest.Mock).mockResolvedValue({
+      id: 'diary-1', name: 'Emma diary',
+      plan: { tier: 'plus', plan_name: 'Plus', ai_drafts_limit: null, ai_drafts_left: null, resets_on: '2026-12-01', photos_per_entry: null, read_only: false },
+    })
+    ;(api.entries.list as jest.Mock).mockResolvedValue([])
+    ;(api.integrations.list as jest.Mock).mockResolvedValue([])
+    render(<DiaryDetailPage />)
+    expect(await screen.findByRole('link', { name: 'Settings' })).toBeInTheDocument()
+    expect(screen.queryByText(/AI drafts:/)).not.toBeInTheDocument()
+  })
+})

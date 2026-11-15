@@ -37,6 +37,8 @@ from app.services.google_photos import (
     GoogleUnavailable,
     PickedItem,
 )
+from app.services.photo_limits import photo_room
+from app.services.read_only import is_diary_read_only
 
 log = structlog.get_logger()
 
@@ -285,6 +287,10 @@ async def _copy(
                 await db.commit()
                 continue
             try:
+                if await _entry_is_full(db, entry_id):
+                    # The plan's photo limit: download nothing more, end as done.
+                    await _set_status(db, imp, "done")
+                    break
                 photo = await _library_photo(db, imp.user_id, item.id)
                 if photo is None:
                     token = await access_token_for(db, imp.user_id)
@@ -303,6 +309,11 @@ async def _copy(
                 # downloaded stays in the library; earlier photos stay attached.
                 if not await _can_still_edit(db, entry_id, imp.user_id):
                     await _set_status(db, imp, "failed")
+                    break
+                # Locks the entry row until the commit below, so a concurrent attach
+                # cannot take the last place between this check and the link.
+                if await _entry_is_full(db, entry_id, lock=True):
+                    await _set_status(db, imp, "done")
                     break
                 if await _attach(db, entry_id, photo.id):
                     imp.added_count += 1
@@ -330,16 +341,30 @@ async def _copy(
     return None
 
 
+async def _entry_is_full(db: AsyncSession, entry_id: uuid.UUID, *, lock: bool = False) -> bool:
+    """True when the diary owner's plan leaves the entry no room for another photo."""
+    owner_id = (
+        await db.execute(
+            select(Diary.owner_user_id).join(Entry, Entry.diary_id == Diary.id).where(Entry.id == entry_id)
+        )
+    ).scalar_one_or_none()
+    owner = await db.get(User, owner_id, populate_existing=True) if owner_id is not None else None
+    if owner is None:
+        return False
+    return await photo_room(db, entry_id, owner, lock=lock) == 0
+
+
 async def _can_still_edit(db: AsyncSession, entry_id: uuid.UUID, user_id: uuid.UUID) -> bool:
     """One scalar query mirroring _get_entry_or_404(require_editor=True).
 
     The entry and its diary are not deleted and the user owns the diary or holds a
     permission that is not "viewer". Scalars, not ORM objects, so a role changed
-    since an earlier load is never served from the identity map.
+    since an earlier load is never served from the identity map. A diary over its
+    owner's plan limit is read-only, so nobody can edit it.
     """
     row = (
         await db.execute(
-            select(Diary.owner_user_id, DiaryPermission.role)
+            select(Diary.id, Diary.owner_user_id, DiaryPermission.role)
             .select_from(Entry)
             .join(Diary, Diary.id == Entry.diary_id)
             .outerjoin(
@@ -351,8 +376,14 @@ async def _can_still_edit(db: AsyncSession, entry_id: uuid.UUID, user_id: uuid.U
     ).first()
     if row is None:
         return False
-    owner_id, role = row
-    return owner_id == user_id or (role is not None and role != "viewer")
+    diary_id, owner_id, role = row
+    if not (owner_id == user_id or (role is not None and role != "viewer")):
+        return False
+    diary = await db.get(Diary, diary_id)
+    if diary is not None and await is_diary_read_only(db, diary):
+        log.info("diary_read_only_skip", diary_id=str(diary_id), where="photo_import")
+        return False
+    return True
 
 
 def _name(item: PickedItem) -> str:

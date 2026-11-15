@@ -2,6 +2,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError, type Entry, type Photo } from "../lib/api";
 import { PhotoThumbnail } from "./PhotoThumbnail";
+import LimitNote from "./LimitNote";
+import { PHOTO_LIMIT_NOTE } from "../lib/plan";
 
 const MAX_CONCURRENT = 3;
 const MAX_BYTES = 52428800; // 50 MB, the API's limit
@@ -23,6 +25,8 @@ interface Props {
   onChanged: (entry: Entry) => void;
   /** Slot for the "From Google Photos" option (the entry page passes <GooglePhotosPick />). */
   googlePhotos?: React.ReactNode;
+  /** How many more photos the entry may take; null means no limit. */
+  room?: number | null;
 }
 
 type Item = {
@@ -33,7 +37,8 @@ type Item = {
   error?: string;
 };
 
-export function AddPhotos({ entry, onChanged, googlePhotos }: Props) {
+export function AddPhotos({ entry, onChanged, googlePhotos, room = null }: Props) {
+  const full = room === 0;
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<Item[]>([]);
   const [library, setLibrary] = useState<Photo[] | null>(null);
@@ -165,14 +170,22 @@ export function AddPhotos({ entry, onChanged, googlePhotos }: Props) {
 
   return (
     <div className="add-photos" style={{ margin: "0.75rem 0" }}>
-      <button type="button" className="btn btn-secondary" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+      <button
+        type="button"
+        className="btn btn-secondary"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        disabled={full}
+        aria-describedby={full ? "photo-limit-note" : undefined}
+      >
         Add photos
       </button>
-      {open && (
+      {full && <LimitNote id="photo-limit-note">{PHOTO_LIMIT_NOTE}</LimitNote>}
+      {open && !full && (
         <div style={{ marginTop: "0.75rem", display: "grid", gap: "1rem" }}>
           <div role="group" aria-label="From this phone">
             <h3>From this phone</h3>
-            <input type="file" accept="image/*" multiple onChange={handleFiles} aria-label="Choose photos" />
+            <input type="file" accept="image/*" multiple={room !== 1} onChange={handleFiles} aria-label="Choose photos" />
             {items.length > 0 && (
               <ul style={{ listStyle: "none", padding: 0, margin: "0.5rem 0 0" }}>
                 {items.map((it) => (

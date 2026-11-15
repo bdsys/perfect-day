@@ -311,43 +311,6 @@ class TestEvaluateEventAgainstRules:
 
         mock_task.delay.assert_not_called()
 
-    async def test_tier_limit_skips_rule(self, db_session: AsyncSession):
-        """When the tier check fails the rule is skipped and no entry is created."""
-        user = await make_user(db_session)
-        diary = await make_diary(db_session, owner=user, timezone="UTC")
-        await _make_rule(
-            db_session,
-            diary,
-            condition=_SOCCER_CONDITION,
-            options={"recurring": "per_instance", "multi_day": "per_day"},
-        )
-
-        event = await make_event(
-            db_session,
-            diary_id=diary.id,
-            payload=_SOCCER_PAYLOAD,
-        )
-
-        with (
-            patch(
-                "app.workers.rules.try_enforce_entry_tier_limit",
-                return_value=(False, "entry limit reached"),
-            ),
-            patch("app.workers.tasks.generate_entry_draft") as mock_task,
-        ):
-            mock_task.delay = MagicMock()
-            await evaluate_event_against_rules(str(event.id), str(diary.id), db_session)
-
-        await db_session.refresh(event)
-        assert event.entry_id is None, "tier-limited rule must not create an entry"
-
-        entries_result = await db_session.execute(
-            select(Entry).where(Entry.diary_id == diary.id)
-        )
-        assert entries_result.scalars().all() == []
-
-        mock_task.delay.assert_not_called()
-
     async def test_already_attached_event_skipped(self, db_session: AsyncSession):
         """An event that already has entry_id set should be skipped entirely."""
         user = await make_user(db_session)

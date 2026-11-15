@@ -23,6 +23,7 @@ from app.core.security import (
 from app.middleware.rate_limit import auth_limiter
 from app.models import NotificationPreferences, OAuthToken, RefreshToken, SocialIdentity, User
 from app.services.google_revoke import revoke_and_forget_google
+from app.services.plan_view import MyPlanOut, my_plan_out
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -400,6 +401,14 @@ class UserProfile(BaseModel):
 @router.get("/me", response_model=UserProfile)
 async def me(user: User = Depends(get_current_user)) -> User:
     return user
+
+
+@router.get("/me/plan", response_model=MyPlanOut)
+async def my_plan(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db, scope="function"),
+) -> MyPlanOut:
+    return await my_plan_out(db, user)
 
 
 # ---------------------------------------------------------------------------

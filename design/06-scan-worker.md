@@ -169,7 +169,7 @@ Scans run on schedule regardless of quiet hours — data freshness matters. Only
 | Worker crash mid-scan | Celery retries (max 3). Redis lock 30-min TTL self-releases. Idempotency prevents duplicate ingestion. |
 | Token refresh fails | `ensure_fresh_access_token` takes a per-`(user_id, provider)` Redis advisory lock (`oauth_refresh:{user_id}:{provider}`, 30-second TTL). The second concurrent worker waits, then re-reads `oauth_tokens` and uses the freshly-stored access token. Without this lock, Google rotates the refresh token on the first call; the second call gets `invalid_grant` and mistakenly marks the integration revoked. If the refresh call itself fails (token expired or revoked at Google), `oauth_tokens.revoked_at` is set, the source is skipped, and a "reconnect Google" notification fires. |
 | MinIO unreachable for upload | `photos.finalized_at IS NULL`; orphan sweeper cleans after 24h. |
-| User hit tier limit during auto-generation | Events still ingest. `generate_entry_draft` returns early without LLM call. Entry exists with empty body. UI shows "Draft pending — upgrade to generate." |
+| User hit tier limit during auto-generation | Events still ingest. `generate_entry_draft` returns early without an LLM call and records an `llm_generations` row with `error='ai_draft_limit'`. An entry with no text, or with machine-only text a background redraft would have replaced, gets the plain event list (`body_source='fallback'`); a person's own text is left alone. The entry page shows the "Out of AI drafts" note: write it yourself, or generate it when the month resets. |
 
 ## Observability
 

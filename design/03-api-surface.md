@@ -49,7 +49,7 @@ All endpoints prefixed `/v1/`. JSON. Auth via `Authorization: Bearer <jwt>` unle
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/v1/diaries` | Diaries the user owns or has access to. |
-| POST | `/v1/diaries` | Create diary. Tier check (free=1 / tier1=2 / tier2=4). |
+| POST | `/v1/diaries` | Create diary. Tier check (free=1 / plus=2 / family=4). |
 | GET | `/v1/diaries/{id}` | Details + permissions + scan config. The diary's home `lat`/`lon` are returned to the owner only; co-parents and viewers get null, on every diary endpoint (TR-20). |
 | PATCH | `/v1/diaries/{id}` | Owner only. Patchable fields: `name`, `slug`, `subject_name`, `subject_relation`, `voice_override`, `tone_hint`, `timezone`, `scan_interval_minutes`, `scan_enabled`, `cover_photo_id` (must be a photo owned by the diary owner), `notifications_muted`. |
 | DELETE | `/v1/diaries/{id}` | Soft delete + 30-day hard-delete schedule. Owner only. |
@@ -215,7 +215,12 @@ Every authenticated request runs middleware that:
 
 ## Cross-cutting concerns
 
-- **Tier enforcement:** every entry-create, diary-create, integration-toggle endpoint runs entitlement check. On block: HTTP 403 with `{error: {code: 'tier_limit', details: {limit, current, required_tier}}}`. Frontend disambiguates auth-failure / role-failure / tier-failure by `code`. Race condition mitigation: diary-create and entry-create use a per-user advisory lock in Postgres to prevent check-then-create races. For diary create (rare): acquire `pg_advisory_xact_lock(user_id)` within the transaction; count diaries and fail if at limit. For entry create (hot path): post-insert count verify with rollback if over limit (avoids holding a lock for LLM call duration).
+- **Tier enforcement:** limits are the diary owner's plan (Free / Plus / Family, item 18). On block: HTTP 403 with `{"detail": {"code": "tier_limit", "details": {limit, current, source, required_tier, resets_on?}}}` (`source` is `diary`, `ai_draft`, `photo` or `diary_read_only`; `resets_on` is on AI-draft errors). Frontend disambiguates auth-failure / role-failure / tier-failure by `code`. Where each limit is checked, and how check-then-act races are closed:
+  - **Diaries** — diary create and diary restore take `pg_advisory_xact_lock(hashtext(user_id))` within the transaction, count the owner's diaries and fail at the limit.
+  - **Entries** — manual entry create has no limit and no entitlement check on any plan.
+  - **AI drafts** — reserved in the drafting worker (`reserve_ai_draft`), under a per-owner advisory lock, before any provider call; the reservation is released when no AI text is saved. `POST /entries/{id}/regenerate` refuses up front when none are left.
+  - **Photos per entry** — photo attach locks the entry row (`SELECT … FOR UPDATE`) before counting its photos; the Google Photos import endpoint checks for room without the lock, and the import worker re-checks under the same row lock before attaching each photo.
+  - **Read-only diaries** — writes to a diary over the owner's diary limit return `source: diary_read_only`.
 - **Scan lock vs `/scan/run`:** `POST /v1/diaries/{id}/scan/run` returns `409 scan_in_progress` with a `Retry-After` header if the `scan_lock:{diary_id}` Redis lock is already held. Never silently skips — the caller always gets a clear signal.
 - **Visibility/role enforcement:** owner / editor / viewer enforced on every diary-scoped endpoint. Viewers cannot see drafts. Editors cannot delete diary or manage permissions.
 - **Idempotency:** manual entry creation and on-demand scan triggers accept `Idempotency-Key` header. Implementation: Redis 24h TTL keyed on `{idempotency_key}:{sha256(request_body)}`. On match: return the original response. On key match + body-hash mismatch: return `409 idempotency_conflict`.

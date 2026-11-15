@@ -20,7 +20,7 @@ test.describe('Restore tier-limit upgrade CTA', () => {
     const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
 
     // 2. Seed: create Diary A, soft-delete it, then create Diary B
-    //    (free-tier cap = 1 active diary).
+    //    (Free plan cap = 1 active diary).
     const diaryAResp = await request.post(`${API}/v1/diaries`, {
       headers,
       data: { name: 'Diary A', timezone: 'UTC' },
@@ -62,8 +62,8 @@ test.describe('Restore tier-limit upgrade CTA', () => {
     // 5. Click Restore — tier limit should block it
     await page.getByRole('button', { name: 'Restore' }).first().click()
 
-    // 6. Upgrade CTA banner must appear
-    await expect(page.locator('text=free-tier')).toBeVisible({ timeout: 5_000 })
-    await expect(page.locator('a[href="/account/upgrade"]')).toBeVisible({ timeout: 5_000 })
+    // 6. The diary-limit note and the Upgrade now link must appear
+    await expect(page.getByText('Free plan: 1 diary.')).toBeVisible({ timeout: 5_000 })
+    await expect(page.getByRole('link', { name: 'Upgrade now' })).toHaveAttribute('href', '/plans')
   })
 })

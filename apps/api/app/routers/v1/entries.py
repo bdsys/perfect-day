@@ -22,8 +22,11 @@ from app.models import (
     User,
 )
 from app.routers.v1.diaries import _get_diary_or_404
+from app.services.ai_drafts import ai_draft_usage
 from app.services.flagged_words import still_present
-from app.services.tier import enforce_entry_tier_limit
+from app.services.plan_view import OwnerPlanOut, owner_plan_out
+from app.services.read_only import ensure_diary_writable
+from app.services.tier import tier_limit_error
 from app.workers.tz_utils import entry_dates_from_events
 
 router = APIRouter(tags=["entries"])
@@ -118,7 +121,7 @@ class LLMGenerationSummaryOut(BaseModel):
     status: str  # "success" | "failed"
     error: str | None
     created_at: datetime
-    mode: str   # "events" | "polish" | "hybrid" | "none"
+    mode: str  # "events" | "polish" | "hybrid" | "none"
     model: str | None
 
     model_config = ConfigDict(from_attributes=True)
@@ -169,6 +172,7 @@ class EntryOut(BaseModel):
     location: LocationOut | None = None
     tz_override: str | None = None
     can_edit: bool = False  # the caller may edit this entry (not a viewer)
+    plan: OwnerPlanOut | None = None  # the diary owner's plan; set on GET /entries/{id} only
 
     model_config = {"from_attributes": True}
 
@@ -463,13 +467,7 @@ async def create_entry(
     diary, role = await _get_diary_or_404(diary_id, user, db)
     if role == "viewer":
         raise HTTPException(status_code=403, detail="forbidden")
-
-    await enforce_entry_tier_limit(
-        owner_user_id=user.id,
-        source="manual",
-        db=db,
-        owner_subscription_tier=user.subscription_tier,
-    )
+    await ensure_diary_writable(db, diary)
 
     entry = Entry(
         diary_id=diary_id,
@@ -485,7 +483,9 @@ async def create_entry(
     )
     db.add(entry)
     await db.flush()
-    await db.refresh(entry, ["events", "rule_matches", "llm_generations", "entry_photos", "enrichments"])
+    await db.refresh(
+        entry, ["events", "rule_matches", "llm_generations", "entry_photos", "enrichments"]
+    )
     out = _entry_out_from_orm(entry, can_edit=True, exact_places=role is None)
     # Work out its place (home place, for now) so it gets weather (item 24).
     await db.commit()  # so the worker sees the entry
@@ -501,8 +501,11 @@ async def get_entry(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> EntryOut:
-    entry, _, role = await _get_entry_or_404(entry_id, user, db)
-    return _entry_out_from_orm(entry, can_edit=role != "viewer", exact_places=role is None)
+    entry, diary, role = await _get_entry_or_404(entry_id, user, db)
+    out = _entry_out_from_orm(entry, can_edit=role != "viewer", exact_places=role is None)
+    # The owner's numbers go to the owner and editors only, never to viewers.
+    out.plan = None if role == "viewer" else await owner_plan_out(db, diary)
+    return out
 
 
 @router.patch("/entries/{entry_id}", response_model=EntryOut)
@@ -513,6 +516,7 @@ async def patch_entry(
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> EntryOut:
     entry, diary, role = await _get_entry_or_404(entry_id, user, db, require_editor=True)
+    await ensure_diary_writable(db, diary)
 
     updates = body.model_dump(exclude_unset=True)
     location_set = "location" in updates
@@ -580,6 +584,7 @@ async def publish_entry(
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> EntryOut:
     entry, diary, role = await _get_entry_or_404(entry_id, user, db, require_editor=True)
+    await ensure_diary_writable(db, diary)
     if entry.status == "published":
         return _entry_out_from_orm(entry, can_edit=True, exact_places=role is None)
 
@@ -600,7 +605,8 @@ async def accept_suggestion(
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> EntryOut:
     """Replace the entry's title and text with the AI's pending suggestion."""
-    entry, _, role = await _get_entry_or_404(entry_id, user, db, require_editor=True)
+    entry, diary, role = await _get_entry_or_404(entry_id, user, db, require_editor=True)
+    await ensure_diary_writable(db, diary)
     if entry.suggested_body_markdown is None:
         raise HTTPException(status_code=409, detail="no_suggestion")
 
@@ -627,7 +633,8 @@ async def dismiss_suggestion(
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> EntryOut:
     """Discard the AI's pending suggestion; the entry's text is unchanged."""
-    entry, _, role = await _get_entry_or_404(entry_id, user, db, require_editor=True)
+    entry, diary, role = await _get_entry_or_404(entry_id, user, db, require_editor=True)
+    await ensure_diary_writable(db, diary)
     if entry.suggested_body_markdown is None:
         raise HTTPException(status_code=409, detail="no_suggestion")
     _clear_suggestion(entry)
@@ -640,7 +647,8 @@ async def unpublish_entry(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> EntryOut:
-    entry, _, role = await _get_entry_or_404(entry_id, user, db, require_editor=True)
+    entry, diary, role = await _get_entry_or_404(entry_id, user, db, require_editor=True)
+    await ensure_diary_writable(db, diary)
     entry.status = "draft"
     entry.published_at = None
     return _entry_out_from_orm(entry, can_edit=True, exact_places=role is None)
@@ -679,14 +687,7 @@ async def restore_entry(
     diary, role = await _get_diary_or_404(entry.diary_id, user, db, require_owner=False)
     if role == "viewer":
         raise HTTPException(status_code=403, detail="forbidden")
-    owner_result = await db.execute(select(User).where(User.id == diary.owner_user_id))
-    owner = owner_result.scalar_one()
-    await enforce_entry_tier_limit(
-        owner_user_id=owner.id,
-        source=entry.created_by,
-        db=db,
-        owner_subscription_tier=owner.subscription_tier,
-    )
+    await ensure_diary_writable(db, diary)
     entry.deleted_at = None
     return _entry_out_from_orm(entry, can_edit=role != "viewer", exact_places=role is None)
 
@@ -697,7 +698,21 @@ async def regenerate_entry(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> EntryOut:
-    entry, _, role = await _get_entry_or_404(entry_id, user, db, require_editor=True)
+    entry, diary, role = await _get_entry_or_404(entry_id, user, db, require_editor=True)
+    await ensure_diary_writable(db, diary)
+    # The owner's quota pays for the draft, whoever clicks. The worker is the authority
+    # on spending; this is an early 403 so nothing is queued at 0 left.
+    owner = await db.get(User, diary.owner_user_id)
+    if owner is not None:
+        usage = await ai_draft_usage(db, owner.id, owner.subscription_tier)
+        if usage.left == 0:
+            raise tier_limit_error(
+                source="ai_draft",
+                limit=usage.limit or 0,
+                current=usage.used,
+                needed=usage.used + 1,
+                resets_on=usage.period.resets_on,
+            )
     from app.workers.tasks import generate_entry_draft
 
     # Nothing about the entry changes here, so there is no commit to wait for.

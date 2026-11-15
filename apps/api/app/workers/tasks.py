@@ -80,6 +80,7 @@ async def _scan_diary(
     from app.core.dependencies import get_redis
     from app.models import Diary, OAuthToken, ScanJob, ScanRun, User
     from app.services.calendar_connection import calendar_state
+    from app.services.read_only import is_diary_read_only
     from app.workers.calendar_sync import sync_calendar
     from app.workers.token_refresh import ensure_fresh_access_token
     from app.workers.utils import db_session
@@ -104,6 +105,10 @@ async def _scan_diary(
             )
             diary = result.scalar_one_or_none()
             if diary is None or not diary.scan_enabled:
+                return
+
+            if await is_diary_read_only(db, diary):
+                log.info("diary_read_only_skip", diary_id=diary_id_str, where="scan")
                 return
 
             owner_deleted_at = (
@@ -703,10 +708,13 @@ def generate_entry_draft(self, entry_id: str, trigger: str = "background") -> No
 
     Tasks queued before 25.3 carry no trigger and run as background redrafts.
     """
-    run_sync(_generate_entry_draft(entry_id, trigger))
+    # The task id keys the AI-draft reservation, so a redelivery never spends twice.
+    run_sync(_generate_entry_draft(entry_id, trigger, reservation_key=self.request.id))
 
 
-async def _generate_entry_draft(entry_id_str: str, trigger: str = "background") -> None:
+async def _generate_entry_draft(
+    entry_id_str: str, trigger: str = "background", *, reservation_key: str | None = None
+) -> None:
     from app.services.entry_location import update_place_and_weather
     from app.workers.llm import generate_draft_for_entry
     from app.workers.utils import db_session
@@ -727,7 +735,7 @@ async def _generate_entry_draft(entry_id_str: str, trigger: str = "background") 
             entry_id=entry_id_str,
             error=str(exc),
         )
-    await generate_draft_for_entry(entry_uuid, trigger=why)
+    await generate_draft_for_entry(entry_uuid, trigger=why, reservation_key=reservation_key)
 
 
 # ---------------------------------------------------------------------------
@@ -868,6 +876,7 @@ async def _backfill_diary(backfill_run_id_str: str) -> None:
     from sqlalchemy import select
 
     from app.models import BackfillRun, Diary, OAuthToken
+    from app.services.read_only import is_diary_read_only
     from app.workers.backfill import BackfillLocked, ingest_failures_message, run_backfill
     from app.workers.token_refresh import ensure_fresh_access_token
     from app.workers.utils import db_session
@@ -885,6 +894,12 @@ async def _backfill_diary(backfill_run_id_str: str) -> None:
         )
         diary = diary_result.scalar_one_or_none()
         if diary is None:
+            return
+
+        if await is_diary_read_only(db, diary):
+            log.info(
+                "diary_read_only_skip", diary_id=str(diary.id), where="backfill"
+            )
             return
 
         token_result = await db.execute(

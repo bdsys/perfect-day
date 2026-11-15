@@ -254,3 +254,25 @@ it('a double tap on Try again while every slot is busy uploads the photo once', 
   expect(screen.queryByRole('alert')).toBeNull()
   expect(screen.getAllByText('Added')).toHaveLength(4)
 })
+
+describe('room', () => {
+  it('with room 1 the file input takes one file', async () => {
+    render(<AddPhotos entry={entry()} onChanged={jest.fn()} room={1} />)
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /add photos/i })) })
+    expect(input()).not.toHaveAttribute('multiple')
+  })
+
+  it('with room null the file input takes several', async () => {
+    render(<AddPhotos entry={entry()} onChanged={jest.fn()} room={null} />)
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /add photos/i })) })
+    expect(input()).toHaveAttribute('multiple')
+  })
+
+  it('with room 0 the controls are disabled and the photo note shows', () => {
+    render(<AddPhotos entry={entry()} onChanged={jest.fn()} room={0} />)
+    const btn = screen.getByRole('button', { name: /add photos/i })
+    expect(btn).toBeDisabled()
+    expect(screen.getByText('Free plan: 1 photo per entry.')).toBeInTheDocument()
+    expect(document.getElementById(btn.getAttribute('aria-describedby')!)).toHaveTextContent('Free plan: 1 photo per entry.')
+  })
+})

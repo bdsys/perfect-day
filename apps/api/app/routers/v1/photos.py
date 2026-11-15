@@ -25,7 +25,9 @@ from app.core.photo_crypto import (
 )
 from app.models import Diary, DiaryPermission, Entry, EntryPhoto, Photo, User
 from app.services.photo_ingest import UnsupportedPhoto, ingest_photo
+from app.services.photo_limits import ensure_photo_room
 from app.services.photos import MAX_BYTES, stream_object, strip_location
+from app.services.read_only import ensure_diary_writable
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["photos"])
@@ -293,6 +295,7 @@ async def attach_photo_to_entry(
 
     # require_editor=True rejects viewers with 403
     entry, diary, role = await _get_entry_or_404(entry_id, user, db, require_editor=True)
+    await ensure_diary_writable(db, diary)
 
     # Verify photo ownership and finalized
     result = await db.execute(
@@ -316,6 +319,10 @@ async def attach_photo_to_entry(
     )
     existing = existing_result.scalar_one_or_none()
     if existing is None:
+        # The plan is the diary owner's, whoever attaches.
+        owner = await db.get(User, diary.owner_user_id)
+        assert owner is not None
+        await ensure_photo_room(db, entry_id, owner)
         ep = EntryPhoto(entry_id=entry_id, photo_id=body.photo_id, position=body.position)
         db.add(ep)
         await db.flush()
@@ -345,6 +352,7 @@ async def detach_photo_from_entry(
     from app.routers.v1.entries import _get_entry_or_404
 
     entry, diary, role = await _get_entry_or_404(entry_id, user, db, require_editor=True)
+    await ensure_diary_writable(db, diary)
 
     result = await db.execute(
         select(EntryPhoto).where(

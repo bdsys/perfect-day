@@ -24,11 +24,13 @@ interface Props {
   copying?: boolean;
   /** An import was created; the page now tracks it. */
   onStarted: () => void;
+  /** True when the entry can take no more photos. */
+  disabled?: boolean;
 }
 
 type Phase = "loading" | "error" | "not_connected" | "ready";
 
-export function GooglePhotosPick({ entry, inFlight, copying = false, onStarted }: Props) {
+export function GooglePhotosPick({ entry, inFlight, copying = false, onStarted, disabled = false }: Props) {
   const [phase, setPhase] = useState<Phase>("loading");
   const [starting, setStarting] = useState(false);
   const startingRef = useRef(false);
@@ -160,7 +162,7 @@ export function GooglePhotosPick({ entry, inFlight, copying = false, onStarted }
 
   return (
     <div>
-      <button type="button" className="btn btn-secondary" onClick={start} disabled={starting}>
+      <button type="button" className="btn btn-secondary" onClick={start} disabled={starting || disabled}>
         Search Google Photos for {formatEntryDate(entry.entry_date)}
       </button>
       {error && <p role="alert" className="error-message">{error}</p>}

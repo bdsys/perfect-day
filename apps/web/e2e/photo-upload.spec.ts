@@ -1,6 +1,7 @@
 import { test, expect, request as playwrightRequest } from "@playwright/test";
 import path from "node:path";
 import fs from "node:fs";
+import { execFileSync } from "node:child_process";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 const email = "e2e-photos@example.com";
@@ -8,6 +9,18 @@ const password = "Password1!";
 const diaryName = "E2E Photos Diary";
 
 const FIXTURE = path.join(__dirname, "fixtures/sample.jpg");
+
+const REPO_ROOT = path.resolve(__dirname, "../../..");
+
+function sql(statement: string) {
+  execFileSync(
+    "docker",
+    ["compose", "-f", "docker-compose.yml", "-f", "docker-compose.test.yml", "exec", "-T",
+      "postgres", "psql", "-U", "perfectday", "-d", "perfectday_test", "-v", "ON_ERROR_STOP=1",
+      "-c", statement],
+    { cwd: REPO_ROOT, stdio: "pipe" },
+  );
+}
 
 const sharedState = {
   diaryId: "",
@@ -28,6 +41,9 @@ test.beforeAll(async () => {
   });
   const { access_token } = await loginRes.json();
   sharedState.token = access_token;
+
+  // Plus lifts the free plan's one-photo-per-entry cap; these tests attach several.
+  sql(`UPDATE users SET subscription_tier = 'plus' WHERE email = '${email}'`);
 
   // List diaries — reuse existing one if present
   const listRes = await ctx.get(`${API}/v1/diaries`, {
