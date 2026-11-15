@@ -13,6 +13,13 @@ Open findings from the whole-codebase review are tracked in [`code-review-2026-1
 
 ---
 
+### Tier enforcement follow-ups (item 18)
+**Flagged:** 2026-11-15.
+
+Fixes still owed (PoC item 18.1), Andrew's decisions after the build, deferred NUC performance items, and the backlog of minor findings are in [`tier-followups-2026-11.md`](tier-followups-2026-11.md).
+
+---
+
 ## Deferred by design (not a bug — captured so it's findable)
 
 ### Google Photos integration
