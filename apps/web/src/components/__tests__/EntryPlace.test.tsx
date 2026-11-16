@@ -1,6 +1,6 @@
 import { render, screen, fireEvent, act } from '@testing-library/react'
 import { EntryPlace } from '../EntryPlace'
-import { api, type Entry } from '../../lib/api'
+import { api, ApiError, type Entry } from '../../lib/api'
 
 jest.mock('../../lib/api', () => {
   const actual = jest.requireActual('../../lib/api')
@@ -72,5 +72,19 @@ describe('EntryPlace label for an unnamed place (TR-24)', () => {
       />,
     )
     expect(screen.getByTestId('entry-place')).toHaveTextContent(text)
+  })
+})
+
+describe('EntryPlace refused save', () => {
+  it('shows mapped copy for a tier_limit, never the raw code', async () => {
+    patch.mockReset()
+    patch.mockRejectedValue(new ApiError(403, 'tier_limit', 'tier_limit', { source: 'diary_read_only' }))
+    render(<EntryPlace entry={entry()} onUpdated={jest.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Edit location' }))
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Use automatic location' }))
+    })
+    expect(screen.getByText(/This diary is read-only/)).toBeInTheDocument()
+    expect(screen.queryByText(/tier_limit/)).toBeNull()
   })
 })

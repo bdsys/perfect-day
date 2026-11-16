@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError, type Entry } from "../lib/api";
+import { limitMessage } from "../lib/plan";
 import { navigateTo } from "../lib/navigate";
 import { useResetOnBfcacheRestore } from "../lib/useResetOnBfcacheRestore";
 
@@ -114,7 +115,7 @@ export function GooglePhotosPick({ entry, inFlight, copying = false, onStarted, 
         } else if (e instanceof ApiError && e.status === 503) {
           setError("Google Photos isn't responding. Try again in a minute.");
         } else {
-          setError("Couldn't start Google Photos.");
+          setError(limitMessage(e) ?? "Couldn't start Google Photos.");
         }
       } finally {
         startingRef.current = false;

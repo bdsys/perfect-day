@@ -4,6 +4,7 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { api, ApiError } from '@/lib/api'
+import { limitMessage } from '@/lib/plan'
 import { useAuth } from '@/lib/auth-context'
 import { DiaryForm, type DiaryFormValues } from '@/components/DiaryForm'
 
@@ -28,10 +29,10 @@ export default function NewDiaryPage() {
       const diary = await api.diaries.create(values)
       router.push(`/diaries/${diary.id}`)
     } catch (e: unknown) {
-      if (e instanceof ApiError && e.code === 'tier_limit') {
+      if (e instanceof ApiError && e.code === 'tier_limit' && e.details?.source === 'diary') {
         setTierLimitError(true)
       } else {
-        setError(e instanceof Error ? e.message : 'Failed to create diary')
+        setError(limitMessage(e) ?? (e instanceof Error ? e.message : 'Failed to create diary'))
       }
       setSaving(false)
     }

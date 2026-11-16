@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
 import { api, ApiError, type Rule } from '@/lib/api'
+import { limitMessage } from '@/lib/plan'
 import { useAuth } from '@/lib/auth-context'
 
 export default function RulesListPage() {
@@ -71,7 +72,7 @@ export default function RulesListPage() {
       setApplySuccess(rule.id)
       setTimeout(() => setApplySuccess(null), 4000)
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to apply rule')
+      setError(limitMessage(e) ?? (e instanceof Error ? e.message : 'Failed to apply rule'))
     } finally {
       setApplying(null)
     }

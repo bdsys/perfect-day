@@ -85,7 +85,7 @@ export default function EntryRestorePage() {
 
         {readOnly && (
           <div className="error-message" style={{ marginBottom: '1rem' }}>
-            {readOnlyBanner(diary?.plan?.plan_name ?? 'Free')}{' '}
+            {readOnlyBanner(diary?.plan?.plan_name ?? null)}{' '}
             <Link href="/plans" style={{ textDecoration: 'underline' }}>Upgrade now</Link>
           </div>
         )}

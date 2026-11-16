@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { api, type Entry, type GeocodeResult } from '@/lib/api'
+import { limitMessage } from '@/lib/plan'
 import { OpenMeteoCredit } from './OpenMeteoCredit'
 import { PlaceSearch } from './PlaceSearch'
 
@@ -73,7 +74,7 @@ export function EntryPlace({ entry, onUpdated }: Props) {
       setEditingPlace(false)
       setCatchUpRound((n) => n + 1)
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Could not save')
+      setError(limitMessage(e) ?? (e instanceof Error ? e.message : 'Could not save'))
     } finally {
       setBusy(false)
     }

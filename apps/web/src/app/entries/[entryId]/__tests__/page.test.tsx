@@ -9,7 +9,7 @@ jest.mock('@/lib/api', () => {
   return {
     ...actual,
     api: {
-      entries: { get: jest.fn(), regenerate: jest.fn(), publish: jest.fn() },
+      entries: { get: jest.fn(), regenerate: jest.fn(), publish: jest.fn(), acceptSuggestion: jest.fn() },
       photoImports: { listForEntry: jest.fn(), create: jest.fn(), cancel: jest.fn(), dismiss: jest.fn() },
       integrations: { list: jest.fn(), getGoogleAuthUrl: jest.fn() },
       photos: { detachFromEntry: jest.fn(), list: jest.fn() },
@@ -102,7 +102,7 @@ describe('entry page: Google import notice in Edit mode', () => {
 
 const freePlan = (over: Partial<OwnerPlan> = {}): OwnerPlan => ({
   tier: 'free', plan_name: 'Free', ai_drafts_limit: 5, ai_drafts_left: 3, resets_on: '2026-12-01',
-  photos_per_entry: 1, read_only: false, ...over,
+  photos_per_entry: 1, read_only: false, backfill: false, scan_past_days_max: 90, ...over,
 })
 const withPlan = (plan: OwnerPlan | null, over: Partial<Entry> = {}): Entry =>
   ({ ...entry([]), plan, ...over }) as Entry
@@ -181,5 +181,37 @@ describe('entry page: plan limits', () => {
     await screen.findByRole('button', { name: 'Unpublish' })
     expect(screen.getByRole('button', { name: /AI drafts: 0 of 5 left/ })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /regenerate with ai/i })).toBeDisabled()
+  })
+
+  it('a regenerate refused as diary_read_only shows the read-only copy, not the AI note', async () => {
+    get.mockResolvedValue(withPlan(freePlan(), { events: [{ id: 'ev' }] as never }))
+    ;(api.entries.regenerate as jest.Mock).mockRejectedValue(
+      new ApiError(403, 'tier_limit', 'tier_limit', { source: 'diary_read_only' }),
+    )
+    render(<EntryDetailPage />)
+    fireEvent.click(await screen.findByRole('button', { name: /regenerate with ai/i }))
+    expect(await screen.findByText(/This diary is read-only on the Free plan/)).toBeInTheDocument()
+    expect(screen.queryByText(/No AI drafts left/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/tier_limit/)).not.toBeInTheDocument()
+  })
+
+  it('a refused suggestion accept shows mapped copy, never the raw code', async () => {
+    const suggestion = { title: 'S', body_markdown: 'New', flagged_tokens: [], body_source: 'llm', created_at: '2026-05-16T00:00:00Z' }
+    get.mockResolvedValue(withPlan(freePlan(), { suggestion: suggestion as never }))
+    ;(api.entries.acceptSuggestion as jest.Mock).mockRejectedValue(
+      new ApiError(403, 'tier_limit', 'tier_limit', { source: 'diary_read_only' }),
+    )
+    render(<EntryDetailPage />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Accept' }))
+    expect((await screen.findAllByText(/This diary is read-only on the Free plan/)).length).toBeGreaterThan(0)
+    expect(screen.queryByText(/tier_limit/)).toBeNull()
+  })
+
+  it('the AI detail text uses " · resets", like the badge', async () => {
+    get.mockResolvedValue(withPlan(freePlan()))
+    render(<EntryDetailPage />)
+    fireEvent.click(await screen.findByRole('button', { name: /AI drafts: 3 of 5 left/ }))
+    expect(screen.getByText('3 of 5 left · resets Dec 1')).toBeInTheDocument()
+    expect(screen.queryByText(/, resets/)).toBeNull()
   })
 })

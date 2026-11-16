@@ -11,7 +11,7 @@ import { formatDateRange } from '@/lib/date'
 import { navigateTo } from '@/lib/navigate'
 import { useResetOnBfcacheRestore } from '@/lib/useResetOnBfcacheRestore'
 import PlanBadge from '@/components/PlanBadge'
-import { formatResetDate, readOnlyBanner } from '@/lib/plan'
+import { formatResetDate, limitMessage, readOnlyBanner } from '@/lib/plan'
 
 // Must match the API's default page size for GET /v1/diaries/{id}/entries.
 const ENTRIES_PAGE_SIZE = 20
@@ -156,7 +156,7 @@ export default function DiaryDetailPage() {
         setPollingScan(true)
       }
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Scan failed')
+      setError(limitMessage(e, diary?.plan) ?? (e instanceof Error ? e.message : 'Scan failed'))
     }
   }
 
@@ -169,7 +169,7 @@ export default function DiaryDetailPage() {
         setPollingScan(true)
       }
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Scan failed')
+      setError(limitMessage(e, diary?.plan) ?? (e instanceof Error ? e.message : 'Scan failed'))
     }
   }
 
@@ -194,7 +194,7 @@ export default function DiaryDetailPage() {
       pollFailuresRef.current = 0
       setPollingBackfill(true)
     } catch (e: unknown) {
-      setBackfillError(e instanceof Error ? e.message : 'Backfill failed')
+      setBackfillError(limitMessage(e, diary?.plan) ?? (e instanceof Error ? e.message : 'Backfill failed'))
     }
   }
 
@@ -294,7 +294,7 @@ export default function DiaryDetailPage() {
     } catch (e: unknown) {
       connectingRef.current = false
       setConnecting(false)
-      setError(e instanceof Error ? e.message : 'Failed to get auth URL')
+      setError(limitMessage(e, diary?.plan) ?? (e instanceof Error ? e.message : 'Failed to get auth URL'))
     }
   }
 
@@ -321,7 +321,7 @@ export default function DiaryDetailPage() {
       })
       router.push(`/entries/${entry.id}`)
     } catch (e: unknown) {
-      setNewEntryError(e instanceof Error ? e.message : 'Failed to create entry')
+      setNewEntryError(limitMessage(e, diary?.plan) ?? (e instanceof Error ? e.message : 'Failed to create entry'))
       setCreating(false)
     }
   }
@@ -376,7 +376,7 @@ export default function DiaryDetailPage() {
               details={[
                 {
                   label: 'AI drafts',
-                  text: `${diary.plan.ai_drafts_left ?? 0} of ${diary.plan.ai_drafts_limit} left, resets ${formatResetDate(diary.plan.resets_on)}`,
+                  text: `${diary.plan.ai_drafts_left ?? 0} of ${diary.plan.ai_drafts_limit} left · resets ${formatResetDate(diary.plan.resets_on)}`,
                 },
                 {
                   label: 'Photos per entry',

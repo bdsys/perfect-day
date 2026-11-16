@@ -175,6 +175,10 @@ export interface OwnerPlan {
   resets_on: string
   photos_per_entry: number | null
   read_only: boolean
+  /** Backfill is on this plan */
+  backfill: boolean
+  /** Furthest back a scan may look, in days; null = no limit */
+  scan_past_days_max: number | null
 }
 
 /** The caller's own plan and usage, from GET /v1/auth/me/plan. null = unlimited. */
@@ -189,6 +193,8 @@ export interface MyPlan {
   resets_on: string
   photos_per_entry: number | null
   read_only_diary_ids: string[]
+  backfill: boolean
+  scan_past_days_max: number | null
 }
 
 export interface Diary {

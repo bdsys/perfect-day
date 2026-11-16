@@ -24,7 +24,7 @@ jest.mock('next/navigation', () => {
 const plan = (tier: string, planName: string, limit: number) => ({
   tier, plan_name: planName, diaries_limit: limit, diaries_used: limit, ai_drafts_limit: null,
   ai_drafts_used: 0, ai_drafts_left: null, resets_on: '2026-12-01', photos_per_entry: null,
-  read_only_diary_ids: [],
+  read_only_diary_ids: [], backfill: false, scan_past_days_max: 90,
 }) as MyPlan
 
 beforeEach(() => {
@@ -47,4 +47,14 @@ it.each([
   expect(screen.getByRole('link', { name: 'Upgrade now' })).toHaveAttribute('href', '/plans')
   expect(screen.queryByText(/free-tier/)).not.toBeInTheDocument()
   expect(document.querySelector('a[href="/account/upgrade"]')).toBeNull()
+})
+
+it('a diary-limit restore error with a failed plan lookup says "Your plan", not Free', async () => {
+  ;(api.auth.myPlan as jest.Mock).mockRejectedValue(new Error('down'))
+  ;(api.diaries.restore as jest.Mock).mockRejectedValue(
+    new ApiError(403, 'limit', 'tier_limit', { source: 'diary', limit: 1, current: 1 }),
+  )
+  render(<DiaryRestorePage />)
+  fireEvent.click(await screen.findByRole('button', { name: /restore/i }))
+  expect(await screen.findByText('Your plan: 1 diary.')).toBeInTheDocument()
 })

@@ -1,6 +1,6 @@
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import DiaryDetailPage from '../page'
-import { api, type BackfillRun, type ScanRun } from '@/lib/api'
+import { api, ApiError, type BackfillRun, type ScanRun } from '@/lib/api'
 import { navigateTo } from '@/lib/navigate'
 
 jest.mock('@/lib/navigate', () => ({ navigateTo: jest.fn() }))
@@ -256,5 +256,54 @@ describe('diary page: read-only plan', () => {
     render(<DiaryDetailPage />)
     expect(await screen.findByRole('link', { name: 'Settings' })).toBeInTheDocument()
     expect(screen.queryByText(/AI drafts:/)).not.toBeInTheDocument()
+  })
+})
+
+describe('diary page: plan copy', () => {
+  const freeDiary = {
+    id: 'diary-1', name: 'Emma diary',
+    plan: { tier: 'free', plan_name: 'Free', ai_drafts_limit: 5, ai_drafts_left: 2, resets_on: '2026-12-01', photos_per_entry: 1, read_only: false, backfill: false, scan_past_days_max: 90 },
+  }
+
+  it('the AI detail text uses " · resets", like the badge', async () => {
+    ;(api.diaries.get as jest.Mock).mockResolvedValue(freeDiary)
+    ;(api.entries.list as jest.Mock).mockResolvedValue([])
+    ;(api.integrations.list as jest.Mock).mockResolvedValue([])
+    render(<DiaryDetailPage />)
+    fireEvent.click(await screen.findByRole('button', { name: /AI drafts: 2 of 5 left/ }))
+    expect(screen.getByText('2 of 5 left · resets Dec 1')).toBeInTheDocument()
+    expect(screen.queryByText(/, resets/)).toBeNull()
+  })
+
+  it('a backfill refused with source backfill shows the plan copy, not the raw code', async () => {
+    ;(api.diaries.get as jest.Mock).mockResolvedValue(freeDiary)
+    ;(api.entries.list as jest.Mock).mockResolvedValue([])
+    ;(api.integrations.list as jest.Mock).mockResolvedValue([])
+    ;(api.diaries.triggerBackfill as jest.Mock).mockRejectedValue(
+      new ApiError(403, 'tier_limit', 'tier_limit', { source: 'backfill' }),
+    )
+    render(<DiaryDetailPage />)
+    const open = await screen.findByRole('button', { name: 'Backfill' })
+    await waitFor(() => expect(open).not.toBeDisabled())
+    fireEvent.click(open)
+    fireEvent.change(screen.getByLabelText('From date'), { target: { value: '2026-05-01' } })
+    fireEvent.change(screen.getByLabelText('To date'), { target: { value: '2026-05-14' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Start backfill' }))
+    expect(await screen.findByText('Backfill is on Plus and Family. Free scans look back 90 days.')).toBeInTheDocument()
+    expect(screen.queryByText(/tier_limit/)).toBeNull()
+  })
+
+  it('a scan refused with source backfill shows the plan copy', async () => {
+    ;(api.diaries.get as jest.Mock).mockResolvedValue(freeDiary)
+    ;(api.entries.list as jest.Mock).mockResolvedValue([])
+    ;(api.integrations.list as jest.Mock).mockResolvedValue([])
+    ;(api.diaries.triggerScan as jest.Mock).mockRejectedValue(
+      new ApiError(403, 'tier_limit', 'tier_limit', { source: 'backfill' }),
+    )
+    render(<DiaryDetailPage />)
+    const scan = await screen.findByRole('button', { name: 'Scan now' })
+    await waitFor(() => expect(scan).not.toBeDisabled())
+    fireEvent.click(scan)
+    expect(await screen.findByText('Backfill is on Plus and Family. Free scans look back 90 days.')).toBeInTheDocument()
   })
 })
