@@ -226,3 +226,32 @@ describe('entry page: plan limits', () => {
     expect(screen.queryByText(/, resets/)).toBeNull()
   })
 })
+
+describe('entry page: event moved or removed note', () => {
+  const NOTE = /The calendar event this entry was drafted from was moved or removed/
+
+  beforeEach(() => {
+    ;(api.integrations.list as jest.Mock).mockResolvedValue([])
+    listForEntry.mockResolvedValue([])
+  })
+
+  it('shows on an untouched rule draft with no events left', async () => {
+    get.mockResolvedValue({ ...entry([{ id: 'p1' }]), creation_source: 'rule' })
+    render(<EntryDetailPage />)
+    expect(await screen.findByText(NOTE)).toBeInTheDocument()
+  })
+
+  it('is not shown to someone who cannot edit the entry', async () => {
+    get.mockResolvedValue({ ...entry([]), creation_source: 'rule', can_edit: false })
+    render(<EntryDetailPage />)
+    await screen.findByText('Body')
+    expect(screen.queryByText(NOTE)).toBeNull()
+  })
+
+  it('is not shown once the parent has edited the text', async () => {
+    get.mockResolvedValue({ ...entry([]), creation_source: 'calendar_pick', body_source: 'user' })
+    render(<EntryDetailPage />)
+    await screen.findByText('Body')
+    expect(screen.queryByText(NOTE)).toBeNull()
+  })
+})

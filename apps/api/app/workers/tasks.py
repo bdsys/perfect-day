@@ -475,6 +475,9 @@ async def _cancel_calendar_event(external_id: str, diary_id: str) -> None:
 async def _release_from_untouched_draft(db, event) -> uuid.UUID | None:
     """Detach *event* from its entry if that entry is an untouched rule-created draft.
 
+    A draft the parent has added photos to is kept: the event is still detached, so
+    it gets its own entry at its new time, but the old entry and its photos stay.
+
     Returns the id of an entry that needs redrafting, as release_event_from_entry does.
     """
     from sqlalchemy import select
@@ -489,7 +492,7 @@ async def _release_from_untouched_draft(db, event) -> uuid.UUID | None:
     ).scalar_one_or_none()
     if entry is None or not is_untouched_rule_draft(entry):
         return None
-    return await release_event_from_entry(db, event)
+    return await release_event_from_entry(db, event, photos_count_as_touched=True)
 
 
 def _has_ended(ends_at: datetime | None) -> bool:

@@ -21,6 +21,7 @@ import { googleStatusMessage } from '@/lib/googleStatus'
 import PlanBadge from '@/components/PlanBadge'
 import LimitNote from '@/components/LimitNote'
 import { aiEntryNote, aiLimitNote, formatResetDate, limitMessage, readOnlyBanner } from '@/lib/plan'
+import { EVENT_REMOVED_NOTE, showEventRemovedNote } from '@/lib/entryNotes'
 
 function planDetails(plan: OwnerPlan & { ai_drafts_limit: number }) {
   return [
@@ -427,6 +428,8 @@ function EntryDetailPageInner() {
                 Generated from calendar events — LLM draft was not available. Edit or regenerate.
               </p>
             )}
+
+            {showEventRemovedNote(entry) && <LimitNote>{EVENT_REMOVED_NOTE}</LimitNote>}
 
             {entry.status === 'draft' && entry.flagged_tokens && entry.flagged_tokens.length > 0 && (
               <div style={{
