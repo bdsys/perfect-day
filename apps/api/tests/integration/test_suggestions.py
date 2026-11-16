@@ -461,14 +461,20 @@ class TestSpanningRegroup:
             db_session, str(entry_id), body_markdown="Our trip so far", body_source="user"
         )
 
-        with patch.object(worker_tasks.generate_entry_draft, "delay", new=MagicMock()) as delay:
+        # Joining an existing entry is a redraft, so it goes through the 10-minute
+        # coalescing (queue_redraft), not an immediate .delay.
+        with (
+            patch.object(worker_tasks.generate_entry_draft, "delay", new=MagicMock()) as delay,
+            patch.object(worker_tasks, "queue_redraft", new=AsyncMock()) as redraft,
+        ):
             await evaluate_event_against_rules(str(second.id), str(diary.id), db_session)
-        assert delay.call_count == 1
+        delay.assert_not_called()
+        redraft.assert_awaited_once_with(entry_id)
         async with _fake_model(
             db_url, _provider(_reply("Our trip: a flight out, then dinner.", facts=[1, 2]))
         ):
-            queued = delay.call_args
-            await worker_tasks._generate_entry_draft(*queued.args, **queued.kwargs)
+            # What the delayed task runs once the window closes.
+            await worker_tasks._generate_entry_draft(str(entry_id), coalesced=True)
 
         after = await _reload(db_session, entry_id)
         assert after.body_markdown == "Our trip so far"

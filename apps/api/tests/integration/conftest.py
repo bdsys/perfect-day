@@ -37,6 +37,39 @@ def redis_container():
         yield r
 
 
+@pytest.fixture(scope="session", autouse=True)
+def isolate_redis(redis_container):
+    """Point every integration test at the test Redis, never at localhost:6379.
+
+    A developer's `make up` stack publishes Redis on 127.0.0.1:6379. Worker code
+    called without the `client` fixture would otherwise reach it: redraft keys and
+    real Celery tasks leaked into the dev queue, and a test's result depended on
+    whether that stack happened to be running.
+    """
+    from app.core.config import get_settings
+    from app.workers.celery_app import celery_app
+
+    redis_url = (
+        f"redis://{redis_container.get_container_host_ip()}"
+        f":{redis_container.get_exposed_port(6379)}/0"
+    )
+    overrides = {
+        "REDIS_URL": redis_url,
+        "CELERY_BROKER_URL": redis_url,
+        "CELERY_RESULT_BACKEND": redis_url,
+    }
+    saved = (celery_app.conf.broker_url, celery_app.conf.result_backend)
+    with patch.dict(os.environ, overrides):
+        get_settings.cache_clear()
+        celery_app.conf.broker_url = redis_url
+        celery_app.conf.result_backend = redis_url
+        try:
+            yield redis_url
+        finally:
+            celery_app.conf.broker_url, celery_app.conf.result_backend = saved
+            get_settings.cache_clear()
+
+
 @pytest.fixture(scope="session")
 def minio_container():
     with MinioContainer(image=MINIO_TEST_IMAGE) as m:
