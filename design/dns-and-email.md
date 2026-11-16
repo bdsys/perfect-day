@@ -4,29 +4,33 @@
 
 | Subdomain | Purpose |
 |---|---|
-| `perfectday.andrewlass.com` | Main web app and API |
-| `perfectday-media.andrewlass.com` | MinIO upload endpoint — PUT-only (signed URLs), edge proxy restricts |
+| `perfectday.andrewlass.com` | Web app |
+| `perfectday-api.andrewlass.com` | API |
+| `perfectday-media.andrewlass.com` | Reserved for photo links; no route yet (P-10) |
+
+Every public name has exactly one label before `andrewlass.com`: Cloudflare's free Universal SSL covers only the apex and first-level subdomains (P-9). Current setup: [`deploy/cloudflare.md`](../deploy/cloudflare.md).
 | `andrewlass.com` | Apex domain — controls email identity (SPF/DKIM/DMARC) |
 
 ## DNS records
 
 ### A/AAAA
 
-Both subdomains point to the NUC public IP (or cloud LB when deployed to cloud).
+All three names point to the NUC public IP (or cloud LB when deployed to cloud), proxied through Cloudflare.
 
-| Name | Type | Value | TTL |
-|---|---|---|---|
-| `perfectday.andrewlass.com` | A | `<NUC public IP>` | 300 (PoC) → 3600 (post-launch) |
-| `perfectday-media.andrewlass.com` | A | `<NUC public IP>` | 300 (PoC) → 3600 (post-launch) |
+| Name | Type | Value | Proxy | TTL |
+|---|---|---|---|---|
+| `perfectday.andrewlass.com` | A | `<NUC public IP>` | Proxied | Auto |
+| `perfectday-api.andrewlass.com` | A | `<NUC public IP>` | Proxied | Auto |
+| `perfectday-media.andrewlass.com` | A | `<NUC public IP>` | Proxied | Auto |
 
-Low TTL (300s) during PoC for easy IP changes. Raise to 3600s before public launch to reduce resolver load.
+Proxied records always use TTL Auto (300 s); Cloudflare does not allow changing it (<https://developers.cloudflare.com/dns/proxy-status/>).
 
 ### TLS
 
 Two separate TLS hops are used in the NUC deployment:
 
 - **Browser ↔ Cloudflare:** Cloudflare Universal SSL (browser-trusted, auto-renewed by CF).
-- **Cloudflare ↔ FortiGate:** Cloudflare Origin Certificate (multi-SAN covering all three subdomains, 15-year validity, signed by Cloudflare's private CA). Installed on FortiGate — private key generated on FortiGate via CSR, never exported. See [`deploy/cloudflare.md` § Cloudflare Origin Certificate setup](../deploy/cloudflare.md).
+- **Cloudflare ↔ FortiGate:** Cloudflare Origin Certificate for `*.andrewlass.com, andrewlass.com`, signed by Cloudflare's private CA, **expires 2027-11-16** (Cloudflare sends no expiry notice). Installed on FortiGate; private key generated on FortiGate via CSR, never exported. See [`deploy/cloudflare.md` § Section 4](../deploy/cloudflare.md#section-4--origin-certificate-nuc-deployment).
 - **Cloud:** provider-native cert manager or Cloudflare's automatic TLS.
 
 Certificate expiry is a page-level alert in `design/observability.md`. Renewal failure must be caught before expiry, not after.
@@ -187,5 +191,5 @@ check (covered in `design/observability.md`) that resolves
    not always, returns a different IP).
 3. Within 10 minutes, the Cloudflare dashboard A record should match `curl https://api.ipify.org`
    from the NUC. `dig +short perfectday.andrewlass.com` will return CF anycast IPs — that is correct.
-4. `curl -I https://perfectday.andrewlass.com/healthz` returns 200 from
+4. `curl -s https://perfectday-api.andrewlass.com/readyz` returns 200 from
    off-network (mobile hotspot).

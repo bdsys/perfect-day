@@ -13,7 +13,7 @@ This document captures guidance specific to deploying Perfect Day on the home-la
 ## Edge
 
 - **Cloudflare proxy (orange cloud):** public-facing TLS (browser ↔ CF) via Cloudflare Universal SSL — auto-renewed by CF, no operator action needed.
-- **FortiGate 7.2+:** CF↔origin TLS termination via a Cloudflare Origin Certificate, WAF/IPS, virtual hosting. Forwards plain HTTP to NUC on the LAN.
+- **FortiGate 7.2+:** CF↔origin TLS termination via a Cloudflare Origin Certificate, IPS and antivirus (policy 35's profiles; no WAF profile today). Forwards plain HTTP to NUC on the LAN.
 - One Cloudflare Origin Certificate for `*.andrewlass.com, andrewlass.com`, generated via CSR on FortiGate (private key never leaves the device). **Expires 2027-11-16**; see § FortiGate Virtual Server setup, Step 1.
 - Planned, not built: a FortiGate WAF rule so `perfectday-media` accepts PUT only (uploads). Depends on P-10.
 - CORS allowlist on the API for the web origin; Expo dev tunnel allowed only when `ENV=dev`
@@ -111,6 +111,7 @@ The zone mode is zone-wide; do not change it, because other `andrewlass.com` sit
 | Health check | `perfectday-caddy-tcp` |
 | Virtual server (VIP) | `perfectday-https-cf-origin` |
 | Firewall policy | 35, `perfectday-https-cf-origin` |
+| SSL/SSH inspection profile on the policy | `perfectday-cf-origin` (contents not reviewed) |
 
 ---
 
@@ -173,8 +174,9 @@ A TCP check only proves Caddy accepts connections on port 80. The earlier HTTP c
 had no healthy server and Cloudflare returned 522. The likely cause, not yet confirmed from
 Caddy's log: if the FortiGate's probe is HTTP/1.1 without a `Host` header, Caddy (Go's HTTP server)
 answers `400 Bad Request: missing required Host header` before any route runs, so no Caddyfile
-route can fix it. To confirm, on the NUC:
-`docker compose logs edge --since 15m | grep healthz | tail -3`.
+route can fix it. Caddy's access log will not show such a request, so confirm it on the
+FortiGate with a short capture of the probe and Caddy's reply:
+`diagnose sniffer packet any 'host <NUC_LAN_IP> and port 80' 6 10`.
 
 ---
 
@@ -203,11 +205,18 @@ end
 One real server on port 80: the FortiGate forwards decrypted HTTP to Caddy, and Caddy routes by
 `Host`.
 
-> **Only one VIP may own WAN:443.** On 2026-11-16 three VIPs claimed it: this one, a plain
-> port-forward (`perfectday-nuc`, WAN:443 → NUC:80) and `blacknight-ssl-offload`. Policy 35 used
-> the port-forward, so Cloudflare's TLS hello reached Caddy's plain-HTTP port and Cloudflare
-> returned 525. Forum reports say two TLS-terminating VIPs cannot share one IP and port, and a
-> VIP takes one certificate
+> **Open risk: `extip` is the WAN IP, which Comcast can change.** DDNS updates the DNS records,
+> but not this VIP, so after a lease change Cloudflare would reach the new IP and no VIP would
+> match. Whether a server-load-balance VIP accepts `0.0.0.0` (any address on `wan1`) is not
+> confirmed. Until it is, update `extip` after an IP change.
+
+> **Watch for other VIPs on WAN:443.** On 2026-11-16 three VIPs claimed it: this one, a plain
+> port-forward (`perfectday-nuc`, WAN:443 → NUC:80) and `blacknight-ssl-offload` (another
+> service). Policy 35 used the port-forward, so Cloudflare's TLS hello reached Caddy's
+> plain-HTTP port and Cloudflare returned 525. After policy 35 was pointed at this VIP, the site
+> worked with `blacknight-ssl-offload` still defined; which VIP wins when several share an IP and
+> port, and whether an unused one can interfere, is not established. Forum reports say two
+> TLS-terminating VIPs cannot share one IP and port, and a VIP takes one certificate
 > ([Fortinet community](https://community.fortinet.com/t5/Support-Forum/Two-services-with-same-port/m-p/91360),
 > [SNI thread](https://community.fortinet.com/t5/Support-Forum/Fortigate-SSL-Offloading-with-SNI/td-p/252027));
 > this is not in Fortinet's documentation. Delete the port-forward VIP. If another service must
@@ -267,7 +276,9 @@ openssl s_client -connect perfectday.andrewlass.com:443 -servername perfectday.a
   </dev/null 2>/dev/null | openssl x509 -noout -issuer -ext subjectAltName
 # Expect: Google Trust Services (or Let's Encrypt); DNS:andrewlass.com, DNS:*.andrewlass.com
 
-# The origin certificate (from the LAN; the FortiGate loops the request back):
+# The next two checks connect straight to the WAN IP. Run them from off-network (e.g. a phone
+# hotspot): from the LAN, a hairpin path may use a different policy than Cloudflare's traffic.
+# The origin certificate:
 openssl s_client -connect <WAN_IP>:443 -servername perfectday.andrewlass.com \
   </dev/null 2>/dev/null | openssl x509 -noout -issuer -ext subjectAltName -enddate
 # Expect: CloudFlare Origin SSL Certificate Authority; DNS:*.andrewlass.com, DNS:andrewlass.com

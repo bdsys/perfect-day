@@ -265,10 +265,11 @@ docker compose up -d cloudflare-ddns
 
 **Verify:**
 ```bash
-WAN_IP=$(curl -s https://api.ipify.org)
-DNS_IP=$(dig +short perfectday.andrewlass.com)
-[ "$WAN_IP" = "$DNS_IP" ] && echo "OK: DNS matches WAN" || echo "MISMATCH: WAN=$WAN_IP DNS=$DNS_IP"
-docker compose logs cloudflare-ddns --tail=20
+docker compose --profile nuc logs cloudflare-ddns --tail=20
+# Expect: updates or "unchanged" for perfectday, perfectday-api, perfectday-media.
+# The records are proxied, so `dig` returns Cloudflare's IPs, never the WAN IP. To check the
+# origin IP, compare each record's Content in the Cloudflare dashboard with
+# `curl -s https://api.ipify.org` on the NUC, and check the orange cloud is still on.
 ```
 
 ### B5 — FortiGate: virtual hosts and TLS certificates
@@ -277,14 +278,14 @@ docker compose logs cloudflare-ddns --tail=20
 
 Follow the procedure in [`deploy/nuc.md` → FortiGate Virtual Server setup](nuc.md#fortigate-virtual-server-setup). It covers:
 
-1. Generate a CSR on FortiGate and obtain a Cloudflare Origin Certificate (multi-SAN, 15-year validity)
-2. Create a single HTTPS Virtual Server on WAN:443 with one realserver → NUC:80 (Caddy edge), and bind an HTTP health-check monitor at the VIP level
-3. One firewall policy permitting inbound HTTPS from Cloudflare IP ranges only
+1. An Origin Certificate for `*.andrewlass.com, andrewlass.com` from a CSR generated on the FortiGate (the one in use expires 2027-11-16)
+2. A TCP health check, and a single HTTPS virtual server on WAN:443 with one real server → NUC:80 (Caddy edge)
+3. One proxy-mode firewall policy to that virtual server. Restricting it to Cloudflare's IP ranges is still an open item
 
 When complete, verify from off-network:
 ```bash
-curl -I https://perfectday.andrewlass.com/healthz       # Expect: 200 from Next.js
-curl -I https://perfectday-api.andrewlass.com/healthz   # Expect: 200 from FastAPI
+curl -sI https://perfectday.andrewlass.com/                 # Expect: the web app (200 or a redirect), not Caddy's "Not Found"
+curl -s  https://perfectday-api.andrewlass.com/readyz       # Expect: 200 from FastAPI
 dig +short perfectday.andrewlass.com                    # Expect: Cloudflare anycast IPs
 ```
 
@@ -299,8 +300,8 @@ docker compose --profile nuc up -d edge
 
 Verify Host-header routing from inside the NUC LAN:
 ```bash
-curl -sH "Host: perfectday.andrewlass.com" http://<NUC_LAN_IP>:80/healthz
-# Expect: 200 from Next.js
+curl -sI -H "Host: perfectday.andrewlass.com" http://<NUC_LAN_IP>:80/
+# Expect: the web app (200 or a redirect), not Caddy's "Not Found"
 
 curl -sH "Host: perfectday-api.andrewlass.com" http://<NUC_LAN_IP>:80/healthz
 # Expect: {"status":"ok"} from FastAPI
