@@ -33,18 +33,12 @@ def is_untouched_rule_draft(entry: Entry) -> bool:
 
 
 def is_untouched_auto_draft(entry: Entry) -> bool:
-    """True for a rule or calendar-pick draft nobody has written in.
-
-    That is text the AI wrote, or a draft that is still empty.
-    """
+    """True for a rule or calendar-pick draft whose text is still what the AI wrote (or nothing)."""
     return (
         entry.status == "draft"
         and entry.deleted_at is None
         and entry.creation_source in ("rule", "calendar_pick")
-        and (
-            entry.body_source in MACHINE_ONLY_BODY_SOURCES
-            or (entry.body_source is None and not (entry.body_markdown or "").strip())
-        )
+        and entry.body_source in MACHINE_ONLY_BODY_SOURCES
     )
 
 

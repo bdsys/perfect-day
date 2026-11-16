@@ -19,7 +19,9 @@ from tests.fixtures.factories import make_diary, make_event, make_user
 
 SOCCER_RULE = {
     "op": "AND",
-    "children": [{"field": "title", "op": "contains", "value": "Soccer", "case_sensitive": False}],
+    "children": [
+        {"field": "title", "op": "contains", "value": "Soccer", "case_sensitive": False}
+    ],
 }
 PER_INSTANCE = {"recurring": "per_instance", "multi_day": "per_day"}
 
@@ -44,10 +46,7 @@ async def _diary_with_rule(db: AsyncSession, timezone: str = "UTC") -> Diary:
     diary = await make_diary(db, owner=user, timezone=timezone)
     db.add(
         AutoCreationRule(
-            diary_id=diary.id,
-            name="Soccer",
-            enabled=True,
-            condition=SOCCER_RULE,
+            diary_id=diary.id, name="Soccer", enabled=True, condition=SOCCER_RULE,
             options=PER_INSTANCE,
         )
     )
@@ -58,9 +57,9 @@ async def _diary_with_rule(db: AsyncSession, timezone: str = "UTC") -> Diary:
 async def _event(db: AsyncSession, event_id: str) -> Event:
     return (
         await db.execute(
-            select(Event)
-            .where(Event.id == uuid.UUID(event_id))
-            .execution_options(populate_existing=True)
+            select(Event).where(Event.id == uuid.UUID(event_id)).execution_options(
+                populate_existing=True
+            )
         )
     ).scalar_one()
 
@@ -194,7 +193,7 @@ async def _attached(
     diary: Diary,
     *,
     external_id: str = "evt-1",
-    body_source: str | None = "llm",
+    body_source: str = "llm",
     body: str = "Practice ran from ten until eleven.",
     status: str = "draft",
     creation_source: str = "rule",
@@ -331,7 +330,7 @@ class TestCancellation:
 
         diary = await _diary_with_rule(db_session)
         entry, _ = await _attached(
-            db_session, diary, creation_source="calendar_pick", body_source=None, body=""
+            db_session, diary, creation_source="calendar_pick", body=""
         )
 
         with (
@@ -341,6 +340,28 @@ class TestCancellation:
             await _cancel_calendar_event("evt-1", str(diary.id))
 
         assert (await _entry_row(db_session, entry.id)).deleted_at is not None
+        draft.delay.assert_not_called()
+        redraft.assert_not_awaited()
+
+    async def test_cancelled_published_calendar_pick_kept(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
+        from app.workers.tasks import _cancel_calendar_event
+
+        diary = await _diary_with_rule(db_session)
+        entry, _ = await _attached(
+            db_session, diary, creation_source="calendar_pick", status="published"
+        )
+
+        with (
+            patch("app.workers.tasks.generate_entry_draft") as draft,
+            patch("app.workers.tasks.queue_redraft", AsyncMock()) as redraft,
+        ):
+            await _cancel_calendar_event("evt-1", str(diary.id))
+
+        row = await _entry_row(db_session, entry.id)
+        assert (row.deleted_at, row.status) == (None, "published")
+        assert row.body_markdown == "Practice ran from ten until eleven."
         draft.delay.assert_not_called()
         redraft.assert_not_awaited()
 
