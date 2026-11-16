@@ -527,3 +527,20 @@ async def test_successful_draft_records_its_reservation_key(
     assert [g.reservation_key for g in gens if g.status == "success"] == ["k1"]
     spend = (await db_session.execute(select(AiDraftSpend))).scalar_one()
     assert spend.sweepable is True
+
+
+async def test_suggestion_records_its_reservation_key(
+    db_url: str, db_session: AsyncSession
+) -> None:
+    # A person's own text with events is a hybrid draft, which lands as a suggestion.
+    owner, entry = await _owner_with_entry(
+        db_session, body="We went to the park.", body_source="user"
+    )
+    await _run_draft(db_url, entry.id, _provider(), trigger="regenerate", reservation_key="k2")
+
+    reloaded = await _reload(db_session, entry.id)
+    assert reloaded.suggested_body_markdown is not None
+    gens = await _generations(db_session, entry.id)
+    assert [g.reservation_key for g in gens if g.status == "success"] == ["k2"]
+    spend = (await db_session.execute(select(AiDraftSpend))).scalar_one()
+    assert spend.sweepable is True
