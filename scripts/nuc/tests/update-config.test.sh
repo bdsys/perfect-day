@@ -29,7 +29,7 @@ NEXT_PUBLIC_API_URL=https://api.diary.perfectday.andrewlass.com
 EOF
     chmod 600 "${WORK}/app.env"
     # The broken file seen on the NUC: a newline pasted inside the token string.
-    printf '{\n  "cloudflare": [\n    {\n      "authentication": { "api_token": "tok-123\n" },\n      "zone_id": "zone-abc",\n      "subdomains": ["diary.perfectday"],\n      "proxied": false\n    }\n  ],\n  "a": true\n}\n' > "${WORK}/ddns.json"
+    printf '{\n  "cloudflare": [\n    {\n      "authentication": { "api_token": "Tok0123456789abcdefghijklmnopqrstuvwxyzA\n" },\n      "zone_id": "abcdef0123456789abcdef0123456789",\n      "subdomains": ["diary.perfectday"],\n      "proxied": false\n    }\n  ],\n  "a": true\n}\n' > "${WORK}/ddns.json"
     chmod 600 "${WORK}/ddns.json"
     cat > "${WORK}/nuc-client.json" <<'EOF'
 {"web":{"client_id":"new-id.apps.googleusercontent.com","client_secret":"new-secret",
@@ -64,12 +64,12 @@ check "secret never printed"          bash -c "! grep -q 'new-secret' <<< \"\$1\
 echo "DDNS config repaired"
 D="${WORK}/ddns.json"
 check "valid JSON now"                bash -c "jq -e . \"$D\" >/dev/null"
-check "token kept, stray newline gone" test "$(jq -r '.cloudflare[0].authentication.api_token' "$D")" = "tok-123"
-check "zone kept"                     test "$(jq -r '.cloudflare[0].zone_id' "$D")" = "zone-abc"
+check "token kept, stray newline gone" test "$(jq -r '.cloudflare[0].authentication.api_token' "$D")" = "Tok0123456789abcdefghijklmnopqrstuvwxyzA"
+check "zone kept"                     test "$(jq -r '.cloudflare[0].zone_id' "$D")" = "abcdef0123456789abcdef0123456789"
 check "new subdomains"                test "$(jq -c '.cloudflare[0].subdomains' "$D")" = '["perfectday","perfectday-api","perfectday-media"]'
 check "proxied true"                  test "$(jq '.cloudflare[0].proxied' "$D")" = "true"
 check "mode stays 600"                test "$(stat -c %a "$D")" = "600"
-check "token never printed"           bash -c "! grep -q 'tok-123' <<< \"\$1\"" _ "${OUT}"
+check "token never printed"           bash -c "! grep -q 'Tok0123' <<< \"\$1\"" _ "${OUT}"
 
 echo "refuses the wrong client file"
 setup
@@ -85,7 +85,7 @@ check "redirect URI updated"          test "$(val "${WORK}/app.env" GOOGLE_REDIR
 
 echo "a DDNS file with no token is reported, not silently kept"
 setup
-printf '{"cloudflare":[{"zone_id":"zone-abc"}]}\n' > "${WORK}/ddns.json"
+printf '{"cloudflare":[{"zone_id":"abcdef0123456789abcdef0123456789"}]}\n' > "${WORK}/ddns.json"
 if OUT2="$(run 2>&1)"; then RC=0; else RC=$?; fi
 check "exits non-zero"                test "$RC" != 0
 check "says what is wrong"            bash -c "grep -q 'no API token' <<< \"\$1\"" _ "${OUT2}"
@@ -96,6 +96,38 @@ setup
 if OUT3="$(run --google-client 2>&1)"; then RC=0; else RC=$?; fi
 check "exits non-zero"                test "$RC" != 0
 check "prints usage"                  bash -c "grep -q 'Usage' <<< \"\$1\"" _ "${OUT3}"
+
+echo "a placeholder token is not kept"
+setup
+# What the NUC really had: a newline and an "x" in place of each value.
+printf '{\n "cloudflare": [ { "authentication": { "api_token": "\nx" }, "zone_id": "\nx" } ]\n}\n' > "${WORK}/ddns.json"
+cp "${WORK}/ddns.json" "${WORK}/ddns.orig"
+if OUT4="$(run 2>&1)"; then RC=0; else RC=$?; fi
+check "exits non-zero"                test "$RC" != 0
+check "DDNS file unchanged"           cmp -s "${WORK}/ddns.json" "${WORK}/ddns.orig"
+check "says it is not a real token"   bash -c "grep -qi 'not a Cloudflare' <<< \"\$1\"" _ "${OUT4}"
+
+TOKEN="AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_-Ab"   # 40 characters, like a Cloudflare token
+ZONE="0123456789abcdef0123456789abcdef"
+
+echo "--ddns-credentials writes a working config from typed values"
+setup
+rm -f "${WORK}/ddns.json"
+OUT5="$(printf '%s\n%s\n' "${TOKEN}" "${ZONE}" | run --ddns-credentials 2>&1)"
+D="${WORK}/ddns.json"
+check "file created"                  test -f "$D"
+check "token stored"                  test "$(jq -r '.cloudflare[0].authentication.api_token' "$D" 2>/dev/null)" = "${TOKEN}"
+check "zone stored"                   test "$(jq -r '.cloudflare[0].zone_id' "$D" 2>/dev/null)" = "${ZONE}"
+check "proxied true"                  test "$(jq '.cloudflare[0].proxied' "$D" 2>/dev/null)" = "true"
+check "mode 600"                      test "$(stat -c %a "$D" 2>/dev/null)" = "600"
+check "token never printed"           bash -c "! grep -q 'AbCdEf' <<< \"\$1\"" _ "${OUT5}"
+
+echo "--ddns-credentials refuses a bad zone ID"
+setup
+cp "${WORK}/ddns.json" "${WORK}/ddns.orig"
+if printf '%s\n%s\n' "${TOKEN}" "not-a-zone" | run --ddns-credentials >/dev/null 2>&1; then RC=0; else RC=$?; fi
+check "exits non-zero"                test "$RC" != 0
+check "DDNS file unchanged"           cmp -s "${WORK}/ddns.json" "${WORK}/ddns.orig"
 
 echo
 if [ "${FAILS}" -eq 0 ]; then echo "all passed"; else echo "${FAILS} failed"; exit 1; fi

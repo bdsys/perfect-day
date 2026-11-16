@@ -98,9 +98,10 @@ follow it. The updater is the `cloudflare-ddns` service in `docker-compose.yml`
   that, it switches the records to DNS only: browsers then connect straight to the FortiGate, get the
   Origin certificate (not publicly trusted) and fail, and the home WAN IP is public.
 
-To change only this file on a running NUC without regenerating the other secrets, edit it in
-place (`sudo nano /etc/perfect-day/cloudflare-ddns.config.json`), keep mode 0600, then
-`docker compose --profile nuc up -d cloudflare-ddns`.
+To set the token and zone ID on a running NUC without regenerating the other secrets, run
+`sudo ./scripts/nuc/15-update-config.sh --ddns-credentials` (it asks for both, hides the token,
+and checks their format), then `docker compose --profile nuc up -d --force-recreate cloudflare-ddns`.
+Never re-run `10-secrets.sh` on a NUC with data: it regenerates `MASTER_SECRET`.
 
 ### Step 2.3 — Verify
 
