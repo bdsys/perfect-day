@@ -518,6 +518,41 @@ class TestReschedule:
         assert event.entry_id is None
         assert event.rules_evaluated_at is None, "it must be evaluated again after its new end"
 
+    async def test_untouched_draft_with_photo_is_kept_when_its_event_moves_to_the_future(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
+        from sqlalchemy import func
+
+        from app.models import EntryPhoto
+
+        diary = await _diary_with_rule(db_session)
+        entry, _ = await _attached(db_session, diary)
+        owner = await db_session.get(User, diary.owner_user_id)
+        photo = await make_photo(db_session, user=owner)
+        await make_entry_photo(db_session, entry=entry, photo=photo)
+        await db_session.commit()
+
+        with (
+            patch("app.workers.tasks.generate_entry_draft") as draft,
+            patch("app.workers.tasks.queue_redraft", AsyncMock()) as redraft,
+        ):
+            event_id = await self._move(diary, "evt-1", datetime.now(tz=UTC) + timedelta(days=5))
+
+        row = await _entry_row(db_session, entry.id)
+        assert row.deleted_at is None, "the parent's photos keep the draft"
+        assert row.body_markdown == "Practice ran from ten until eleven."
+        attached = (
+            await db_session.execute(
+                select(func.count()).select_from(EntryPhoto).where(EntryPhoto.entry_id == entry.id)
+            )
+        ).scalar_one()
+        assert attached == 1
+        event = await _event(db_session, event_id)
+        assert event.entry_id is None, "the moved event gets its own entry at its new time"
+        assert event.rules_evaluated_at is None
+        draft.delay.assert_not_called()
+        redraft.assert_not_awaited()
+
     async def test_edited_draft_survives_its_event_moving_to_the_future(
         self, client: AsyncClient, db_session: AsyncSession
     ):
