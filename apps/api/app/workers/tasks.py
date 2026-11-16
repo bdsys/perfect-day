@@ -409,7 +409,7 @@ async def _ingest_calendar_event(
 
     if entry_to_redraft is not None:
         try:
-            generate_entry_draft.delay(str(entry_to_redraft))
+            await queue_redraft(entry_to_redraft)
         except Exception:
             log.exception("reschedule_redraft_queue_failed", entry_id=str(entry_to_redraft))
 
@@ -467,7 +467,7 @@ async def _cancel_calendar_event(external_id: str, diary_id: str) -> None:
     # The session has committed; only now can a worker see the change.
     if entry_to_redraft is not None:
         try:
-            generate_entry_draft.delay(str(entry_to_redraft))
+            await queue_redraft(entry_to_redraft)
         except Exception:
             log.exception("cancel_event_redraft_queue_failed", entry_id=str(entry_to_redraft))
 
@@ -717,22 +717,76 @@ async def _apply_rule_backfill(rule_id_str: str, days: int) -> None:
     max_retries=3,
     default_retry_delay=5,
 )
-def generate_entry_draft(self, entry_id: str, trigger: str = "background") -> None:
+def generate_entry_draft(
+    self, entry_id: str, trigger: str = "background", coalesced: bool = False
+) -> None:
     """Draft an entry. *trigger* is "regenerate" when a person asked for it.
 
-    Tasks queued before 25.3 carry no trigger and run as background redrafts.
+    *coalesced* marks a redraft queued by ``queue_redraft``; only it clears the
+    entry's pending-redraft key. Tasks queued before 25.3 carry no trigger and
+    run as background redrafts; tasks queued before 18.1-h carry no *coalesced*.
     """
     # The task id keys the AI-draft reservation, so a redelivery never spends twice.
-    run_sync(_generate_entry_draft(entry_id, trigger, reservation_key=self.request.id))
+    run_sync(
+        _generate_entry_draft(
+            entry_id, trigger, reservation_key=self.request.id, coalesced=coalesced
+        )
+    )
+
+
+REDRAFT_WINDOW_SECONDS = 600
+REDRAFT_KEY_TTL_SECONDS = 900
+
+
+def _redraft_key(entry_id: uuid.UUID | str) -> str:
+    return f"redraft_pending:{entry_id}"
+
+
+async def queue_redraft(entry_id: uuid.UUID) -> None:
+    """Queue an automatic redraft of an existing entry, at most one per 10 minutes.
+
+    A burst of changes to one entry (events joining it, cancelled or moved)
+    queues a single redraft that runs after the burst, and so sees all of it.
+    First drafts of new entries are not delayed: they use ``.delay`` directly.
+    """
+    from app.core.dependencies import get_redis
+
+    try:
+        first = await get_redis().set(
+            _redraft_key(entry_id), "1", nx=True, ex=REDRAFT_KEY_TTL_SECONDS
+        )
+    except Exception:
+        # Coalescing is an optimisation; without Redis, redraft straight away.
+        log.warning("redraft_coalescing_unavailable", entry_id=str(entry_id), exc_info=True)
+        generate_entry_draft.delay(str(entry_id))
+        return
+    if first:
+        generate_entry_draft.apply_async(
+            (str(entry_id),), {"coalesced": True}, countdown=REDRAFT_WINDOW_SECONDS
+        )
+    else:
+        log.info("redraft_coalesced", entry_id=str(entry_id))
 
 
 async def _generate_entry_draft(
-    entry_id_str: str, trigger: str = "background", *, reservation_key: str | None = None
+    entry_id_str: str,
+    trigger: str = "background",
+    *,
+    reservation_key: str | None = None,
+    coalesced: bool = False,
 ) -> None:
     from app.services.entry_location import update_place_and_weather
     from app.workers.llm import generate_draft_for_entry
     from app.workers.utils import db_session
 
+    if coalesced:
+        # Clear before the entry is read: a change from here on queues a new redraft.
+        from app.core.dependencies import get_redis
+
+        try:
+            await get_redis().delete(_redraft_key(entry_id_str))
+        except Exception:
+            log.warning("redraft_key_clear_failed", entry_id=entry_id_str, exc_info=True)
     if trigger not in ("regenerate", "background"):
         log.warning("generate_entry_draft_unknown_trigger", entry_id=entry_id_str, trigger=trigger)
     why: Literal["regenerate", "background"] = (

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from sqlalchemy import select
@@ -572,7 +572,10 @@ class TestMultiDayGrouping:
             payload=_spanning_payload("Trip dinner", "2026-06-01", "2026-06-04"),
         )
 
-        with patch("app.workers.tasks.generate_entry_draft") as mock_task:
+        with (
+            patch("app.workers.tasks.generate_entry_draft") as mock_task,
+            patch("app.workers.tasks.queue_redraft", AsyncMock()) as redraft,
+        ):
             mock_task.delay = MagicMock()
             await evaluate_event_against_rules(str(event1.id), str(diary.id), db_session)
             await evaluate_event_against_rules(str(event2.id), str(diary.id), db_session)
@@ -601,11 +604,45 @@ class TestMultiDayGrouping:
         matches = matches_result.scalars().all()
         assert len(matches) == 1
 
-        # Draft generation queued twice — once for the new entry, once for
-        # the regeneration when event2 was grouped in.
-        assert mock_task.delay.call_count == 2
-        called_with = {c.args[0] for c in mock_task.delay.call_args_list}
-        assert called_with == {str(entry.id)}
+        # The first draft is queued at once; grouping event2 in redrafts through
+        # the coalescing queue instead of a second immediate draft.
+        mock_task.delay.assert_called_once_with(str(entry.id))
+        redraft.assert_awaited_once_with(entry.id)
+
+    async def test_spanning_join_coalesces_new_entry_does_not(self, db_session: AsyncSession):
+        """A new entry is drafted at once; an event joining an existing one is coalesced."""
+        user = await make_user(db_session)
+        diary = await make_diary(db_session, owner=user, timezone="UTC")
+        await _make_rule(
+            db_session,
+            diary,
+            condition=_TRIP_CONDITION,
+            options={"recurring": "per_instance", "multi_day": "spanning"},
+        )
+        first = await make_event(
+            db_session,
+            diary_id=diary.id,
+            payload=_spanning_payload("Trip flight out", "2026-06-01", "2026-06-04"),
+        )
+        second = await make_event(
+            db_session,
+            diary_id=diary.id,
+            payload=_spanning_payload("Trip dinner", "2026-06-01", "2026-06-04"),
+        )
+
+        with (
+            patch("app.workers.tasks.generate_entry_draft") as mock_task,
+            patch("app.workers.tasks.queue_redraft", AsyncMock()) as redraft,
+        ):
+            mock_task.delay = MagicMock()
+            await evaluate_event_against_rules(str(first.id), str(diary.id), db_session)
+            mock_task.delay.assert_called_once()
+            redraft.assert_not_awaited()
+
+            mock_task.delay.reset_mock()
+            await evaluate_event_against_rules(str(second.id), str(diary.id), db_session)
+            mock_task.delay.assert_not_called()
+            redraft.assert_awaited_once()
 
     async def test_different_range_spanning_events_do_not_group(
         self, db_session: AsyncSession

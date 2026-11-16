@@ -332,14 +332,14 @@ class TestCancellation:
         )
         await db_session.commit()
 
-        with patch("app.workers.tasks.generate_entry_draft") as draft:
+        with patch("app.workers.tasks.queue_redraft", AsyncMock()) as draft:
             await _cancel_calendar_event("evt-1", str(diary.id))
 
         assert (await _entry_row(db_session, entry.id)).deleted_at is None
         assert await _external_ids(db_session) == ["evt-2"]
         claims = (await db_session.execute(select(RuleSeriesClaim.entry_id))).scalars().all()
         assert claims == [entry.id], "the series is still running"
-        draft.delay.assert_called_once_with(str(entry.id))
+        draft.assert_awaited_once_with(entry.id)
 
     async def test_cancelling_an_event_we_never_stored_does_nothing(
         self, client: AsyncClient, db_session: AsyncSession
@@ -450,8 +450,8 @@ class TestReschedule:
         entry, _ = await _attached(db_session, diary)
         await make_event(db_session, diary_id=diary.id, entry=entry, external_id="evt-2")
 
-        with patch("app.workers.tasks.generate_entry_draft") as draft:
+        with patch("app.workers.tasks.queue_redraft", AsyncMock()) as draft:
             await self._move(diary, "evt-1", datetime.now(tz=UTC) + timedelta(days=5))
 
         assert (await _entry_row(db_session, entry.id)).deleted_at is None
-        draft.delay.assert_called_once_with(str(entry.id))
+        draft.assert_awaited_once_with(entry.id)
