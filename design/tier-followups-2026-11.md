@@ -2,7 +2,7 @@
 
 Written 2026-11-15, after item 18 merged to `main` (#53 → #51, `066ee7d`). This file is the durable list of the following:
 - Andrew's decisions after the build;
-- the fixes still to make (PoC item **18.1** in `POC_PHASE2_TODO.md`);
+- the fixes for PoC item **18.1** in `POC_PHASE2_TODO.md` — **all built and merged** (PR #54, 2026-11-16; follow-ups PR #55). The rulings and deferred minors from that build are in #54's description: <https://github.com/bdsys/perfect-day/pull/54>;
 - what is deferred;
 - the backlog of minor findings.
 

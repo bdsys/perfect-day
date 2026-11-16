@@ -1,6 +1,6 @@
 # Item 18.1 — tier enforcement follow-ups: design
 
-Status: draft for Andrew's review (2026-11-15).
+Status: approved 2026-11-15; built and merged in PR #54 (2026-11-16). Changes made during the build (rulings P1–P5, R6-1, R8-1, F1) are in #54's description; later decisions are in `design/tier-followups-2026-11.md`.
 Parent spec: `docs/superpowers/specs/2026-11-15-tier-enforcement-design.md`. This spec changes it where the two differ.
 Source list: `design/tier-followups-2026-11.md`. Original review findings: <https://github.com/bdsys/perfect-day/pull/53>.
 
