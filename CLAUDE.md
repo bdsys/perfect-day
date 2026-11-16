@@ -5,6 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Claude instructions
 * Ignore SAP/Concur specific claude guidance. This is a personal project used to learn how to build a large software system using Claude Code. Practically this means do not use any skills in "mcs network", no Obsidian and no SAP/Concur Wiki or Jira. You should still use MCPs.
 * Run make test-all or lesser relevant tests after all changes to make sure the app is still working.
+* Before any PR is merged, bring the dev stack up to date and prove it restarts: `make up`, `make migrate`, `make down`, `make up`, `make test-smoke`, `make down` (Andrew, 2026-11-16). Run it after `make test-all` is green, never at the same time: both use the same compose project and ports, and `make test-all`'s e2e step replaces and then removes the dev containers. It tests throwaway databases, so it never migrates the dev database.
 
 ## Project Overview
 
@@ -28,7 +29,7 @@ Primary use case: a parent's diary of their child's life.
 
 - Self-hosted Intel NUC (4-core x86 1.85GHz, 8GB RAM) — shared with other services, resource-constrained
 - Network edge: Cloudflare (public TLS via Universal SSL, edge WAF, DDoS, residential IP hidden) in front of FortiGate 7.2+ (CF↔origin TLS termination via Cloudflare Origin Certificate, host-based routing, FortiGate WAF/IPS). FortiGate forwards plain HTTP to NUC on the home LAN.
-- Domain: `diary.perfectday.andrewlass.com`
+- Domain: `diary.perfectday.andrewlass.com` today. **Changing (decided 2026-11-16):** Cloudflare's free Universal SSL does not cover second-level subdomains, so the app moves to first-level hostnames, exactly one label before `andrewlass.com` (e.g. `perfectday.andrewlass.com`, with the API on `perfectday-api.andrewlass.com` or on the same hostname; `api.perfectday.andrewlass.com` would not be covered) as part of the NUC go-live (PoC 25.6; finding P-9 in `design/code-review-2026-11.md`)
 - Hybrid deployment supported: fully self-hosted on NUC, or NUC + cloud offload for LLM/heavy processing
 
 ## Core Data Model (planned)

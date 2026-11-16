@@ -115,6 +115,21 @@ make test-all
 
 Chains lint → typecheck → unit+integration tests → end-to-end (Playwright), fail-fast, in about 10 minutes total. This is the recommended command to run after any non-trivial change. It does **not** include `make test-live` (calls the real Anthropic API — see below) or `make test-smoke` (requires a running stack).
 
+What it does and doesn't touch:
+
+- **It tests throwaway databases, not yours.** The API tests start their own Postgres, Redis and MinIO containers (testcontainers); every integration test is pointed at that Redis, never at `localhost:6379`. The e2e step migrates and uses a separate `perfectday_test` database. Your dev database is never migrated by it: run `make migrate` yourself.
+- **It replaces your dev containers.** The e2e step uses the same compose project as `make up`, so it swaps your running dev containers for test ones and removes them at the end (`down -v`). Your dev data volumes survive. Run `make up` afterwards.
+
+### Before merging a PR: the dev-stack check
+
+After `make test-all` is green, bring the dev stack up to date and prove it restarts:
+
+```bash
+make up && make migrate && make down && make up && make test-smoke && make down
+```
+
+`make test-smoke` checks the dev database is at the latest migration, then walks the API with curl. Never run this while `make test-all` is running: they share ports and the compose project.
+
 ### Unit tests only (~30s)
 
 ```bash
