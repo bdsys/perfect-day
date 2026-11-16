@@ -5,6 +5,7 @@ Run via: ./scripts/admin.sh <command> [options]
 """
 from __future__ import annotations
 
+import os
 import re
 import sys
 import uuid
@@ -27,7 +28,14 @@ from app.models import Diary, Entry, ScanJob, User  # noqa: E402
 # ---------------------------------------------------------------------------
 
 def _load_database_url() -> str:
-    """Read DATABASE_URL_SYNC from apps/api/.env. Strips surrounding quotes."""
+    """DATABASE_URL_SYNC from the environment, else from apps/api/.env (quotes stripped).
+
+    The environment comes first: inside the API container (how admin.sh runs on the NUC)
+    the URL is set from app.env and there is no apps/api/.env next to this file.
+    """
+    from_env = os.environ.get("DATABASE_URL_SYNC", "").strip()
+    if from_env:
+        return from_env
     env_file = REPO_ROOT / "apps" / "api" / ".env"
     if not env_file.exists():
         raise click.ClickException(f".env not found at {env_file}. Run `make bootstrap` first.")

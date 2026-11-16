@@ -1,15 +1,18 @@
 # Admin CLI
 
-Local-only developer tool for managing Perfect Day data directly against the database.
-**Do not use against production.**
+A command-line tool for managing Perfect Day data directly in the database, on a dev machine or on the NUC.
 
-## Requirements
+## Where it runs
 
-Either:
-- `make infra` running (postgres on localhost:5432) with a local venv (`make bootstrap`)
-- Or `make up` running (full Docker stack)
+- **Dev machine with the local venv** (`make bootstrap`): runs there and reads `DATABASE_URL_SYNC` from `apps/api/.env`. Needs Postgres up (`make infra` or `make up`).
+- **The NUC** (or any machine without the venv): runs in a one-off API container (`docker compose run --rm --no-deps`, with `scripts/` mounted read-only) and reads `DATABASE_URL_SYNC` from the container's environment. On the NUC, use `sudo`, because `/etc/perfect-day/app.env` is readable only by root:
+  ```bash
+  cd /opt/perfect-day
+  sudo ./scripts/admin.sh users set-tier --email you@example.com --tier family
+  ```
+  **On the NUC this changes production data.** Deletes still ask you to type `yes`. Take a database dump first for anything bigger than a tier change (`deploy/nuc-ops.md`).
 
-The wrapper script (`admin.sh`) detects which is available automatically.
+The wrapper (`admin.sh`) picks the mode automatically.
 
 ## Usage
 
