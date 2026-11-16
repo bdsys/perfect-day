@@ -208,7 +208,7 @@ Andrew picked this from the mockups on 2026-11-15.
 
 ## Decisions after the build (Andrew, 2026-11-15)
 
-These override the sections above where they disagree. Details, open questions and the fix list are in `design/tier-followups-2026-11.md`, and the work is PoC item 18.1.
+These override the sections above where they disagree. Details, open questions and the fix list are in `design/tier-followups-2026-11.md`, and the work is PoC item 18.1. The 18.1 design, which settles the open questions, is `docs/superpowers/specs/2026-11-15-tier-followups-design.md`.
 
 1. **Automatic redrafts are free.** A background redraft triggered by a calendar change spends no AI draft. The first automatic draft of a new entry, and every Generate, Polish or Regenerate, still count. (That last part is Claude's reading, for Andrew to confirm.)
 2. **Inviting stays allowed on a read-only diary.** This is unchanged; invitation and permission endpoints were never guarded.

@@ -1,7 +1,21 @@
+import { execFileSync } from 'node:child_process'
+import path from 'node:path'
 import { test, expect, type APIRequestContext, request as playwrightRequest } from '@playwright/test'
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
 const password = 'Password1!'
+const REPO_ROOT = path.resolve(__dirname, '../../..')
+
+// Backfill is Plus and Family only, so this suite's user is on Plus (the Free refusal is in tier-limits.spec.ts).
+function setPlus(email: string) {
+  execFileSync(
+    'docker',
+    ['compose', '-f', 'docker-compose.yml', '-f', 'docker-compose.test.yml', 'exec', '-T',
+      'postgres', 'psql', '-U', 'perfectday', '-d', 'perfectday_test', '-v', 'ON_ERROR_STOP=1',
+      '-c', `UPDATE users SET subscription_tier = 'plus' WHERE email = '${email}'`],
+    { cwd: REPO_ROOT, stdio: 'pipe' },
+  )
+}
 
 // ---------------------------------------------------------------------------
 // Shared test state — one user + diary, set up once for the whole suite.
@@ -24,6 +38,7 @@ test.beforeAll(async () => {
   })
   if (!regResp.ok()) throw new Error(`Register failed: ${regResp.status()} ${await regResp.text()}`)
   const { access_token: token } = await regResp.json() as { access_token: string }
+  setPlus(email)
 
   const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
   const diaryResp = await ctx.post(`${API}/v1/diaries`, {
