@@ -1,6 +1,6 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import DiarySettingsPage from '../page'
-import { api } from '@/lib/api'
+import { api, ApiError } from '@/lib/api'
 
 const mockDiary = {
   id: 'diary-1',
@@ -104,5 +104,20 @@ describe('DiarySettingsPage', () => {
     await waitFor(() => expect(screen.getByRole('link', { name: /diary/i })).toBeInTheDocument())
     const back = screen.getByRole('link', { name: /diary/i })
     expect(back).toHaveAttribute('href', '/diaries/diary-1')
+  })
+
+  it('a save refused as diary_read_only shows the read-only copy, never the raw code', async () => {
+    ;(api.diaries.get as jest.Mock).mockResolvedValue({
+      ...mockDiary,
+      plan: { tier: 'free', plan_name: 'Free', ai_drafts_limit: 5, ai_drafts_left: 2, resets_on: '2026-12-01', photos_per_entry: 1, read_only: true, backfill: false, scan_past_days_max: 90 },
+    })
+    ;(api.diaries.patch as jest.Mock).mockRejectedValue(
+      new ApiError(403, 'tier_limit', 'tier_limit', { source: 'diary_read_only' }),
+    )
+    render(<DiarySettingsPage />)
+    await waitFor(() => expect(screen.getByLabelText('Name')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: /save changes/i }))
+    expect(await screen.findByText(/This diary is read-only on the Free plan/)).toBeInTheDocument()
+    expect(screen.queryByText(/tier_limit/)).toBeNull()
   })
 })

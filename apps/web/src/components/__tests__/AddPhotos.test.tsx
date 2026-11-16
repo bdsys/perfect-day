@@ -1,6 +1,7 @@
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { AddPhotos } from '../AddPhotos'
 import { api, ApiError, type Entry, type Photo } from '../../lib/api'
+import { PHOTO_LIMIT_NOTE } from '../../lib/plan'
 
 jest.mock('../PhotoThumbnail', () => ({
   PhotoThumbnail: ({ photoId }: { photoId: string }) => <span data-testid={`lib-${photoId}`}>thumb {photoId}</span>,
@@ -91,6 +92,14 @@ it('a failed file shows its name and Try again re-uploads only it', async () => 
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: /try again/i })) })
   await waitFor(() => expect(upload).toHaveBeenCalledTimes(3))
   expect((upload.mock.calls[2][0] as File).name).toBe('bad.jpg')
+})
+
+it('an upload refused at the photo limit shows the plan note, never the raw code', async () => {
+  upload.mockRejectedValue(new ApiError(403, 'tier_limit', 'tier_limit', { source: 'photo' }))
+  await open()
+  await act(async () => { fireEvent.change(input(), { target: { files: [file('a.jpg')] } }) })
+  expect((await screen.findAllByText(PHOTO_LIMIT_NOTE)).length).toBeGreaterThan(0)
+  expect(screen.queryByText(/tier_limit/)).toBeNull()
 })
 
 it('a timed-out upload shows the network message and frees its slot', async () => {

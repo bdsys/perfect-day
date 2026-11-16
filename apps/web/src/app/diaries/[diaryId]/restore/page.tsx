@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
 import { api, type Diary, type Entry, ApiError } from '@/lib/api'
 import { useAuth } from '@/lib/auth-context'
-import { readOnlyBanner } from '@/lib/plan'
+import { limitMessage, readOnlyBanner } from '@/lib/plan'
 
 function formatDate(d: string) {
   return new Date(d + 'T00:00:00').toLocaleDateString(undefined, {
@@ -59,7 +59,7 @@ export default function EntryRestorePage() {
       if (e instanceof ApiError && e.code === 'tier_limit' && e.details?.source === 'diary_read_only') {
         setReadOnly(true)
       } else {
-        setError(e instanceof Error ? e.message : 'Restore failed')
+        setError(limitMessage(e, diary?.plan) ?? (e instanceof Error ? e.message : 'Restore failed'))
       }
     } finally {
       setRestoring(null)

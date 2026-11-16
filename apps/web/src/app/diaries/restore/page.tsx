@@ -47,7 +47,7 @@ export default function DiaryRestorePage() {
         const details = typeof e.details.limit === 'number' ? e.details : { ...e.details, limit: plan?.diaries_limit ?? 1 }
         setLimitNote(limitMessage(new ApiError(e.status, e.message, e.code, details), plan))
       } else {
-        setError(e instanceof Error ? e.message : 'Restore failed')
+        setError(limitMessage(e) ?? (e instanceof Error ? e.message : 'Restore failed'))
       }
     } finally {
       setRestoring(null)

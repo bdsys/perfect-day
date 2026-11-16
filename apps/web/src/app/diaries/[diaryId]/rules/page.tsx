@@ -44,7 +44,7 @@ export default function RulesListPage() {
       const updated = await api.rules.patch(rule.id, { enabled: !rule.enabled })
       setRules(prev => prev.map(r => r.id === rule.id ? updated : r))
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to update rule')
+      setError(limitMessage(e) ?? (e instanceof Error ? e.message : 'Failed to update rule'))
     } finally {
       setToggling(null)
     }
@@ -57,7 +57,7 @@ export default function RulesListPage() {
       await api.rules.delete(rule.id)
       setRules(prev => prev.filter(r => r.id !== rule.id))
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to delete rule')
+      setError(limitMessage(e) ?? (e instanceof Error ? e.message : 'Failed to delete rule'))
     } finally {
       setDeleting(null)
     }

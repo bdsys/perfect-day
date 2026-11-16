@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
 import { api, type Diary } from '@/lib/api'
+import { limitMessage } from '@/lib/plan'
 import { useAuth } from '@/lib/auth-context'
 import { DiaryForm, type DiaryFormValues } from '@/components/DiaryForm'
 
@@ -41,7 +42,7 @@ export default function DiarySettingsPage() {
       await api.diaries.patch(diary.id, values)
       router.push(`/diaries/${diary.id}`)
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to save settings')
+      setError(limitMessage(e, diary.plan) ?? (e instanceof Error ? e.message : 'Failed to save settings'))
       setSaving(false)
     }
   }
@@ -55,7 +56,7 @@ export default function DiarySettingsPage() {
     } catch (e: unknown) {
       // Revert on failure
       setScanEnabled(!enabled)
-      setError(e instanceof Error ? e.message : 'Failed to update scan setting')
+      setError(limitMessage(e, diary.plan) ?? (e instanceof Error ? e.message : 'Failed to update scan setting'))
     } finally {
       setScanToggling(false)
     }
