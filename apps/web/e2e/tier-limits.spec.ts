@@ -23,7 +23,7 @@ function sql(statement: string) {
   )
 }
 
-type Free = { email: string; id: string; entryId: string }
+type Free = { email: string; id: string; entryId: string; diaryId: string; token: string }
 
 /** A fresh Free user with one UTC diary and one manual entry. */
 async function freeUser(prefix: string): Promise<Free> {
@@ -44,7 +44,7 @@ async function freeUser(prefix: string): Promise<Free> {
   if (!entry.ok()) throw new Error(`Create entry failed: ${entry.status()} ${await entry.text()}`)
   const { id: entryId } = (await entry.json()) as { id: string }
   await ctx.dispose()
-  return { email, id: me.id, entryId }
+  return { email, id: me.id, entryId, diaryId, token }
 }
 
 async function login(page: Page, email: string) {
@@ -53,6 +53,34 @@ async function login(page: Page, email: string) {
   await page.fill('#password', password)
   await page.click('button[type=submit]')
   await page.waitForURL(/\/diaries/, { timeout: 10_000 })
+}
+
+/** Skip the login form (its rate limit is 10/min): answer the session calls with this user. */
+async function mockSession(page: Page, user: Free) {
+  await page.route(`${API}/v1/auth/refresh`, (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ access_token: user.token }) }),
+  )
+  await page.route(`${API}/v1/auth/me`, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ id: user.id, email: user.email, display_name: null }),
+    }),
+  )
+}
+
+/** The test stack has no Google account; Scan and Backfill need a connected calendar to show. */
+async function mockCalendarConnected(page: Page, diaryId: string) {
+  await page.route(`${API}/v1/diaries/${diaryId}/scan`, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        can_scan: true, calendar: 'connected', scan_enabled: true, scan_interval_minutes: 60,
+        last_scan_status: null, next_scan_after: null, consecutive_failures: 0,
+      }),
+    }),
+  )
 }
 
 async function openEntry(page: Page, user: Free) {
@@ -108,5 +136,90 @@ test.describe('Free plan limits', () => {
     await page.reload()
     await expect(page.getByRole('button', { name: /(Regenerate|Generate|Polish) with AI/ })).toBeVisible()
     await expect(page.getByText(/AI drafts:/)).toHaveCount(0)
+  })
+
+  test('Free diary page: Backfill is disabled with the note and Past days stops at 90', async ({ page }) => {
+    const user = await freeUser('tier-backfill')
+    await mockSession(page, user)
+    await mockCalendarConnected(page, user.diaryId)
+    await page.goto(`/diaries/${user.diaryId}`)
+
+    await expect(page.getByRole('button', { name: 'Backfill' })).toBeDisabled({ timeout: 10_000 })
+    await expect(page.getByText('Backfill is on Plus and Family. Free scans look back 90 days.').first()).toBeVisible()
+    await expect(page.getByRole('link', { name: 'Upgrade now' }).first()).toBeVisible()
+
+    await page.getByRole('button', { name: 'Scan options' }).click()
+    await expect(page.getByLabel('Past days')).toHaveAttribute('max', '90')
+  })
+
+  test('read-only diary: Connect, Accept, Dismiss and Edit location are disabled', async ({ page }) => {
+    const user = await freeUser('tier-readonly')
+    // A second diary only exists above the Free limit, so make it as Plus and drop to Free:
+    // the newer diary is then read-only.
+    sql(`UPDATE users SET subscription_tier = 'plus' WHERE id = '${user.id}'`)
+    const ctx = await playwrightRequest.newContext()
+    const headers = { Authorization: `Bearer ${user.token}` }
+    const second = await ctx.post(`${API}/v1/diaries`, { headers, data: { name: 'Second Diary', timezone: 'UTC' } })
+    if (!second.ok()) throw new Error(`Create second diary failed: ${second.status()} ${await second.text()}`)
+    const { id: diaryId } = (await second.json()) as { id: string }
+    const entry = await ctx.post(`${API}/v1/diaries/${diaryId}/entries`, {
+      headers,
+      data: { entry_date: '2026-05-16', title: 'A day out', body_markdown: 'We went out.' },
+    })
+    if (!entry.ok()) throw new Error(`Create entry failed: ${entry.status()} ${await entry.text()}`)
+    const { id: entryId } = (await entry.json()) as { id: string }
+    await ctx.dispose()
+    sql(
+      `UPDATE entries SET suggested_title = 'Out and about', suggested_body_markdown = 'We went out and about.', ` +
+        `suggested_flagged_tokens = ARRAY[]::text[], suggested_body_source = 'llm_hybrid', suggested_at = now() ` +
+        `WHERE id = '${entryId}'`,
+    )
+    sql(`UPDATE users SET subscription_tier = 'free' WHERE id = '${user.id}'`)
+
+    await mockSession(page, user)
+    await page.goto(`/diaries/${diaryId}`)
+    await expect(page.getByText(/This diary is read-only on the Free plan/)).toBeVisible({ timeout: 10_000 })
+    await expect(page.getByRole('button', { name: 'Connect Google Calendar' })).toBeDisabled()
+
+    await page.goto(`/entries/${entryId}`)
+    await page.waitForURL(`**/entries/${entryId}`, { timeout: 10_000 })
+    await expect(page.getByRole('button', { name: 'Accept' })).toBeDisabled({ timeout: 10_000 })
+    await expect(page.getByRole('button', { name: 'Dismiss' })).toBeDisabled()
+    await expect(page.getByRole('button', { name: 'Edit location' })).toBeDisabled()
+  })
+
+  test('a forced photo refusal shows plain words and never the code', async ({ page }) => {
+    const user = await freeUser('tier-forced')
+    await mockSession(page, user)
+    await page.route(`${API}/v1/photos`, async (route) => {
+      const cors = {
+        'Access-Control-Allow-Origin': route.request().headers()['origin'] ?? '*',
+        'Access-Control-Allow-Credentials': 'true',
+        'Access-Control-Allow-Headers': '*',
+        'Access-Control-Allow-Methods': 'POST, OPTIONS',
+      }
+      if (route.request().method() === 'OPTIONS') {
+        await route.fulfill({ status: 204, headers: cors })
+        return
+      }
+      if (route.request().method() !== 'POST') {
+        await route.fallback()
+        return
+      }
+      await route.fulfill({
+        status: 403,
+        headers: cors,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          detail: { code: 'tier_limit', details: { source: 'photo', limit: 1, current: 1, needed: 1 } },
+        }),
+      })
+    })
+    await openEntry(page, user)
+
+    await page.getByRole('button', { name: /add photos/i }).click()
+    await page.locator('input[type="file"]').first().setInputFiles(FIXTURE)
+    await expect(page.getByText('Free plan: 1 photo per entry.')).toBeVisible({ timeout: 10_000 })
+    await expect(page.getByText(/tier_limit/)).toHaveCount(0)
   })
 })

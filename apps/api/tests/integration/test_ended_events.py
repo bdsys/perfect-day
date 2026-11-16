@@ -14,8 +14,14 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import AutoCreationRule, Diary, Entry, Event
-from tests.fixtures.factories import make_diary, make_event, make_user
+from app.models import AutoCreationRule, Diary, Entry, Event, User
+from tests.fixtures.factories import (
+    make_diary,
+    make_entry_photo,
+    make_event,
+    make_photo,
+    make_user,
+)
 
 SOCCER_RULE = {
     "op": "AND",
@@ -194,6 +200,7 @@ async def _attached(
     *,
     external_id: str = "evt-1",
     body_source: str = "llm",
+    body: str = "Practice ran from ten until eleven.",
     status: str = "draft",
     creation_source: str = "rule",
     ends_at: datetime | None = None,
@@ -203,7 +210,7 @@ async def _attached(
         diary_id=diary.id,
         entry_date=datetime(2026, 6, 1, tzinfo=UTC).date(),
         title="Soccer practice",
-        body_markdown="Practice ran from ten until eleven.",
+        body_markdown=body,
         body_source=body_source,
         status=status,
         created_by="auto",
@@ -303,7 +310,7 @@ class TestCancellation:
         assert row.body_markdown == "Practice ran from ten until eleven."
         draft.delay.assert_not_called()
 
-    async def test_entry_a_person_made_from_the_picker_is_never_removed(
+    async def test_cancelled_calendar_pick_draft_is_trashed(
         self, client: AsyncClient, db_session: AsyncSession
     ):
         from app.workers.tasks import _cancel_calendar_event
@@ -311,11 +318,119 @@ class TestCancellation:
         diary = await _diary_with_rule(db_session)
         entry, _ = await _attached(db_session, diary, creation_source="calendar_pick")
 
-        with patch("app.workers.tasks.generate_entry_draft"):
+        with (
+            patch("app.workers.tasks.generate_entry_draft") as draft,
+            patch("app.workers.tasks.queue_redraft", AsyncMock()) as redraft,
+        ):
+            await _cancel_calendar_event("evt-1", str(diary.id))
+
+        assert (await _entry_row(db_session, entry.id)).deleted_at is not None
+        assert await _external_ids(db_session) == []
+        draft.delay.assert_not_called()
+        redraft.assert_not_awaited()
+
+    async def test_cancelled_empty_calendar_pick_is_trashed(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
+        from app.workers.tasks import _cancel_calendar_event
+
+        diary = await _diary_with_rule(db_session)
+        entry, _ = await _attached(
+            db_session, diary, creation_source="calendar_pick", body=""
+        )
+
+        with (
+            patch("app.workers.tasks.generate_entry_draft") as draft,
+            patch("app.workers.tasks.queue_redraft", AsyncMock()) as redraft,
+        ):
+            await _cancel_calendar_event("evt-1", str(diary.id))
+
+        assert (await _entry_row(db_session, entry.id)).deleted_at is not None
+        draft.delay.assert_not_called()
+        redraft.assert_not_awaited()
+
+    async def test_cancelled_published_calendar_pick_kept(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
+        from app.workers.tasks import _cancel_calendar_event
+
+        diary = await _diary_with_rule(db_session)
+        entry, _ = await _attached(
+            db_session, diary, creation_source="calendar_pick", status="published"
+        )
+
+        with (
+            patch("app.workers.tasks.generate_entry_draft") as draft,
+            patch("app.workers.tasks.queue_redraft", AsyncMock()) as redraft,
+        ):
+            await _cancel_calendar_event("evt-1", str(diary.id))
+
+        row = await _entry_row(db_session, entry.id)
+        assert (row.deleted_at, row.status) == (None, "published")
+        assert row.body_markdown == "Practice ran from ten until eleven."
+        draft.delay.assert_not_called()
+        redraft.assert_not_awaited()
+
+    async def test_cancelled_edited_calendar_pick_kept(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
+        from app.workers.tasks import _cancel_calendar_event
+
+        diary = await _diary_with_rule(db_session)
+        entry, _ = await _attached(
+            db_session, diary, creation_source="calendar_pick", body_source="user"
+        )
+
+        with (
+            patch("app.workers.tasks.generate_entry_draft") as draft,
+            patch("app.workers.tasks.queue_redraft", AsyncMock()) as redraft,
+        ):
+            await _cancel_calendar_event("evt-1", str(diary.id))
+
+        row = await _entry_row(db_session, entry.id)
+        assert row.deleted_at is None
+        assert row.body_markdown == "Practice ran from ten until eleven."
+        draft.delay.assert_not_called()
+        redraft.assert_not_awaited()
+
+    async def _cancelled_with_photo_is_kept(self, db_session: AsyncSession, creation_source: str):
+        from sqlalchemy import func
+
+        from app.models import EntryPhoto
+        from app.workers.tasks import _cancel_calendar_event
+
+        diary = await _diary_with_rule(db_session)
+        entry, _ = await _attached(db_session, diary, creation_source=creation_source)
+        owner = await db_session.get(User, diary.owner_user_id)
+        photo = await make_photo(db_session, user=owner)
+        await make_entry_photo(db_session, entry=entry, photo=photo)
+        await db_session.commit()
+
+        with (
+            patch("app.workers.tasks.generate_entry_draft") as draft,
+            patch("app.workers.tasks.queue_redraft", AsyncMock()) as redraft,
+        ):
             await _cancel_calendar_event("evt-1", str(diary.id))
 
         assert (await _entry_row(db_session, entry.id)).deleted_at is None
-        assert await _external_ids(db_session) == []
+        attached = (
+            await db_session.execute(
+                select(func.count()).select_from(EntryPhoto).where(EntryPhoto.entry_id == entry.id)
+            )
+        ).scalar_one()
+        assert attached == 1
+        draft.delay.assert_not_called()
+        redraft.assert_not_awaited()
+
+    async def test_cancelled_calendar_pick_with_photo_kept(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
+        await self._cancelled_with_photo_is_kept(db_session, "calendar_pick")
+
+    async def test_cancelled_rule_draft_with_photo_kept(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
+        await self._cancelled_with_photo_is_kept(db_session, "rule")
 
     async def test_untouched_draft_with_other_events_is_kept_and_redrafted(
         self, client: AsyncClient, db_session: AsyncSession
@@ -332,14 +447,14 @@ class TestCancellation:
         )
         await db_session.commit()
 
-        with patch("app.workers.tasks.generate_entry_draft") as draft:
+        with patch("app.workers.tasks.queue_redraft", AsyncMock()) as draft:
             await _cancel_calendar_event("evt-1", str(diary.id))
 
         assert (await _entry_row(db_session, entry.id)).deleted_at is None
         assert await _external_ids(db_session) == ["evt-2"]
         claims = (await db_session.execute(select(RuleSeriesClaim.entry_id))).scalars().all()
         assert claims == [entry.id], "the series is still running"
-        draft.delay.assert_called_once_with(str(entry.id))
+        draft.assert_awaited_once_with(entry.id)
 
     async def test_cancelling_an_event_we_never_stored_does_nothing(
         self, client: AsyncClient, db_session: AsyncSession
@@ -427,6 +542,25 @@ class TestReschedule:
         assert (await _entry_row(db_session, entry.id)).deleted_at is None
         assert (await _event(db_session, event_id)).entry_id == entry.id
 
+    async def test_moved_calendar_pick_left_alone(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
+        diary = await _diary_with_rule(db_session)
+        entry, _ = await _attached(db_session, diary, creation_source="calendar_pick")
+
+        with (
+            patch("app.workers.tasks.generate_entry_draft") as draft,
+            patch("app.workers.tasks.queue_redraft", AsyncMock()) as redraft,
+        ):
+            event_id = await self._move(diary, "evt-1", datetime.now(tz=UTC) + timedelta(days=5))
+
+        row = await _entry_row(db_session, entry.id)
+        assert row.deleted_at is None
+        assert row.body_markdown == "Practice ran from ten until eleven."
+        assert (await _event(db_session, event_id)).entry_id == entry.id
+        draft.delay.assert_not_called()
+        redraft.assert_not_awaited()
+
     async def test_evaluated_event_moved_to_the_future_waits_to_be_evaluated_again(
         self, client: AsyncClient, db_session: AsyncSession
     ):
@@ -450,8 +584,8 @@ class TestReschedule:
         entry, _ = await _attached(db_session, diary)
         await make_event(db_session, diary_id=diary.id, entry=entry, external_id="evt-2")
 
-        with patch("app.workers.tasks.generate_entry_draft") as draft:
+        with patch("app.workers.tasks.queue_redraft", AsyncMock()) as draft:
             await self._move(diary, "evt-1", datetime.now(tz=UTC) + timedelta(days=5))
 
         assert (await _entry_row(db_session, entry.id)).deleted_at is None
-        draft.delay.assert_called_once_with(str(entry.id))
+        draft.assert_awaited_once_with(entry.id)

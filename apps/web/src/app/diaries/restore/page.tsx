@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { api, type Diary, ApiError } from '@/lib/api'
 import { useAuth } from '@/lib/auth-context'
-import { diaryLimitNote } from '@/lib/plan'
+import { limitMessage } from '@/lib/plan'
 
 function daysRemaining(hardDeleteAfter: string): number {
   return Math.ceil((new Date(hardDeleteAfter).getTime() - Date.now()) / 86_400_000)
@@ -44,10 +44,10 @@ export default function DiaryRestorePage() {
       if (e instanceof ApiError && e.code === 'tier_limit' && e.details?.source === 'diary') {
         // The person restoring is the owner, so the note names their own plan.
         const plan = await api.auth.myPlan().catch(() => null)
-        const limit = typeof e.details.limit === 'number' ? e.details.limit : plan?.diaries_limit ?? 1
-        setLimitNote(diaryLimitNote(plan?.plan_name ?? 'Free', limit))
+        const details = typeof e.details.limit === 'number' ? e.details : { ...e.details, limit: plan?.diaries_limit ?? 1 }
+        setLimitNote(limitMessage(new ApiError(e.status, e.message, e.code, details), plan))
       } else {
-        setError(e instanceof Error ? e.message : 'Restore failed')
+        setError(limitMessage(e) ?? (e instanceof Error ? e.message : 'Restore failed'))
       }
     } finally {
       setRestoring(null)

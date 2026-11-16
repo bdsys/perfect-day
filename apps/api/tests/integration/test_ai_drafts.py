@@ -8,7 +8,7 @@ import asyncio
 import json
 import uuid
 from contextlib import asynccontextmanager
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from sqlalchemy import delete, select, update
@@ -20,6 +20,7 @@ from app.services.ai_drafts import (
     AI_DRAFT_LIMIT_ERROR,
     ai_drafts_left,
     drafts_used,
+    release_lost_ai_drafts,
     reserve_ai_draft,
     usage_period,
 )
@@ -356,3 +357,190 @@ async def test_editor_regenerate_spends_owner_quota(
 
     spends = (await db_session.execute(select(AiDraftSpend))).scalars().all()
     assert [s.user_id for s in spends] == [owner.id]
+
+
+async def _prior_success(db: AsyncSession, entry: Entry) -> None:
+    db.add(
+        LLMGeneration(
+            entry_id=entry.id, model="m", prompt_hash="h", status="success", mode="events"
+        )
+    )
+    await db.commit()
+
+
+async def test_background_redraft_free_at_limit(db_url: str, db_session: AsyncSession) -> None:
+    owner, entry = await _owner_with_entry(
+        db_session, body="A swim lesson.", body_source="llm"
+    )
+    await _prior_success(db_session, entry)
+    await _spend(db_session, owner, 5)
+    provider = _provider()
+
+    await _run_draft(db_url, entry.id, provider, trigger="background", reservation_key="task-9")
+
+    provider.generate.assert_awaited()
+    assert (await _reload(db_session, entry.id)).body_source == "llm"
+    assert await _used(db_session, owner) == 5
+    new = [g for g in await _generations(db_session, entry.id) if g.model == "claude-opus-5-5"]
+    assert [(g.status, g.reservation_key) for g in new] == [("success", None)]
+
+
+async def test_first_background_draft_blocked_at_limit(
+    db_url: str, db_session: AsyncSession
+) -> None:
+    owner, entry = await _owner_with_entry(db_session)
+    await _spend(db_session, owner, 5)
+    provider = _provider()
+
+    await _run_draft(db_url, entry.id, provider, trigger="background")
+
+    provider.generate.assert_not_awaited()
+    [gen] = await _generations(db_session, entry.id)
+    assert gen.error == AI_DRAFT_LIMIT_ERROR
+    assert await _used(db_session, owner) == 5
+
+
+async def test_regenerate_counts_even_with_prior_draft(
+    db_url: str, db_session: AsyncSession
+) -> None:
+    owner, entry = await _owner_with_entry(
+        db_session, body="A swim lesson.", body_source="llm"
+    )
+    await _prior_success(db_session, entry)
+    await _spend(db_session, owner, 4)
+
+    await _run_draft(db_url, entry.id, _provider(), trigger="regenerate")
+
+    assert await _used(db_session, owner) == 5
+
+
+async def test_free_redraft_keeps_parents_text(db_url: str, db_session: AsyncSession) -> None:
+    owner, entry = await _owner_with_entry(
+        db_session, body="We went to the park.", body_source="user"
+    )
+    await _prior_success(db_session, entry)
+    await _spend(db_session, owner, 5)
+
+    provider = _provider()
+
+    await _run_draft(db_url, entry.id, provider, trigger="background")
+
+    # The free path ran: the model was called and no limit marker was written.
+    provider.generate.assert_awaited()
+    gens = await _generations(db_session, entry.id)
+    assert not [g for g in gens if g.error == AI_DRAFT_LIMIT_ERROR]
+    new = [g for g in gens if g.model == "claude-opus-5-5"]
+    assert [(g.status, g.reservation_key) for g in new] == [("success", None)]
+    reloaded = await _reload(db_session, entry.id)
+    assert (reloaded.body_markdown, reloaded.body_source) == ("We went to the park.", "user")
+    assert await _used(db_session, owner) == 5
+
+
+# ---------------------------------------------------------------------------
+# The sweeper for drafts lost to a killed worker
+# ---------------------------------------------------------------------------
+
+_NOW = datetime(2026, 11, 16, 12, 0, tzinfo=UTC)
+
+
+async def _seed_spend(
+    db: AsyncSession, owner: User, entry: Entry | None, key: str, *, age_min: int,
+    sweepable: bool = True,
+) -> None:
+    db.add(
+        AiDraftSpend(
+            user_id=owner.id,
+            entry_id=entry.id if entry else None,
+            month="2026-11",
+            key=key,
+            sweepable=sweepable,
+            created_at=_NOW - timedelta(minutes=age_min),
+        )
+    )
+    await db.commit()
+
+
+async def _seed_success(db: AsyncSession, entry: Entry, key: str) -> None:
+    db.add(
+        LLMGeneration(
+            entry_id=entry.id, model="m", prompt_hash="h", status="success", mode="events",
+            reservation_key=key,
+        )
+    )
+    await db.commit()
+
+
+async def _spend_keys(db: AsyncSession) -> set[str]:
+    return set((await db.execute(select(AiDraftSpend.key))).scalars())
+
+
+async def test_sweeper_releases_old_orphan(db_session: AsyncSession) -> None:
+    owner, entry = await _owner_with_entry(db_session)
+    await _seed_spend(db_session, owner, entry, "s1", age_min=31)
+    assert await release_lost_ai_drafts(db_session, now=_NOW) == 1
+    await db_session.commit()
+    assert await _spend_keys(db_session) == set()
+
+
+async def test_sweeper_keeps_fresh_spend(db_session: AsyncSession) -> None:
+    owner, entry = await _owner_with_entry(db_session)
+    await _seed_spend(db_session, owner, entry, "s1", age_min=29)
+    assert await release_lost_ai_drafts(db_session, now=_NOW) == 0
+    assert await _spend_keys(db_session) == {"s1"}
+
+
+async def test_sweeper_keeps_spend_with_its_success(db_session: AsyncSession) -> None:
+    owner, entry = await _owner_with_entry(db_session)
+    await _seed_spend(db_session, owner, entry, "s1", age_min=60)
+    await _seed_success(db_session, entry, "s1")
+    assert await release_lost_ai_drafts(db_session, now=_NOW) == 0
+    assert await _spend_keys(db_session) == {"s1"}
+
+
+async def test_sweeper_releases_killed_draft_after_retry_succeeds(
+    db_session: AsyncSession,
+) -> None:
+    owner, entry = await _owner_with_entry(db_session)
+    await _seed_spend(db_session, owner, entry, "s1", age_min=40)
+    await _seed_spend(db_session, owner, entry, "s2", age_min=35)
+    await _seed_success(db_session, entry, "s2")
+    assert await release_lost_ai_drafts(db_session, now=_NOW) == 1
+    await db_session.commit()
+    assert await _spend_keys(db_session) == {"s2"}
+
+
+async def test_sweeper_keeps_unsweepable_and_null_entry(db_session: AsyncSession) -> None:
+    owner, entry = await _owner_with_entry(db_session)
+    await _seed_spend(db_session, owner, entry, "old", age_min=90, sweepable=False)
+    await _seed_spend(db_session, owner, None, "gone", age_min=90)
+    assert await release_lost_ai_drafts(db_session, now=_NOW) == 0
+    assert await _spend_keys(db_session) == {"old", "gone"}
+
+
+async def test_successful_draft_records_its_reservation_key(
+    db_url: str, db_session: AsyncSession
+) -> None:
+    owner, entry = await _owner_with_entry(db_session)
+    await _run_draft(db_url, entry.id, _provider(), reservation_key="k1")
+
+    gens = await _generations(db_session, entry.id)
+    assert [g.reservation_key for g in gens if g.status == "success"] == ["k1"]
+    spend = (await db_session.execute(select(AiDraftSpend))).scalar_one()
+    assert spend.sweepable is True
+
+
+async def test_suggestion_records_its_reservation_key(
+    db_url: str, db_session: AsyncSession
+) -> None:
+    # A person's own text with events is a hybrid draft, which lands as a suggestion.
+    owner, entry = await _owner_with_entry(
+        db_session, body="We went to the park.", body_source="user"
+    )
+    await _run_draft(db_url, entry.id, _provider(), trigger="regenerate", reservation_key="k2")
+
+    reloaded = await _reload(db_session, entry.id)
+    assert reloaded.suggested_body_markdown is not None
+    gens = await _generations(db_session, entry.id)
+    assert [g.reservation_key for g in gens if g.status == "success"] == ["k2"]
+    spend = (await db_session.execute(select(AiDraftSpend))).scalar_one()
+    assert spend.sweepable is True

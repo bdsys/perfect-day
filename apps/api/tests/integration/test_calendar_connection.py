@@ -32,8 +32,8 @@ SCOPE_CALENDAR = "https://www.googleapis.com/auth/calendar.readonly"
 # ---------------------------------------------------------------------------
 
 
-async def _diary_with_google(db: AsyncSession, **token_fields):
-    owner = await make_user(db)
+async def _diary_with_google(db: AsyncSession, *, tier: str = "free", **token_fields):
+    owner = await make_user(db, subscription_tier=tier)
     diary = await make_diary(db, owner=owner)
     fields = {"scopes_granted": ["calendar.readonly"], **token_fields}
     db.add(

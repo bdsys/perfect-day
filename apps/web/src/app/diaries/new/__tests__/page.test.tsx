@@ -52,7 +52,7 @@ describe('NewDiaryPage', () => {
   })
 
   it('shows a tier_limit error message when the diary limit is reached', async () => {
-    const err = new ApiError(403, 'Diary limit reached', 'tier_limit', { limit: 1, current: 1, source: 'diaries' })
+    const err = new ApiError(403, 'Diary limit reached', 'tier_limit', { limit: 1, current: 1, source: 'diary' })
     ;(api.diaries.create as jest.Mock).mockRejectedValue(err)
     render(<NewDiaryPage />)
 

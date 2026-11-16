@@ -461,6 +461,10 @@ class AiDraftSpend(Base):
     )
     month: Mapped[str] = mapped_column(String(7), nullable=False)
     key: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    # Only spends made after migration 0018 may be given back by the lost-draft sweeper.
+    sweepable: Mapped[bool] = mapped_column(
+        Boolean, server_default=text("false"), nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -572,10 +576,13 @@ class LLMGeneration(TimestampMixin, Base):
     status: Mapped[str] = mapped_column(String(10), nullable=False)
     mode: Mapped[str] = mapped_column(String(10), nullable=False)
     error: Mapped[str | None] = mapped_column(Text)
+    # The AI-draft reservation this generation spent, if any (ai_draft_spends.key).
+    reservation_key: Mapped[str | None] = mapped_column(Text)
 
     entry: Mapped[Entry] = relationship(back_populates="llm_generations")
 
     __table_args__ = (
+        Index("ix_llm_generations_reservation_key", "reservation_key"),
         CheckConstraint("status IN ('success','failed')", name="ck_llm_generations_status"),
         CheckConstraint("mode IN ('events','polish','hybrid','none')", name="ck_llm_generations_mode"),
     )

@@ -8,15 +8,20 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, tzinfo
+from datetime import UTC, date, datetime, timedelta, tzinfo
+from typing import cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from sqlalchemy import delete, func, select, text
+import structlog
+from sqlalchemy import CursorResult, delete, exists, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import AiDraftSpend, Diary, User
+from app.models import AiDraftSpend, Diary, LLMGeneration, User
 from app.services.tier import limits_for
 
+log = structlog.get_logger()
+
+LOST_DRAFT_AFTER = timedelta(minutes=30)  # a spend this old with no success is lost
 AI_DRAFT_LIMIT_ERROR = "ai_draft_limit"  # llm_generations.error when the limit stopped a draft
 
 
@@ -120,7 +125,11 @@ async def reserve_ai_draft(
     if limit is not None and await drafts_used(db, owner.id, period.month) >= limit:
         return False
 
-    db.add(AiDraftSpend(user_id=owner.id, entry_id=entry_id, month=period.month, key=key))
+    db.add(
+        AiDraftSpend(
+            user_id=owner.id, entry_id=entry_id, month=period.month, key=key, sweepable=True
+        )
+    )
     await db.flush()
     return True
 
@@ -128,3 +137,26 @@ async def reserve_ai_draft(
 async def release_ai_draft(db: AsyncSession, key: str) -> None:
     """Give back the draft reserved under *key* (no AI text was saved)."""
     await db.execute(delete(AiDraftSpend).where(AiDraftSpend.key == key))
+
+
+async def release_lost_ai_drafts(db: AsyncSession, now: datetime | None = None) -> int:
+    """Give back drafts whose worker was killed before it saved text or released.
+
+    A spend is lost when it is sweepable, older than LOST_DRAFT_AFTER, tied to
+    an entry, and no successful generation carries its key. Returns the count.
+    """
+    cutoff = (now or datetime.now(UTC)) - LOST_DRAFT_AFTER
+    succeeded = exists().where(
+        LLMGeneration.reservation_key == AiDraftSpend.key, LLMGeneration.status == "success"
+    )
+    result = await db.execute(
+        delete(AiDraftSpend).where(
+            AiDraftSpend.sweepable.is_(True),
+            AiDraftSpend.created_at < cutoff,
+            AiDraftSpend.entry_id.is_not(None),
+            ~succeeded,
+        )
+    )
+    count = cast(CursorResult, result).rowcount or 0
+    log.info("released_lost_ai_drafts", count=count)
+    return count

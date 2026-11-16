@@ -42,11 +42,25 @@ it('any other restore error shows its message, never a limit sentence or the dea
     { id: 'e1', title: 'Old', entry_date: '2026-05-16', deleted_at: new Date().toISOString() },
   ])
   ;(api.entries.restore as jest.Mock).mockRejectedValue(
-    new ApiError(403, 'Not allowed', 'tier_limit', { source: 'diary', limit: 1, current: 1 }),
+    new ApiError(403, 'Not allowed', 'forbidden'),
   )
   render(<EntryRestorePage />)
   fireEvent.click(await screen.findByRole('button', { name: /restore/i }))
   expect(await screen.findByText('Not allowed')).toBeInTheDocument()
   expect(screen.queryByText(/free-tier limit/)).not.toBeInTheDocument()
   expect(document.querySelector('a[href="/account/upgrade"]')).toBeNull()
+})
+
+it('a restore refused with another tier_limit source shows mapped copy, never the raw code', async () => {
+  ;(api.diaries.get as jest.Mock).mockResolvedValue({ id: 'd1', name: 'D', plan: { plan_name: 'Free' } })
+  ;(api.entries.listTrash as jest.Mock).mockResolvedValue([
+    { id: 'e1', title: 'Old', entry_date: '2026-05-16', deleted_at: new Date().toISOString() },
+  ])
+  ;(api.entries.restore as jest.Mock).mockRejectedValue(
+    new ApiError(403, 'tier_limit', 'tier_limit', { source: 'something_new' }),
+  )
+  render(<EntryRestorePage />)
+  fireEvent.click(await screen.findByRole('button', { name: /restore/i }))
+  expect(await screen.findByText("Your plan doesn't include this.")).toBeInTheDocument()
+  expect(screen.queryByText(/tier_limit/)).toBeNull()
 })

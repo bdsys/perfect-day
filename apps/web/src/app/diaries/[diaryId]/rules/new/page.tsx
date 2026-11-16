@@ -4,6 +4,7 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
 import { api, type RuleCondition, type RuleOptions } from '@/lib/api'
+import { limitMessage } from '@/lib/plan'
 import { useAuth } from '@/lib/auth-context'
 import { RuleForm } from '@/components/RuleForm'
 
@@ -23,7 +24,7 @@ export default function NewRulePage() {
       await api.rules.create(diaryId, { name, condition, options })
       router.push(`/diaries/${diaryId}/rules`)
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to save rule')
+      setError(limitMessage(e) ?? (e instanceof Error ? e.message : 'Failed to save rule'))
       setSaving(false)
     }
   }

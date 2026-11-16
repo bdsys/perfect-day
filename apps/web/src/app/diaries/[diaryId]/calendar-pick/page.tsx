@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
 import { api, type CalendarEventSummary } from '@/lib/api'
+import { limitMessage } from '@/lib/plan'
 import { useAuth } from '@/lib/auth-context'
 
 // ── Date helpers ──────────────────────────────────────────────────────────────
@@ -97,6 +98,11 @@ export default function CalendarPickPage() {
       const entry = await api.calendarEvents.createFromEvent(diaryId, event.id)
       router.push(`/entries/${entry.id}?fromPick=1`)
     } catch (e: unknown) {
+      const limit = limitMessage(e)
+      if (limit) {
+        setError(limit)
+        return
+      }
       const msg = e instanceof Error ? e.message : 'Failed to create entry'
       if (msg.includes('409') || msg.includes('event_already_attached') || msg.includes('event_not_ended')) {
         setError(

@@ -409,7 +409,7 @@ async def _ingest_calendar_event(
 
     if entry_to_redraft is not None:
         try:
-            generate_entry_draft.delay(str(entry_to_redraft))
+            await queue_redraft(entry_to_redraft)
         except Exception:
             log.exception("reschedule_redraft_queue_failed", entry_id=str(entry_to_redraft))
 
@@ -461,13 +461,13 @@ async def _cancel_calendar_event(external_id: str, diary_id: str) -> None:
         ).scalar_one_or_none()
         if event is None:
             return  # never stored, or already removed
-        entry_to_redraft = await release_event_from_entry(db, event)
+        entry_to_redraft = await release_event_from_entry(db, event, photos_count_as_touched=True)
         await db.delete(event)
 
     # The session has committed; only now can a worker see the change.
     if entry_to_redraft is not None:
         try:
-            generate_entry_draft.delay(str(entry_to_redraft))
+            await queue_redraft(entry_to_redraft)
         except Exception:
             log.exception("cancel_event_redraft_queue_failed", entry_id=str(entry_to_redraft))
 
@@ -637,7 +637,8 @@ async def _apply_rule_backfill(rule_id_str: str, days: int) -> None:
 
     from sqlalchemy import select, update
 
-    from app.models import AutoCreationRule, Event
+    from app.models import AutoCreationRule, Diary, Event, User
+    from app.services.tier import limits_for
     from app.workers.rules import evaluate_event_against_rules
     from app.workers.utils import db_session
 
@@ -660,6 +661,19 @@ async def _apply_rule_backfill(rule_id_str: str, days: int) -> None:
             return
 
         diary_id = rule.diary_id
+
+        # The owner may have downgraded since the apply was queued.
+        owner_tier = (
+            await db.execute(
+                select(User.subscription_tier)
+                .join(Diary, Diary.owner_user_id == User.id)
+                .where(Diary.id == diary_id)
+            )
+        ).scalar_one_or_none() or "free"
+        cap = limits_for(owner_tier).scan_past_days
+        if cap is not None and days > cap:
+            log.info("backfill_not_on_plan", rule_id=rule_id_str, days=days, where="rule_apply")
+            return
 
         # Load all events for this diary in the last `days` days (both attached and unattached)
         events_result = await db.execute(
@@ -703,22 +717,85 @@ async def _apply_rule_backfill(rule_id_str: str, days: int) -> None:
     max_retries=3,
     default_retry_delay=5,
 )
-def generate_entry_draft(self, entry_id: str, trigger: str = "background") -> None:
+def generate_entry_draft(
+    self, entry_id: str, trigger: str = "background", coalesced: bool = False
+) -> None:
     """Draft an entry. *trigger* is "regenerate" when a person asked for it.
 
-    Tasks queued before 25.3 carry no trigger and run as background redrafts.
+    *coalesced* marks a redraft queued by ``queue_redraft``; only it clears the
+    entry's pending-redraft key. Tasks queued before 25.3 carry no trigger and
+    run as background redrafts; tasks queued before 18.1-h carry no *coalesced*.
     """
     # The task id keys the AI-draft reservation, so a redelivery never spends twice.
-    run_sync(_generate_entry_draft(entry_id, trigger, reservation_key=self.request.id))
+    run_sync(
+        _generate_entry_draft(
+            entry_id, trigger, reservation_key=self.request.id, coalesced=coalesced
+        )
+    )
+
+
+REDRAFT_WINDOW_SECONDS = 600
+REDRAFT_KEY_TTL_SECONDS = 900
+
+
+def _redraft_key(entry_id: uuid.UUID | str) -> str:
+    return f"redraft_pending:{entry_id}"
+
+
+async def queue_redraft(entry_id: uuid.UUID) -> None:
+    """Queue an automatic redraft of an existing entry, at most one per 10 minutes.
+
+    A burst of changes to one entry (events joining it, cancelled or moved)
+    queues a single redraft that runs after the burst, and so sees all of it.
+    First drafts of new entries are not delayed: they use ``.delay`` directly.
+    """
+    from app.core.dependencies import get_redis
+
+    redis = None
+    try:
+        redis = get_redis()
+        first = await redis.set(_redraft_key(entry_id), "1", nx=True, ex=REDRAFT_KEY_TTL_SECONDS)
+    except Exception:
+        # Coalescing is an optimisation; without Redis, redraft straight away.
+        log.warning("redraft_coalescing_unavailable", entry_id=str(entry_id), exc_info=True)
+        generate_entry_draft.delay(str(entry_id))
+        return
+    if first:
+        try:
+            generate_entry_draft.apply_async(
+                (str(entry_id),), {"coalesced": True}, countdown=REDRAFT_WINDOW_SECONDS
+            )
+        except Exception:
+            # The broker is down, so a fallback .delay would fail too. Release the
+            # key, or every redraft for 15 minutes would be dropped as "coalesced".
+            try:
+                await redis.delete(_redraft_key(entry_id))
+            except Exception:
+                log.warning("redraft_key_release_failed", entry_id=str(entry_id), exc_info=True)
+            raise
+    else:
+        log.info("redraft_coalesced", entry_id=str(entry_id))
 
 
 async def _generate_entry_draft(
-    entry_id_str: str, trigger: str = "background", *, reservation_key: str | None = None
+    entry_id_str: str,
+    trigger: str = "background",
+    *,
+    reservation_key: str | None = None,
+    coalesced: bool = False,
 ) -> None:
     from app.services.entry_location import update_place_and_weather
     from app.workers.llm import generate_draft_for_entry
     from app.workers.utils import db_session
 
+    if coalesced:
+        # Clear before the entry is read: a change from here on queues a new redraft.
+        from app.core.dependencies import get_redis
+
+        try:
+            await get_redis().delete(_redraft_key(entry_id_str))
+        except Exception:
+            log.warning("redraft_key_clear_failed", entry_id=entry_id_str, exc_info=True)
     if trigger not in ("regenerate", "background"):
         log.warning("generate_entry_draft_unknown_trigger", entry_id=entry_id_str, trigger=trigger)
     why: Literal["regenerate", "background"] = (
@@ -868,6 +945,7 @@ _BACKFILL_DISCONNECTED_MESSAGE = (
     "Reconnect it and run the backfill again."
 )
 _BACKFILL_FAILED_MESSAGE = "The backfill stopped because of a problem. Try again later."
+_BACKFILL_READ_ONLY_MESSAGE = "This diary is read-only on your plan, so the backfill didn't run."
 
 
 async def _backfill_diary(backfill_run_id_str: str) -> None:
@@ -875,8 +953,9 @@ async def _backfill_diary(backfill_run_id_str: str) -> None:
 
     from sqlalchemy import select
 
-    from app.models import BackfillRun, Diary, OAuthToken
+    from app.models import BackfillRun, Diary, OAuthToken, User
     from app.services.read_only import is_diary_read_only
+    from app.services.tier import BACKFILL_LIMIT_NOTE, limits_for
     from app.workers.backfill import BackfillLocked, ingest_failures_message, run_backfill
     from app.workers.token_refresh import ensure_fresh_access_token
     from app.workers.utils import db_session
@@ -896,12 +975,6 @@ async def _backfill_diary(backfill_run_id_str: str) -> None:
         if diary is None:
             return
 
-        if await is_diary_read_only(db, diary):
-            log.info(
-                "diary_read_only_skip", diary_id=str(diary.id), where="backfill"
-            )
-            return
-
         token_result = await db.execute(
             select(OAuthToken).where(
                 OAuthToken.user_id == diary.owner_user_id,
@@ -917,6 +990,23 @@ async def _backfill_diary(backfill_run_id_str: str) -> None:
                 backfill_run_id=backfill_run_id_str,
                 status=backfill_run.status,
             )
+            return
+
+        # Only a run still pending may be marked failed; a cancelled one stays as it is.
+        if await is_diary_read_only(db, diary):
+            log.info("diary_read_only_skip", diary_id=str(diary.id), where="backfill")
+            backfill_run.status = "failed"
+            backfill_run.completed_at = datetime.now(tz=UTC)
+            backfill_run.error = _BACKFILL_READ_ONLY_MESSAGE
+            return
+
+        # The owner may have downgraded since the run was queued.
+        owner = await db.get(User, diary.owner_user_id)
+        if owner is None or not limits_for(owner.subscription_tier).backfill:
+            log.info("backfill_not_on_plan", diary_id=str(diary.id), where="backfill")
+            backfill_run.status = "failed"
+            backfill_run.completed_at = datetime.now(tz=UTC)
+            backfill_run.error = BACKFILL_LIMIT_NOTE
             return
 
         backfill_run.status = "running"

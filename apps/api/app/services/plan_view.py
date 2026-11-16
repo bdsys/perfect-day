@@ -25,6 +25,8 @@ class OwnerPlanOut(BaseModel):
     resets_on: date
     photos_per_entry: int | None
     read_only: bool
+    backfill: bool
+    scan_past_days_max: int | None
 
 
 class MyPlanOut(BaseModel):
@@ -38,6 +40,8 @@ class MyPlanOut(BaseModel):
     resets_on: date
     photos_per_entry: int | None
     read_only_diary_ids: list[uuid.UUID]
+    backfill: bool
+    scan_past_days_max: int | None
 
 
 def _tier_of(user: User) -> str:
@@ -58,6 +62,8 @@ async def owner_plan_out(db: AsyncSession, diary: Diary) -> OwnerPlanOut:
         resets_on=usage.period.resets_on,
         photos_per_entry=limits.photos_per_entry,
         read_only=read_only,
+        backfill=limits.backfill,
+        scan_past_days_max=limits.scan_past_days,
     )
 
 
@@ -83,4 +89,6 @@ async def my_plan_out(db: AsyncSession, user: User) -> MyPlanOut:
         resets_on=usage.period.resets_on,
         photos_per_entry=limits.photos_per_entry,
         read_only_diary_ids=sorted(await read_only_diary_ids(db, user.id, tier)),
+        backfill=limits.backfill,
+        scan_past_days_max=limits.scan_past_days,
     )

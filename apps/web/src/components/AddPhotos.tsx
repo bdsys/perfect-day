@@ -3,13 +3,15 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError, type Entry, type Photo } from "../lib/api";
 import { PhotoThumbnail } from "./PhotoThumbnail";
 import LimitNote from "./LimitNote";
-import { PHOTO_LIMIT_NOTE } from "../lib/plan";
+import { PHOTO_LIMIT_NOTE, limitMessage } from "../lib/plan";
 
 const MAX_CONCURRENT = 3;
 const MAX_BYTES = 52428800; // 50 MB, the API's limit
 const TOO_BIG = "This photo is over 50 MB.";
 
 function friendlyUploadError(e: unknown): string {
+  const limit = limitMessage(e);
+  if (limit) return limit;
   if (e instanceof ApiError) {
     if (e.status === 413 || e.code === "size_exceeds_limit") return TOO_BIG;
     if (e.status === 415 || e.code === "unsupported_mime") return "This file isn't a photo we can use.";
@@ -161,7 +163,7 @@ export function AddPhotos({ entry, onChanged, googlePhotos, room = null }: Props
       setAttachedNow((prev) => new Set(prev).add(photoId));
       onChanged(await api.entries.get(entry.id));
     } catch (e) {
-      setAttachError(e instanceof Error ? e.message : "Failed to attach photo");
+      setAttachError(limitMessage(e) ?? (e instanceof Error ? e.message : "Failed to attach photo"));
     }
   }
 

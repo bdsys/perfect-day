@@ -7,9 +7,12 @@
  * Regenerate look broken, C-20). A lost connection gets a banner.
  */
 
+import { execFileSync } from 'node:child_process'
+import path from 'node:path'
 import { test, expect, request as playwrightRequest, type Page } from '@playwright/test'
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
+const REPO_ROOT = path.resolve(__dirname, '../../..')
 const HINT = 'Connect Google Calendar to scan for new events and backfill past ones.'
 // Next.js adds its own role="alert" route announcer, so the banner is found by its text.
 const BANNER = /Google Calendar is disconnected/
@@ -28,6 +31,14 @@ test.beforeAll(async () => {
     data: { name: 'Calendar Connection Diary', timezone: 'UTC' },
   })
   if (!diary.ok()) throw new Error(`Create diary failed: ${diary.status()} ${await diary.text()}`)
+  // Backfill is Plus and Family only; this suite checks the calendar states, not the plan.
+  execFileSync(
+    'docker',
+    ['compose', '-f', 'docker-compose.yml', '-f', 'docker-compose.test.yml', 'exec', '-T',
+      'postgres', 'psql', '-U', 'perfectday', '-d', 'perfectday_test', '-v', 'ON_ERROR_STOP=1',
+      '-c', `UPDATE users SET subscription_tier = 'plus' WHERE email = '${email}'`],
+    { cwd: REPO_ROOT, stdio: 'pipe' },
+  )
   shared.email = email
   shared.token = token
   shared.diaryId = ((await diary.json()) as { id: string }).id

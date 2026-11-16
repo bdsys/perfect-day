@@ -1,6 +1,6 @@
 # Item 18 — Tier enforcement (Free / Plus / Family)
 
-Status: design, agreed with Andrew in conversation on 2026-11-15. Not yet built.
+Status: built and merged to `main` on 2026-11-15 (#53 → #51). Andrew's decisions after the build change three points; see "Decisions after the build" at the end.
 Branch: `feat/18-tier-enforcement`, cut from `feat/14-photos-on-drafts` at `291b87b`. Its PR targets `feat/14-photos-on-drafts` and is rebased onto `main` once PR #51 merges. (Andrew: "I do not want you to redo ANY work".)
 
 ## Why
@@ -205,3 +205,11 @@ Andrew picked this from the mockups on 2026-11-15.
   - adding a second photo is blocked;
   - `manage.py users set-tier --tier plus` removes the badge.
 - `make test-all` green.
+
+## Decisions after the build (Andrew, 2026-11-15)
+
+These override the sections above where they disagree. Details, open questions and the fix list are in `design/tier-followups-2026-11.md`, and the work is PoC item 18.1. The 18.1 design, which settles the open questions, is `docs/superpowers/specs/2026-11-15-tier-followups-design.md`.
+
+1. **Automatic redrafts are free.** A background redraft triggered by a calendar change spends no AI draft. The first automatic draft of a new entry, and every Generate, Polish or Regenerate, still count. (That last part is Claude's reading, for Andrew to confirm.)
+2. **Inviting stays allowed on a read-only diary.** This is unchanged; invitation and permission endpoints were never guarded.
+3. **Backfill is a paid feature (Plus and Family).** Free gets a grayed-out Backfill control with Upgrade now, and the API returns 403 `tier_limit` with `source: "backfill"`.

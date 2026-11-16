@@ -76,7 +76,7 @@ async def test_scan_after_disconnect_mid_run_reports_disconnected(client, db_ses
 async def test_backfill_after_disconnect_mid_run_fails_cleanly(client, db_session):
     from app.workers.tasks import _backfill_diary
 
-    diary = await _diary_with_google(db_session)
+    diary = await _diary_with_google(db_session, tier="plus")
     await db_session.refresh(diary)
     run = BackfillRun(
         diary_id=diary.id,

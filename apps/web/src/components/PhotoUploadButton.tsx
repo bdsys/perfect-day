@@ -1,6 +1,7 @@
 "use client";
 import { useRef, useState } from "react";
 import { api, Photo } from "../lib/api";
+import { limitMessage } from "../lib/plan";
 
 interface Props {
   onUploaded: (photo: Photo) => void;
@@ -28,7 +29,7 @@ export function PhotoUploadButton({ onUploaded, className, label = "Upload photo
         onUploaded(photo);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "upload failed");
+      setError(limitMessage(err) ?? (err instanceof Error ? err.message : "upload failed"));
     } finally {
       input.value = "";
       setProgress(null);

@@ -141,7 +141,7 @@ async def test_post_then_delete_then_worker_exits_cleanly(client, db_session):
     """If run is already cancelled when worker starts, no chunks are fetched."""
     from tests.fixtures.factories import make_diary, make_user
 
-    user = await make_user(db_session)
+    user = await make_user(db_session, subscription_tier="plus")
     diary = await make_diary(db_session, owner=user)
     run = await _make_run(db_session, diary.id, date(2026, 5, 1), date(2026, 5, 22))
 
@@ -201,7 +201,7 @@ SERIES_AND_ONE_OTHER = [
 async def _diary_with_series_rule(db_session):
     from tests.fixtures.factories import make_diary, make_user
 
-    user = await make_user(db_session)
+    user = await make_user(db_session, subscription_tier="plus")
     diary = await make_diary(db_session, owner=user, timezone="UTC")
     db_session.add(
         AutoCreationRule(
@@ -534,3 +534,34 @@ async def test_backfill_other_failure_gives_a_generic_message(client, db_session
     failed = await _run_failing_backfill(db_session, RuntimeError("secret parent@example.com"))
     assert failed.status == "failed"
     assert failed.error == "The backfill stopped because of a problem. Try again later."
+
+
+async def test_downgraded_owner_backfill_run_fails(client, db_session):
+    """Review Focus 1: a run queued before a downgrade fails; Google is never called."""
+    from app.services.tier import BACKFILL_LIMIT_NOTE
+    from app.workers.tasks import _backfill_diary
+    from tests.fixtures.factories import make_diary, make_user
+
+    user = await make_user(db_session, subscription_tier="free")
+    diary = await make_diary(db_session, owner=user)
+    run = BackfillRun(
+        diary_id=diary.id,
+        from_date=date(2026, 5, 1),
+        to_date=date(2026, 5, 8),
+        sources=["google_calendar"],
+        status="pending",
+    )
+    db_session.add(run)
+    await db_session.commit()
+    run_id = run.id
+
+    with patch("app.workers.backfill.run_backfill", new=AsyncMock()) as backfill:
+        await _backfill_diary(str(run_id))
+
+    backfill.assert_not_awaited()
+    db_session.expire_all()
+    rows = await db_session.execute(select(BackfillRun).where(BackfillRun.id == run_id))
+    run = rows.scalar_one()
+    assert run.status == "failed"
+    assert run.completed_at is not None
+    assert run.error == BACKFILL_LIMIT_NOTE

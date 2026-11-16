@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
 import { api, ApiError, type Rule } from '@/lib/api'
+import { limitMessage } from '@/lib/plan'
 import { useAuth } from '@/lib/auth-context'
 
 export default function RulesListPage() {
@@ -43,7 +44,7 @@ export default function RulesListPage() {
       const updated = await api.rules.patch(rule.id, { enabled: !rule.enabled })
       setRules(prev => prev.map(r => r.id === rule.id ? updated : r))
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to update rule')
+      setError(limitMessage(e) ?? (e instanceof Error ? e.message : 'Failed to update rule'))
     } finally {
       setToggling(null)
     }
@@ -56,7 +57,7 @@ export default function RulesListPage() {
       await api.rules.delete(rule.id)
       setRules(prev => prev.filter(r => r.id !== rule.id))
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to delete rule')
+      setError(limitMessage(e) ?? (e instanceof Error ? e.message : 'Failed to delete rule'))
     } finally {
       setDeleting(null)
     }
@@ -71,7 +72,7 @@ export default function RulesListPage() {
       setApplySuccess(rule.id)
       setTimeout(() => setApplySuccess(null), 4000)
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to apply rule')
+      setError(limitMessage(e) ?? (e instanceof Error ? e.message : 'Failed to apply rule'))
     } finally {
       setApplying(null)
     }

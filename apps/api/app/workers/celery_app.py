@@ -52,6 +52,10 @@ def create_celery() -> Celery:
                 "task": "app.workers.beat_tasks.sweep_stuck_photo_imports",
                 "schedule": timedelta(minutes=10),
             },
+            "release-lost-ai-drafts": {
+                "task": "app.workers.beat_tasks.release_lost_ai_drafts",
+                "schedule": timedelta(minutes=10),
+            },
             "sweep-orphaned-photos": {
                 "task": "app.workers.beat_tasks.sweep_orphaned_photos",
                 "schedule": timedelta(hours=6),

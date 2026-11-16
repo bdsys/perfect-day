@@ -94,6 +94,7 @@ Replaces the Free / Tier 1 / Tier 2 structure in `docs/archive/OPUS_INITIAL_PLAN
 | Manual entries | Unlimited | Unlimited | Unlimited |
 | **AI auto-generated drafts** | **5/month** | Unlimited | Unlimited |
 | Photos per entry | 1 | Unlimited | Unlimited |
+| Backfill (past events); Free scans look back 90 days | No | Yes | Yes |
 | Calendar + Photos integration (automatic photos need the mobile app, `design/11-mobile-app.md`) | Yes | Yes | Yes |
 | Weather enrichment | Yes | Yes | Yes |
 | Music enrichment (Spotify/Apple Music) | No | Yes | Yes |

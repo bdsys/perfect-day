@@ -147,3 +147,24 @@ async def test_viewer_never_sees_owner_plan(client: AsyncClient, db_session: Asy
     e = await client.get(f"/v1/entries/{entry.id}", headers=_auth(viewer))
     assert e.status_code == 200, e.text
     assert e.json()["plan"] is None
+
+
+async def test_owner_plan_backfill_fields(client: AsyncClient, db_session: AsyncSession) -> None:
+    free = await make_user(db_session, subscription_tier="free")
+    free_diary = await make_diary(db_session, free)
+    plus = await make_user(db_session, subscription_tier="plus")
+    plus_diary = await make_diary(db_session, plus)
+
+    d = (await client.get(f"/v1/diaries/{free_diary.id}", headers=_auth(free))).json()
+    assert d["plan"]["backfill"] is False
+    assert d["plan"]["scan_past_days_max"] == 90
+    d = (await client.get(f"/v1/diaries/{plus_diary.id}", headers=_auth(plus))).json()
+    assert d["plan"]["backfill"] is True
+    assert d["plan"]["scan_past_days_max"] is None
+
+    me = (await client.get("/v1/auth/me/plan", headers=_auth(free))).json()
+    assert me["backfill"] is False
+    assert me["scan_past_days_max"] == 90
+    me = (await client.get("/v1/auth/me/plan", headers=_auth(plus))).json()
+    assert me["backfill"] is True
+    assert me["scan_past_days_max"] is None

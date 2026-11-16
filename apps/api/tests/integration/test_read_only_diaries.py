@@ -202,3 +202,64 @@ async def test_beat_dispatches_only_writable_diaries(
         await _dispatch_due_scans()
     dispatched = {c.args[0] for c in delay.call_args_list}
     assert dispatched == {str(world.a.id)}
+
+
+async def test_read_only_wins_over_backfill_limit(client: AsyncClient, world: World) -> None:
+    """R2: a Free owner's read-only diary says read-only, not "backfill is Plus"."""
+    r = await client.post(
+        f"/v1/diaries/{world.b.id}/scan/backfill",
+        json={"from_date": "2025-01-01", "to_date": "2025-01-31"},
+        headers=_auth(world.owner),
+    )
+    _assert_read_only(r)
+
+
+async def _run_on_read_only_diary(db_session: AsyncSession, world: World, status: str):
+    from datetime import date
+
+    from app.models import BackfillRun
+
+    run = BackfillRun(
+        diary_id=world.b.id,
+        from_date=date(2025, 1, 1),
+        to_date=date(2025, 1, 31),
+        sources=["google_calendar"],
+        status=status,
+        error="earlier" if status == "cancelled" else None,
+    )
+    db_session.add(run)
+    await db_session.commit()
+    return run
+
+
+async def test_read_only_backfill_run_finishes(
+    client: AsyncClient, db_session: AsyncSession, world: World) -> None:
+    from app.models import BackfillRun
+    from app.workers.tasks import _backfill_diary
+
+    run = await _run_on_read_only_diary(db_session, world, "pending")
+    run_id = run.id
+    await _backfill_diary(str(run_id))
+    db_session.expire_all()
+    rows = await db_session.execute(select(BackfillRun).where(BackfillRun.id == run_id))
+    run = rows.scalar_one()
+    assert run.status == "failed"
+    assert run.completed_at is not None
+    assert run.error == "This diary is read-only on your plan, so the backfill didn't run."
+
+
+async def test_cancelled_backfill_run_stays_cancelled_when_read_only(
+    client: AsyncClient,
+    db_session: AsyncSession, world: World
+) -> None:
+    from app.models import BackfillRun
+    from app.workers.tasks import _backfill_diary
+
+    run = await _run_on_read_only_diary(db_session, world, "cancelled")
+    run_id = run.id
+    await _backfill_diary(str(run_id))
+    db_session.expire_all()
+    rows = await db_session.execute(select(BackfillRun).where(BackfillRun.id == run_id))
+    run = rows.scalar_one()
+    assert run.status == "cancelled"
+    assert run.error == "earlier"

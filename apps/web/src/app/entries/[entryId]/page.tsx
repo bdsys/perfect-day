@@ -3,7 +3,7 @@
 import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
-import { api, ApiError, type Entry, type OwnerPlan } from '@/lib/api'
+import { api, type Entry, type OwnerPlan } from '@/lib/api'
 import { formatEventTime } from '@/lib/eventTime'
 import { PhotoThumbnail } from '@/components/PhotoThumbnail'
 import { PhotoLightbox } from '@/components/PhotoLightbox'
@@ -20,13 +20,13 @@ import { PhotoImportNotice } from '@/components/PhotoImportNotice'
 import { googleStatusMessage } from '@/lib/googleStatus'
 import PlanBadge from '@/components/PlanBadge'
 import LimitNote from '@/components/LimitNote'
-import { aiEntryNote, aiLimitNote, formatResetDate, readOnlyBanner } from '@/lib/plan'
+import { aiEntryNote, aiLimitNote, formatResetDate, limitMessage, readOnlyBanner } from '@/lib/plan'
 
 function planDetails(plan: OwnerPlan & { ai_drafts_limit: number }) {
   return [
     {
       label: 'AI drafts',
-      text: `${plan.ai_drafts_left ?? 0} of ${plan.ai_drafts_limit} left, resets ${formatResetDate(plan.resets_on)}`,
+      text: `${plan.ai_drafts_left ?? 0} of ${plan.ai_drafts_limit} left · resets ${formatResetDate(plan.resets_on)}`,
     },
     {
       label: 'Photos per entry',
@@ -152,7 +152,7 @@ function EntryDetailPageInner() {
       setEntry(updated)
       setEditing(false)
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Save failed')
+      setError(limitMessage(e, plan) ?? (e instanceof Error ? e.message : 'Save failed'))
     } finally {
       setSaving(false)
     }
@@ -165,7 +165,7 @@ function EntryDetailPageInner() {
       const updated = await api.entries.publish(entry.id)
       setEntry(updated)
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Publish failed')
+      setError(limitMessage(e, plan) ?? (e instanceof Error ? e.message : 'Publish failed'))
     } finally {
       setPublishing(false)
     }
@@ -178,7 +178,7 @@ function EntryDetailPageInner() {
       const updated = await api.entries.unpublish(entry.id)
       setEntry(updated)
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Unpublish failed')
+      setError(limitMessage(e, plan) ?? (e instanceof Error ? e.message : 'Unpublish failed'))
     } finally {
       setPublishing(false)
     }
@@ -198,11 +198,7 @@ function EntryDetailPageInner() {
       setPollingRegen(true)
       setError('')
     } catch (e: unknown) {
-      if (e instanceof ApiError && e.code === 'tier_limit') {
-        setError(plan ? aiLimitNote(plan.resets_on) : 'No AI drafts left this month.')
-      } else {
-        setError(e instanceof Error ? e.message : 'Regenerate failed')
-      }
+      setError(limitMessage(e, plan) ?? (e instanceof Error ? e.message : 'Regenerate failed'))
     }
   }
 
@@ -275,7 +271,7 @@ function EntryDetailPageInner() {
       setRegenResult(null)
       setRegenStartTime(null)
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Could not update the suggestion')
+      setError(limitMessage(e, plan) ?? (e instanceof Error ? e.message : 'Could not update the suggestion'))
     } finally {
       setAnsweringSuggestion(false)
     }
@@ -343,7 +339,7 @@ function EntryDetailPageInner() {
           <span style={{ fontSize: '0.875rem', color: 'var(--text-muted)' }}>{formatDateRange(entry.entry_date, entry.entry_end_date)}</span>
           <WeatherBadge enrichments={entry.enrichments ?? []} />
         </div>
-        {!editing && <EntryPlace entry={entry} onUpdated={setEntry} />}
+        {!editing && <EntryPlace entry={entry} onUpdated={setEntry} readOnly={readOnly} />}
         {!editing && entry.can_edit && (
           <AddPhotos
             entry={entry}
@@ -490,6 +486,7 @@ function EntryDetailPageInner() {
               <SuggestionBox
                 suggestion={entry.suggestion}
                 busy={answeringSuggestion}
+                readOnly={readOnly}
                 onAccept={() => answerSuggestion('accept')}
                 onDismiss={() => answerSuggestion('dismiss')}
               />
@@ -532,7 +529,7 @@ function EntryDetailPageInner() {
                         type="button"
                         className="thumbnail-action"
                         aria-label="Remove photo from entry"
-                        disabled={removingIds.has(p.id)}
+                        disabled={removingIds.has(p.id) || readOnly}
                         onClick={async (e) => {
                           e.stopPropagation();
                           if (removingIds.has(p.id)) return;
@@ -542,7 +539,7 @@ function EntryDetailPageInner() {
                             const refreshed = await api.entries.get(entry.id)
                             setEntry(refreshed)
                           } catch (err: unknown) {
-                            setError(err instanceof Error ? err.message : 'Failed to remove photo')
+                            setError(limitMessage(err, plan) ?? (err instanceof Error ? err.message : 'Failed to remove photo'))
                           } finally {
                             setRemovingIds(prev => { const next = new Set(prev); next.delete(p.id); return next; })
                           }

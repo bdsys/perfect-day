@@ -115,6 +115,19 @@ def sweep_stuck_photo_imports() -> None:
     run_sync(sweep_stuck_imports())
 
 
+@celery_app.task(name="app.workers.beat_tasks.release_lost_ai_drafts")
+def release_lost_ai_drafts() -> int:
+    return run_sync(_release_lost_ai_drafts())
+
+
+async def _release_lost_ai_drafts() -> int:
+    from app.services.ai_drafts import release_lost_ai_drafts as sweep
+    from app.workers.utils import db_session
+
+    async with db_session() as db:
+        return await sweep(db)
+
+
 @celery_app.task(name="app.workers.beat_tasks.sweep_orphaned_photos")
 def sweep_orphaned_photos() -> None:
     run_sync(_sweep_orphaned_photos())

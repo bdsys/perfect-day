@@ -99,7 +99,11 @@ async def evaluate_event_against_rules(
     Queues ``generate_entry_draft`` after commit, once per entry that needs it.
     """
     # Import here to avoid circular imports (tasks → rules → tasks)
-    from app.workers.tasks import generate_entry_draft, queue_location_refresh  # noqa: PLC0415
+    from app.workers.tasks import (  # noqa: PLC0415
+        generate_entry_draft,
+        queue_location_refresh,
+        queue_redraft,
+    )
 
     event_uuid = uuid.UUID(event_id)
     diary_uuid = uuid.UUID(diary_id)
@@ -144,8 +148,9 @@ async def evaluate_event_against_rules(
     entry_id: uuid.UUID | None = None
     needs_draft = False
     joined_without_draft = False
+    joined_existing = False
     if matching:
-        entry_id, needs_draft, joined_without_draft = await _entry_for_event(
+        entry_id, needs_draft, joined_without_draft, joined_existing = await _entry_for_event(
             db, event, diary_uuid, matching[0]
         )
 
@@ -168,7 +173,10 @@ async def evaluate_event_against_rules(
 
     if entry_id is not None and needs_draft:
         try:
-            generate_entry_draft.delay(str(entry_id))
+            if joined_existing:
+                await queue_redraft(entry_id)  # coalesced; a new entry is drafted at once
+            else:
+                generate_entry_draft.delay(str(entry_id))
         except Exception:
             log.exception("evaluate_rules_llm_queue_failed", entry_id=str(entry_id))
     elif entry_id is not None and joined_without_draft:
@@ -178,17 +186,20 @@ async def evaluate_event_against_rules(
 
 async def _entry_for_event(
     db: AsyncSession, event: Event, diary_id: uuid.UUID, rule: AutoCreationRule
-) -> tuple[uuid.UUID | None, bool, bool]:
+) -> tuple[uuid.UUID | None, bool, bool, bool]:
     """Find or create the entry *event* belongs to, grouped as *rule* says.
 
-    Returns ``(entry_id, needs_draft, joined_without_draft)``. ``entry_id`` is
-    None only when the diary no longer exists; a new entry is always created
-    when none matches (plans cap AI drafts, not entries). ``joined_without_draft`` is True when the event joined an existing
-    series entry that is not being redrafted, so its place needs a refresh.
+    Returns ``(entry_id, needs_draft, joined_without_draft, joined_existing)``.
+    ``entry_id`` is None only when the diary no longer exists; a new entry is
+    always created when none matches (plans cap AI drafts, not entries).
+    ``joined_without_draft`` is True when the event joined an existing series
+    entry that is not being redrafted, so its place needs a refresh.
+    ``joined_existing`` is True when the event joined an existing spanning
+    entry that is being redrafted, so the redraft is coalesced.
     """
     diary = (await db.execute(select(Diary).where(Diary.id == diary_id))).scalar_one_or_none()
     if diary is None:
-        return None, False, False
+        return None, False, False, False
 
     payload = event.payload or {}
     raw_event = {"start": payload.get("start", {}), "end": payload.get("end", {})}
@@ -228,7 +239,7 @@ async def _entry_for_event(
             )
         ).scalar_one_or_none()
         if claim is not None:
-            return claim.entry_id, False, True
+            return claim.entry_id, False, True, False
 
         new_id = await _new_entry(None)  # series entries don't span
         db.add(
@@ -236,7 +247,7 @@ async def _entry_for_event(
                 rule_id=rule.id, recurring_event_id=recurring_event_id, entry_id=new_id
             )
         )
-        return new_id, True, False
+        return new_id, True, False, False
 
     if spanning:
         # Join an existing rule-created entry with exactly the same date range
@@ -273,9 +284,9 @@ async def _entry_for_event(
                 entry_date=str(entry_date),
                 entry_end_date=str(entry_end_date) if entry_end_date else None,
             )
-            # Redraft so the text covers the event that just joined. Known
-            # follow-up: N grouped events in one scan mean N regenerations.
-            return existing.id, True, False
+            # Redraft so the text covers the event that just joined; the
+            # caller coalesces a burst of joins into one redraft.
+            return existing.id, True, False, True
 
     new_id = await _new_entry(entry_end_date if spanning else None)
-    return new_id, True, False
+    return new_id, True, False, False

@@ -239,3 +239,53 @@ async def test_backfill_nonexistent_rule_returns_silently(
         # Should not raise
         await _apply_rule_backfill(str(uuid.uuid4()), days=7)
     mock_task.delay.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Free plan: rule backfill looks back at most 90 days
+# ---------------------------------------------------------------------------
+
+
+async def _free_rule(client, db_session, email):
+    _, auth, diary = await _setup(client, email)
+    created = (
+        await client.post(
+            f"/v1/diaries/{diary['id']}/rules",
+            json={
+                "name": "R",
+                "condition": {
+                    "op": "AND",
+                    "children": [{"field": "title", "op": "contains", "value": "x"}],
+                },
+            },
+            headers=auth,
+        )
+    ).json()
+    return auth, created
+
+
+async def test_free_rule_apply_capped(client: AsyncClient, db_session: AsyncSession) -> None:
+    auth, rule = await _free_rule(client, db_session, "rule-cap@example.com")
+    with patch("app.workers.tasks.apply_rule_backfill") as task:
+        task.delay = MagicMock()
+        r = await client.post(f"/v1/rules/{rule['id']}/apply", json={"days": 91}, headers=auth)
+        assert r.status_code == 403, r.text
+        assert r.json()["detail"]["details"]["source"] == "backfill"
+        task.delay.assert_not_called()
+        r = await client.post(f"/v1/rules/{rule['id']}/apply", json={"days": 90}, headers=auth)
+        assert r.status_code == 200
+        assert r.json() == {"queued": True}
+        task.delay.assert_called_once()
+
+
+async def test_downgraded_owner_rule_apply_skipped(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    _, rule = await _free_rule(client, db_session, "rule-down@example.com")
+    with (
+        patch("app.workers.rules.evaluate_event_against_rules") as evaluate,
+        patch("app.workers.tasks.log") as log,
+    ):
+        await _apply_rule_backfill(rule["id"], days=91)
+    evaluate.assert_not_called()
+    assert any(c.args[0] == "backfill_not_on_plan" for c in log.info.call_args_list)
