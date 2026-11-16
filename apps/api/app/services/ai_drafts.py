@@ -9,10 +9,11 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta, tzinfo
+from typing import cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import structlog
-from sqlalchemy import delete, exists, func, select, text
+from sqlalchemy import CursorResult, delete, exists, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import AiDraftSpend, Diary, LLMGeneration, User
@@ -156,6 +157,6 @@ async def release_lost_ai_drafts(db: AsyncSession, now: datetime | None = None) 
             ~succeeded,
         )
     )
-    count = result.rowcount or 0
+    count = cast(CursorResult, result).rowcount or 0
     log.info("released_lost_ai_drafts", count=count)
     return count
