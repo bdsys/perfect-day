@@ -359,6 +359,75 @@ async def test_editor_regenerate_spends_owner_quota(
     assert [s.user_id for s in spends] == [owner.id]
 
 
+async def _prior_success(db: AsyncSession, entry: Entry) -> None:
+    db.add(
+        LLMGeneration(
+            entry_id=entry.id, model="m", prompt_hash="h", status="success", mode="events"
+        )
+    )
+    await db.commit()
+
+
+async def test_background_redraft_free_at_limit(db_url: str, db_session: AsyncSession) -> None:
+    owner, entry = await _owner_with_entry(
+        db_session, body="A swim lesson.", body_source="llm"
+    )
+    await _prior_success(db_session, entry)
+    await _spend(db_session, owner, 5)
+    provider = _provider()
+
+    await _run_draft(db_url, entry.id, provider, trigger="background", reservation_key="task-9")
+
+    provider.generate.assert_awaited()
+    assert (await _reload(db_session, entry.id)).body_source == "llm"
+    assert await _used(db_session, owner) == 5
+    new = [g for g in await _generations(db_session, entry.id) if g.model == "claude-opus-5-5"]
+    assert [(g.status, g.reservation_key) for g in new] == [("success", None)]
+
+
+async def test_first_background_draft_blocked_at_limit(
+    db_url: str, db_session: AsyncSession
+) -> None:
+    owner, entry = await _owner_with_entry(db_session)
+    await _spend(db_session, owner, 5)
+    provider = _provider()
+
+    await _run_draft(db_url, entry.id, provider, trigger="background")
+
+    provider.generate.assert_not_awaited()
+    [gen] = await _generations(db_session, entry.id)
+    assert gen.error == AI_DRAFT_LIMIT_ERROR
+    assert await _used(db_session, owner) == 5
+
+
+async def test_regenerate_counts_even_with_prior_draft(
+    db_url: str, db_session: AsyncSession
+) -> None:
+    owner, entry = await _owner_with_entry(
+        db_session, body="A swim lesson.", body_source="llm"
+    )
+    await _prior_success(db_session, entry)
+    await _spend(db_session, owner, 4)
+
+    await _run_draft(db_url, entry.id, _provider(), trigger="regenerate")
+
+    assert await _used(db_session, owner) == 5
+
+
+async def test_free_redraft_keeps_parents_text(db_url: str, db_session: AsyncSession) -> None:
+    owner, entry = await _owner_with_entry(
+        db_session, body="We went to the park.", body_source="user"
+    )
+    await _prior_success(db_session, entry)
+    await _spend(db_session, owner, 5)
+
+    await _run_draft(db_url, entry.id, _provider(), trigger="background")
+
+    reloaded = await _reload(db_session, entry.id)
+    assert (reloaded.body_markdown, reloaded.body_source) == ("We went to the park.", "user")
+    assert await _used(db_session, owner) == 5
+
+
 # ---------------------------------------------------------------------------
 # The sweeper for drafts lost to a killed worker
 # ---------------------------------------------------------------------------

@@ -546,6 +546,7 @@ async def _generate_draft(
     from app.services.read_only import is_diary_read_only
     from app.workers.event_changes import MACHINE_ONLY_BODY_SOURCES
 
+    free_redraft = False  # set when no draft was reserved for this run
     async with db_session() as db:
         entry_result = await db.execute(
             select(Entry)
@@ -624,9 +625,23 @@ async def _generate_draft(
         owner = (
             await db.execute(select(User).where(User.id == diary.owner_user_id))
         ).scalar_one()
-        reserved = await reserve_ai_draft(
-            db, owner=owner, entry_id=entry.id, key=reservation_key
-        )
+        # An automatic redraft of an entry that already has an AI draft is
+        # free: no reservation, so it cannot be refused at the limit. Rows it
+        # writes carry no reservation key (nothing was reserved to give back).
+        if trigger == "background" and (
+            await db.execute(
+                select(LLMGeneration.id)
+                .where(LLMGeneration.entry_id == entry.id, LLMGeneration.status == "success")
+                .limit(1)
+            )
+        ).first() is not None:
+            free_redraft = True
+            log.info("redraft_free", entry_id=str(entry_id))
+            reserved = True
+        else:
+            reserved = await reserve_ai_draft(
+                db, owner=owner, entry_id=entry.id, key=reservation_key
+            )
         if not reserved:
             # Out of AI drafts this month: no provider call. An empty entry, or
             # machine-only text a background redraft would have replaced (e.g.
@@ -656,6 +671,7 @@ async def _generate_draft(
         "hybrid": SYSTEM_PROMPT_HYBRID,
     }
     system_prompt = _SYSTEM_PROMPT_MAP[mode]
+    row_key = None if free_redraft else reservation_key
 
     diary_context, entry_data = build_prompt(
         diary, entry, events, enrichments, mode=mode, body_seed=body if parents_writing else ""
@@ -862,7 +878,7 @@ async def _generate_draft(
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
                 error=gen_error,
-                reservation_key=reservation_key if llm_usable else None,
+                reservation_key=row_key if llm_usable else None,
             )
         elif llm_usable:
             assert llm_result is not None  # guaranteed by llm_usable check above
@@ -886,7 +902,7 @@ async def _generate_draft(
                 mode=mode,
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
-                reservation_key=reservation_key,
+                reservation_key=row_key,
             )
         elif mode in ("polish", "hybrid") or leave_entry_unchanged:
             # Safety guard: NEVER overwrite user-typed body_markdown on failure.
