@@ -461,7 +461,7 @@ async def _cancel_calendar_event(external_id: str, diary_id: str) -> None:
         ).scalar_one_or_none()
         if event is None:
             return  # never stored, or already removed
-        entry_to_redraft = await release_event_from_entry(db, event)
+        entry_to_redraft = await release_event_from_entry(db, event, photos_count_as_touched=True)
         await db.delete(event)
 
     # The session has committed; only now can a worker see the change.
