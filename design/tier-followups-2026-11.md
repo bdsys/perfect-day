@@ -43,6 +43,14 @@ The 18.1 design records these as D1–D6: `docs/superpowers/specs/2026-11-15-tie
 - **18.1-g:** an untouched "New entry from Google Calendar" draft whose event is cancelled goes to Trash, as rule drafts already do.
 - **This doc branch** is folded into `feat/18.1-tier-followups`, so everything ships in one PR.
 
+### Decision after the 18.1 build (Andrew, 2026-11-16)
+
+- **Deleting a past event sends its untouched AI draft to Trash. Andrew confirmed this is fine.**
+  - Drafts are only made after their event has ended. So when Google reports one of these events as cancelled, it nearly always means someone deleted a past event from their calendar, not that the event didn't happen.
+  - The rule applies only when nobody has touched the draft: the text is still the AI's, it isn't published, and it has no photos. The draft goes to Trash, where it can be restored; nothing is destroyed.
+  - Code: `release_event_from_entry` and `is_untouched_auto_draft` in `apps/api/app/workers/event_changes.py`.
+  - **Revisit this if** parents report entries vanishing after they tidy up their calendar. One option then would be to keep the draft and show a "this event was removed from your calendar" note instead.
+
 ## To fix — PoC item 18.1 (built)
 
 These are visible to a parent. Each fix needed its own failing test first. All nine rows are built on `feat/18.1-tier-followups`; the Status column lists the commits. Design: `docs/superpowers/specs/2026-11-15-tier-followups-design.md`.
