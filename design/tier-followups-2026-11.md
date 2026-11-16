@@ -31,6 +31,18 @@ These change the spec. Its "Decisions after the build" section points here.
      - Does the 90-day first-scan window stay free? Claude's suggestion: yes. It's the normal first scan, not a backfill.
      - `COMPETITION.md`'s plan table needs a "Backfill" row.
 
+### Answers to the open questions (Andrew, 2026-11-15, second round)
+
+The 18.1 design records these as D1–D6: `docs/superpowers/specs/2026-11-15-tier-followups-design.md`.
+- **Which drafts are free:** any automatic redraft of an entry that already has an AI draft. That covers an event cancelled or moved, and a new event joining the entry. Redrafting on an *edited* event doesn't exist yet; it's backlog row 33. The first automatic draft still counts. The code's `trigger="background"` also labels first drafts (`workers/rules.py:171`, `routers/v1/calendar_events.py:152`), so "free" is decided by whether the entry already has an AI draft, not by the trigger.
+- **Cost ceiling:** coalesce, with at most one free redraft per entry per ~10 minutes and no monthly cap.
+- **Backfill scope:** the date-range Backfill is paid. Free looks back at most 90 days everywhere:
+  - Rule "apply to past events" is capped at 90 days on Free, not fully paid. It only re-checks events already stored (`workers/tasks.py:661-668`), so a fully paid Apply would stop a Free parent's new rule from ever matching their own last 90 days.
+  - A Scan with "Past days" over 90 is paid: the Scan ⚙ menu allowed up to 3650 days (`[diaryId]/page.tsx:432-439`, `routers/v1/scan.py:25`), which was a free backfill. The normal 90-day scan stays free. Future days are not limited.
+- **Inviting:** no change (decision 2).
+- **18.1-g:** an untouched "New entry from Google Calendar" draft whose event is cancelled goes to Trash, as rule drafts already do.
+- **This doc branch** is folded into `feat/18.1-tier-followups`, so everything ships in one PR.
+
 ## To fix — PoC item 18.1
 
 These are visible to a parent. Each fix needs its own failing test first.
