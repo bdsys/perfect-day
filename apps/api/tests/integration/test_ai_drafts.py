@@ -421,8 +421,16 @@ async def test_free_redraft_keeps_parents_text(db_url: str, db_session: AsyncSes
     await _prior_success(db_session, entry)
     await _spend(db_session, owner, 5)
 
-    await _run_draft(db_url, entry.id, _provider(), trigger="background")
+    provider = _provider()
 
+    await _run_draft(db_url, entry.id, provider, trigger="background")
+
+    # The free path ran: the model was called and no limit marker was written.
+    provider.generate.assert_awaited()
+    gens = await _generations(db_session, entry.id)
+    assert not [g for g in gens if g.error == AI_DRAFT_LIMIT_ERROR]
+    new = [g for g in gens if g.model == "claude-opus-5-5"]
+    assert [(g.status, g.reservation_key) for g in new] == [("success", None)]
     reloaded = await _reload(db_session, entry.id)
     assert (reloaded.body_markdown, reloaded.body_source) == ("We went to the park.", "user")
     assert await _used(db_session, owner) == 5
