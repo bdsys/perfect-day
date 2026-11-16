@@ -338,6 +338,20 @@ describe('diary page: gray out what the API refuses', () => {
     expect(upgrade).toHaveAttribute('href', '/plans')
   })
 
+  it('Free: a co-parent with edit access sees no Upgrade now under Backfill', async () => {
+    ;(api.diaries.get as jest.Mock).mockResolvedValue(planOf({}))
+    ;(api.diaries.getScanConfig as jest.Mock).mockResolvedValue({
+      can_scan: false, calendar: null, scan_enabled: true, scan_interval_minutes: 60,
+      last_scan_status: null, next_scan_after: null, consecutive_failures: 0,
+    })
+    render(<DiaryDetailPage />)
+    const btn = await screen.findByRole('button', { name: 'Backfill' })
+    await waitFor(() => expect(api.diaries.getScanConfig).toHaveBeenCalled())
+    expect(btn).toBeDisabled()
+    expect(within(btn.parentElement!).queryByRole('link', { name: 'Upgrade now' })).toBeNull()
+    expect(screen.queryByText(BACKFILL_NOTE)).toBeNull()
+  })
+
   it('Free: Past days has max 90, a typed 365 is sent as 90, and the note shows', async () => {
     ;(api.diaries.get as jest.Mock).mockResolvedValue(planOf({}))
     ;(api.diaries.triggerScan as jest.Mock).mockResolvedValue({ queued: true })

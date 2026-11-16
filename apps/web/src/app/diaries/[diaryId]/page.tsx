@@ -473,11 +473,11 @@ export default function DiaryDetailPage() {
                 className="btn btn-secondary"
                 onClick={() => setShowBackfillOptions((v) => !v)}
                 disabled={pollingBackfill || calendarOff || backfillOff}
-                aria-describedby={backfillOff ? 'backfill-limit-note' : scanHint ? 'calendar-hint' : undefined}
+                aria-describedby={backfillOff && isOwner ? 'backfill-limit-note' : scanHint ? 'calendar-hint' : undefined}
               >
                 {pollingBackfill ? 'Backfilling…' : 'Backfill'}
               </button>
-              {backfillOff && (
+              {backfillOff && isOwner && (
                 <>
                   <LimitNote id="backfill-limit-note">{BACKFILL_LIMIT_NOTE}</LimitNote>
                   <Link href="/plans" className="plan-upgrade">Upgrade now</Link>
