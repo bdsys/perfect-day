@@ -310,9 +310,15 @@ class TestDeletedAccountIsNotScanned:
 
 class TestJobsQueuedAfterCommit:
     async def test_backfill_run_is_committed_when_the_job_is_queued(
-        self, client: AsyncClient, sync_engine
+        self, client: AsyncClient, db_session: AsyncSession, sync_engine
     ):
         auth, diary = await _register_with_diary(client, "c4-backfill@example.com")
+        await db_session.execute(
+            update(User).where(User.email == "c4-backfill@example.com").values(
+                subscription_tier="plus"
+            )
+        )
+        await db_session.commit()
         seen: list[bool] = []
 
         def _on_queue(run_id: str) -> None:
@@ -501,7 +507,7 @@ class TestBackfillCancellation:
         from app.workers.backfill import BackfillCounts
         from app.workers.tasks import _backfill_diary
 
-        user = await make_user(db_session)
+        user = await make_user(db_session, subscription_tier="plus")
         diary = await make_diary(db_session, owner=user)
         await _google_token(db_session, user.id)
         run = await self._run(db_session, diary, "cancelled")
@@ -522,7 +528,7 @@ class TestBackfillCancellation:
         from app.workers.backfill import BackfillCounts
         from app.workers.tasks import _backfill_diary
 
-        user = await make_user(db_session)
+        user = await make_user(db_session, subscription_tier="plus")
         diary = await make_diary(db_session, owner=user)
         await _google_token(db_session, user.id)
         run = await self._run(db_session, diary, "pending")

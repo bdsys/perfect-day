@@ -16,6 +16,7 @@ from app.core.database import get_db
 from app.models import AutoCreationRule, Diary, Event, User
 from app.routers.v1.diaries import _get_diary_or_404
 from app.services.read_only import ensure_diary_writable
+from app.services.tier import ensure_backfill_allowed
 
 log = structlog.get_logger()
 
@@ -333,6 +334,7 @@ async def apply_rule(
     """Queue a backfill job to apply a rule over the past N days."""
     rule, diary = await _get_rule_or_404(rule_id, user, db)
     await ensure_diary_writable(db, diary)
+    ensure_backfill_allowed(user.subscription_tier, body.days)
 
     try:
         from app.workers.tasks import apply_rule_backfill  # noqa: PLC0415

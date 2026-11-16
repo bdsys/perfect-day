@@ -637,7 +637,8 @@ async def _apply_rule_backfill(rule_id_str: str, days: int) -> None:
 
     from sqlalchemy import select, update
 
-    from app.models import AutoCreationRule, Event
+    from app.models import AutoCreationRule, Diary, Event, User
+    from app.services.tier import limits_for
     from app.workers.rules import evaluate_event_against_rules
     from app.workers.utils import db_session
 
@@ -660,6 +661,19 @@ async def _apply_rule_backfill(rule_id_str: str, days: int) -> None:
             return
 
         diary_id = rule.diary_id
+
+        # The owner may have downgraded since the apply was queued.
+        owner_tier = (
+            await db.execute(
+                select(User.subscription_tier)
+                .join(Diary, Diary.owner_user_id == User.id)
+                .where(Diary.id == diary_id)
+            )
+        ).scalar_one_or_none() or "free"
+        cap = limits_for(owner_tier).scan_past_days
+        if cap is not None and days > cap:
+            log.info("backfill_not_on_plan", rule_id=rule_id_str, days=days, where="rule_apply")
+            return
 
         # Load all events for this diary in the last `days` days (both attached and unattached)
         events_result = await db.execute(
@@ -868,6 +882,7 @@ _BACKFILL_DISCONNECTED_MESSAGE = (
     "Reconnect it and run the backfill again."
 )
 _BACKFILL_FAILED_MESSAGE = "The backfill stopped because of a problem. Try again later."
+_BACKFILL_READ_ONLY_MESSAGE = "This diary is read-only on your plan, so the backfill didn't run."
 
 
 async def _backfill_diary(backfill_run_id_str: str) -> None:
@@ -875,8 +890,9 @@ async def _backfill_diary(backfill_run_id_str: str) -> None:
 
     from sqlalchemy import select
 
-    from app.models import BackfillRun, Diary, OAuthToken
+    from app.models import BackfillRun, Diary, OAuthToken, User
     from app.services.read_only import is_diary_read_only
+    from app.services.tier import BACKFILL_LIMIT_NOTE, limits_for
     from app.workers.backfill import BackfillLocked, ingest_failures_message, run_backfill
     from app.workers.token_refresh import ensure_fresh_access_token
     from app.workers.utils import db_session
@@ -896,12 +912,6 @@ async def _backfill_diary(backfill_run_id_str: str) -> None:
         if diary is None:
             return
 
-        if await is_diary_read_only(db, diary):
-            log.info(
-                "diary_read_only_skip", diary_id=str(diary.id), where="backfill"
-            )
-            return
-
         token_result = await db.execute(
             select(OAuthToken).where(
                 OAuthToken.user_id == diary.owner_user_id,
@@ -917,6 +927,23 @@ async def _backfill_diary(backfill_run_id_str: str) -> None:
                 backfill_run_id=backfill_run_id_str,
                 status=backfill_run.status,
             )
+            return
+
+        # Only a run still pending may be marked failed; a cancelled one stays as it is.
+        if await is_diary_read_only(db, diary):
+            log.info("diary_read_only_skip", diary_id=str(diary.id), where="backfill")
+            backfill_run.status = "failed"
+            backfill_run.completed_at = datetime.now(tz=UTC)
+            backfill_run.error = _BACKFILL_READ_ONLY_MESSAGE
+            return
+
+        # The owner may have downgraded since the run was queued.
+        owner = await db.get(User, diary.owner_user_id)
+        if owner is None or not limits_for(owner.subscription_tier).backfill:
+            log.info("backfill_not_on_plan", diary_id=str(diary.id), where="backfill")
+            backfill_run.status = "failed"
+            backfill_run.completed_at = datetime.now(tz=UTC)
+            backfill_run.error = BACKFILL_LIMIT_NOTE
             return
 
         backfill_run.status = "running"

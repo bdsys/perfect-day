@@ -17,6 +17,7 @@ from app.models import BackfillRun, OAuthToken, ScanJob, ScanRun, User
 from app.routers.v1.diaries import _get_diary_or_404
 from app.services.calendar_connection import calendar_state
 from app.services.read_only import ensure_diary_writable
+from app.services.tier import ensure_backfill_allowed
 
 router = APIRouter(tags=["scan"])
 
@@ -85,6 +86,8 @@ async def trigger_scan(
 ) -> dict:
     diary, _ = await _get_diary_or_404(diary_id, user, db, require_owner=True)
     await ensure_diary_writable(db, diary)
+    if body and body.past_days:
+        ensure_backfill_allowed(user.subscription_tier, body.past_days)
 
     r = get_redis()
     lock_key = f"scan_lock:{diary_id}"
@@ -178,6 +181,7 @@ async def trigger_backfill(
 ) -> BackfillRun:
     diary, _ = await _get_diary_or_404(diary_id, user, db, require_owner=True)
     await ensure_diary_writable(db, diary)
+    ensure_backfill_allowed(user.subscription_tier, None)
 
     r = get_redis()
     lock_key = f"scan_lock:{diary_id}"
