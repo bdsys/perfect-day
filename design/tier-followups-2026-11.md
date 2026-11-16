@@ -50,6 +50,11 @@ The 18.1 design records these as D1–D6: `docs/superpowers/specs/2026-11-15-tie
   - The rule applies only when nobody has touched the draft: the text is still the AI's, it isn't published, and it has no photos. The draft goes to Trash, where it can be restored; nothing is destroyed.
   - Code: `release_event_from_entry` and `is_untouched_auto_draft` in `apps/api/app/workers/event_changes.py`.
   - **Revisit this if** parents report entries vanishing after they tidy up their calendar. One option then would be to keep the draft and show a "this event was removed from your calendar" note instead.
+- **Photos keep a draft when its event moves or is deleted, and the draft shows a note.** (Andrew, 2026-11-16.)
+  - A rule or calendar-pick draft that the parent added photos to is never sent to Trash because its event changed. The AI text stays as it is.
+  - The entry page shows "The calendar event this entry was drafted from was moved or removed. Check the text before you publish." The note is worked out on the page from fields the entry already has: the text is still the machine's, the entry was built from a rule or calendar pick, no events are left, it is a draft, and the viewer can edit. Nothing new is stored. Editing the text or attaching an event clears the note.
+  - **A moved event can leave two entries.** The old one keeps the photos, which were taken at the original time. The event gets a fresh entry at its new time, as it did before; that first draft counts on Free, the same as today. Andrew chose this over moving the photos to the new entry.
+  - Code: `_release_from_untouched_draft` in `apps/api/app/workers/tasks.py`; `showEventRemovedNote` in `apps/web/src/lib/entryNotes.ts`.
 
 ## To fix — PoC item 18.1 (built)
 
