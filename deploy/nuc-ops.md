@@ -97,32 +97,7 @@ Cloudflare becomes the authoritative DNS for `andrewlass.com`. GoDaddy stays as 
 
 ### A3 — Google Cloud: create a project and OAuth credentials
 
-Google OAuth requires a project in Google Cloud Console. Use a **separate project** for PoC (keep it isolated from any work projects).
-
-1. Go to [console.cloud.google.com](https://console.cloud.google.com).
-2. Click the project selector (top bar) → **New Project** → name it `perfect-day-poc` → **Create**.
-3. Enable the Google Calendar API:
-   - **APIs & Services** → **Library** → search "Google Calendar API" → **Enable**
-4. Configure the OAuth consent screen:
-   - **APIs & Services** → **OAuth consent screen**
-   - User type: **External** (fine for PoC, supports up to 100 test users)
-   - App name: `Perfect Day`
-   - User support email: your email
-   - Developer contact email: your email
-   - **Save and continue** through all screens (scopes and test users can be done after)
-5. Create OAuth credentials:
-   - **APIs & Services** → **Credentials** → **Create Credentials** → **OAuth 2.0 Client ID**
-   - Application type: **Web application**
-   - Name: `perfect-day-poc-web`
-   - Authorized redirect URIs — add:
-     ```
-     http://localhost:8000/v1/integrations/google/callback
-     ```
-     (You will add the production URI in [B6](#b6--add-production-google-oauth-redirect-uri) after FortiGate TLS is set up.)
-   - Click **Create**
-   - **Download the JSON** and store `client_id` and `client_secret` in your password manager.
-6. Add yourself as a test user (required while app is "External" and unverified):
-   - **OAuth consent screen** → **Test users** → **Add users** → add your Gmail address
+Follow [`docs/local-dev.md` § Google Cloud](../docs/local-dev.md#google-cloud--project-strategy). One project (today `perfect-day-dev-514922`, in Andrew's Google account since 2026-11-16) has two Web clients: `Perfect Day local` and `Perfect Day NUC`. Enable the **Google Calendar API** and the **Google Photos Picker API**, add the scopes and your test users, then download each client's JSON from **Google Auth platform → Clients**. The NUC client's file is what [B-Config](#b-config--change-an-existing-nucs-config) reads. Keep both files in your password manager, not in Downloads.
 
 ### A4 — SendGrid: create account and get API key
 
@@ -255,7 +230,7 @@ Your home IP changes occasionally. The `cloudflare-ddns` sidecar container (alre
 
 **Prerequisites:** API token with `Zone.DNS:Edit` scope and your Zone ID (see [A2](#a2--cloudflare-create-app-dns-records-and-ddns-token) and [`deploy/cloudflare.md`](cloudflare.md) § 2.1).
 
-If you provided the token and zone ID in [B2](#b2--provision-secrets-on-nuc), the DDNS sidecar will start on the next deploy. If you skipped those prompts, either re-run `10-secrets.sh` or write the DDNS config file manually (see [`deploy/cloudflare.md`](cloudflare.md) § 2.2).
+If you provided the token and zone ID in [B2](#b2--provision-secrets-on-nuc), the DDNS sidecar will start on the next deploy. If you skipped those prompts on a fresh NUC, re-run `10-secrets.sh` before the first deploy. **On a NUC that already has data, never re-run `10-secrets.sh`** (it regenerates `MASTER_SECRET`); write the DDNS config file by hand (see [`deploy/cloudflare.md`](cloudflare.md) § 2.2) and run [B-Config](#b-config--change-an-existing-nucs-config), which also repairs a config file the updater cannot parse.
 
 **Start the updater (if NUC is already deployed):**
 ```bash
@@ -311,14 +286,12 @@ See [`deploy/caddy/README.md`](caddy/README.md) for full Caddy edge documentatio
 
 ### B6 — Add production Google OAuth redirect URI
 
-Now that HTTPS is working, add the production callback URL:
+The `Perfect Day NUC` client (Google Auth platform → Clients) must have:
 
-1. Google Cloud Console → **APIs & Services** → **Credentials** → your OAuth 2.0 client
-2. Under **Authorized redirect URIs**, add:
-   ```
-   https://perfectday-api.andrewlass.com/v1/integrations/google/callback
-   ```
-3. **Save**
+- Authorized JavaScript origin: `https://perfectday.andrewlass.com`
+- Authorized redirect URI: `https://perfectday-api.andrewlass.com/v1/integrations/google/callback`
+
+Then put the client into `app.env` with [B-Config](#b-config--change-an-existing-nucs-config).
 
 ### B7 — Backups
 
@@ -347,27 +320,62 @@ Then manually walk through the app at `https://perfectday.andrewlass.com`:
 
 ---
 
+## B-Config — change an existing NUC's config
+
+Use this whenever the hostnames or the Google client change. It edits files in place and keeps everything else in `app.env`, including `MASTER_SECRET`. **Do not re-run `10-secrets.sh` on a NUC that has data:** it regenerates `MASTER_SECRET`, and stored photos and Google tokens are encrypted with it.
+
+```bash
+# from your PC: copy the NUC client's JSON over (it holds the client secret)
+scp pd-gcp-oauth-nuc-client.json andrew@<NUC_IP>:/tmp/
+# on the NUC:
+cd /opt/perfect-day
+sudo ./scripts/nuc/15-update-config.sh --google-client /tmp/pd-gcp-oauth-nuc-client.json
+shred -u /tmp/pd-gcp-oauth-nuc-client.json
+sudo ./scripts/nuc/40-update.sh      # the web build bakes in the API URL and client ID
+```
+
+The script:
+1. Sets `CORS_ORIGINS`, `GOOGLE_REDIRECT_URI` and `NEXT_PUBLIC_API_URL` to the current hostnames.
+2. With `--google-client`, sets `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` and `NEXT_PUBLIC_GOOGLE_CLIENT_ID` from the file. It refuses a file whose redirect URI or JavaScript origin is not the NUC's, and changes nothing.
+3. Rewrites `cloudflare-ddns.config.json` with the three current names and `proxied: true`, keeping the API token and zone ID (and dropping stray control characters, which stopped the updater on 2026-09).
+4. Copies each file it changes to `<file>.bak-<timestamp>` first, and never prints a secret.
+
+Tests: `bash scripts/nuc/tests/update-config.test.sh` (not in CI).
+
+**After a Google client change,** every user's Calendar and Photos connection belongs to the old client, so each user reconnects Google once.
+
 ## B-Update — routine update
 
-Pull new code from `main` (or a specific SHA), run migrations, restart app services. Infra (Postgres, Redis, MinIO) stays up.
+**First update of a NUC deployed before 2026-11-16** (it still has the old scripts, which never deployed new code):
+
+```bash
+cd /opt/perfect-day
+sudo git fetch origin && sudo git checkout main && sudo git pull --ff-only   # get the new scripts
+cat last-deployed-sha                      # must exist; if not: echo <running sha> | sudo tee last-deployed-sha
+docker image ls 'perfect-day-*'            # expect perfect-day-api, -worker, -beat, -web :latest
+```
+
+Then run [B-Config](#b-config--change-an-existing-nucs-config) if the hostnames or Google client changed, and the update below.
+
+Builds the app images on the NUC from `main` (or a specific SHA), runs migrations and restarts the app services. Infra (Postgres, Redis, MinIO) stays up. CI-built images pulled on a timer are planned (PoC 25.4, finding P-2).
 
 ```bash
 ssh andrew@<NUC_IP>
 cd /opt/perfect-day
-sudo ./scripts/nuc/40-update.sh             # latest HEAD on main
+sudo ./scripts/nuc/40-update.sh             # latest main
 # or
 sudo ./scripts/nuc/40-update.sh abc1234     # specific SHA
 ```
 
 The script:
-1. `git fetch && git pull --ff-only` (or `git checkout <sha>`)
+1. `git fetch`, then `git checkout main && git pull --ff-only` (or `git checkout <sha>`)
 2. Re-renders `Caddyfile` from `Caddyfile.tmpl` using `FORTIGATE_LAN_IP` from `app.env`
-3. `docker compose pull` for app images
-4. `alembic upgrade head` for migrations
-5. `docker compose up -d --no-deps api worker beat web edge`
-6. Polls `/readyz` for up to 90s; aborts (and tells you to run `50-rollback.sh`) on failure
-7. Records the new SHA to `/opt/perfect-day/last-deployed-sha`
-8. Runs `./scripts/smoke-test.sh` against the public API; warns and exits non-zero on failure
+3. If the commit differs from the one deployed, tags the running `perfect-day-{api,worker,beat,web}` images `:previous` and records that commit in `previous-deployed-sha`
+4. `docker compose build api worker beat web` (the web bakes in `NEXT_PUBLIC_API_URL` and `NEXT_PUBLIC_GOOGLE_CLIENT_ID` from `app.env`), and pulls the Caddy image
+5. `alembic upgrade head` for migrations
+6. Restarts the app services; recreates `edge` and `cloudflare-ddns` so they reread their mounted files
+7. Polls `/readyz` for up to 90s; on failure tells you to run `50-rollback.sh`
+8. Records the new SHA in `/opt/perfect-day/last-deployed-sha`, then runs `./scripts/smoke-test.sh` against the public API (it registers a throwaway user each time)
 
 Update logs land in `/var/log/perfect-day/update-<timestamp>.log`.
 
@@ -379,7 +387,13 @@ If `40-update.sh` aborts (or you discover a regression after a deploy):
 sudo ./scripts/nuc/50-rollback.sh
 ```
 
-The rollback script reads `/opt/perfect-day/last-deployed-sha` (recorded by the previous successful deploy/update), checks out that SHA, re-pulls images, and restarts app services. Database migrations are **not** automatically reverted — Alembic downgrades are project-specific and are run manually if needed (`docker compose --profile nuc run --rm api alembic downgrade -1`).
+It goes back exactly one deploy: it checks out the commit in `previous-deployed-sha`, retags the `:previous` images as `:latest`, recreates the app services and Caddy, and waits for `/readyz`. It keeps the current Caddyfile and `app.env`, which follow the hostnames rather than the code. The next `40-update.sh` returns to `main`.
+
+**Migrations are not reverted.** If the older code cannot run on the newer schema, the downgrade must run with the newer image, the only one that has the newer migration files: while it is still `:latest`, run `docker compose --profile nuc run --rm api alembic downgrade <revision>`, where `<revision>` is the newest file in `git ls-tree --name-only <previous sha> apps/api/alembic/versions/`. Then roll back. `downgrade -1` goes back only one migration.
+
+**If `40-update.sh` stops at the migration step,** run `50-rollback.sh` straight away. The database is unchanged (each migration runs in one transaction), but `:latest` already holds the new images, and a reboot would start them on the old schema.
+
+**Rolling back across the hostname change (P-9) does not work:** the code before it only knew the old hostnames. For that deploy the plan is to fix forward.
 
 If rollback also fails, fall back to [B3.5 — Full reinstall](#b35--full-reinstall-when-incremental-cleanup-is-not-working) and restore the latest backup.
 

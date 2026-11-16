@@ -268,7 +268,7 @@ export MASTER_SECRET=$(python3 -c "import secrets; print(secrets.token_hex(32))"
 
 ### Google Cloud — Project Strategy
 
-**As set up on 2026-11-16 (Andrew): one project, `perfect-day`, in Andrew's new Google account, with two Web OAuth clients.** A separate production project is backlog row 35 in `POC_PHASE2_TODO.md`. CI never calls Google, so it needs no project.
+**As set up on 2026-11-16 (Andrew): one project in Andrew's new Google account (project ID `perfect-day-dev-514922`), with two Web OAuth clients.** A separate production project is backlog row 35 in `POC_PHASE2_TODO.md`. CI never calls Google, so it needs no project.
 
 | OAuth client | Used by | Authorized JavaScript origins | Authorized redirect URIs |
 |---|---|---|---|
@@ -280,7 +280,7 @@ export MASTER_SECRET=$(python3 -c "import secrets; print(secrets.token_hex(32))"
 - **Changing clients or projects disconnects Google for every user:** stored Calendar/Photos tokens belong to the old client, so each user reconnects once. Photos Picker sessions only work with the client that created them.
 - The project is in **Testing**: only listed test users can connect, and their Calendar/Photos consent expires after 7 days (<https://support.google.com/cloud/answer/15549945>).
 
-The steps below create the project (name it `perfect-day`). Create both clients in Step 4.
+The steps below create the project. Create both clients in Step 4.
 
 ---
 

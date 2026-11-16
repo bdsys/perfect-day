@@ -94,3 +94,7 @@ test-results/
 
 # Superpowers plugin local state
 .superpowers/
+
+# NUC deploy bookkeeping (written by scripts/nuc/40-update.sh)
+last-deployed-sha
+previous-deployed-sha

@@ -2,7 +2,7 @@
 
 Written 2026-11-14 from Google's docs. The sources are linked under each step.
 
-**Do this once in the Google Cloud project.** Since 2026-11-16 that is one project, `perfect-day`, serving both localhost and the NUC (see `docs/local-dev.md` § Google Cloud). CI never calls Google. Google turns APIs on per project, so a future separate production project (backlog row 35) needs this too.
+**Do this once in the Google Cloud project.** Since 2026-11-16 that is one project (ID `perfect-day-dev-514922`), serving both localhost and the NUC (see `docs/local-dev.md` § Google Cloud). CI never calls Google. Google turns APIs on per project, so a future separate production project (backlog row 35) needs this too.
 
 **Why:** if the API isn't enabled, connecting Google Photos still "works", but starting a pick fails. Google refuses, and the app shows "Google Photos isn't set up for this app yet. The app's owner needs to turn on the Photos Picker API in Google Cloud." (A lost or missing connection still shows the reconnect message.)
 

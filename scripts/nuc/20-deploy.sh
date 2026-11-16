@@ -112,15 +112,12 @@ FORTIGATE_LAN_IP=$(grep -E '^FORTIGATE_LAN_IP=' "${DEPLOY_DIR}/.env" | cut -d= -
 export FORTIGATE_LAN_IP
 "${DEPLOY_DIR}/scripts/nuc/render-caddyfile.sh"
 
-echo '[5/9] Pulling Docker images...'
+echo '[5/9] Building app images...'
 cd "${DEPLOY_DIR}"
-# Try GHCR first; fall back to local build if images not yet pushed
-if docker compose --profile nuc pull api worker beat web edge 2>/dev/null; then
-    echo '  Pulled from GHCR'
-else
-    echo '  Images not on GHCR yet — building locally (first deploy)'
-    docker compose --profile nuc build api web
-fi
+# The app services have `build:` and no registry image, so they are always built here
+# (CI-built images pulled from a registry are planned: PoC 25.4, finding P-2).
+docker compose --profile nuc build api worker beat web
+docker compose --profile nuc pull edge
 
 echo '[6/9] Running Alembic migrations...'
 docker compose --profile nuc run --rm api alembic upgrade head
