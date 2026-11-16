@@ -158,6 +158,8 @@ test-live:
 # Curl-based API smoke test against a running stack (default: http://localhost:8000).
 # Override with: make test-smoke BASE=http://example.com
 test-smoke:
+	@# `make up` returns once containers start, before the API is listening.
+	./scripts/wait-for-healthy.sh $(or $(BASE),http://localhost:8000)/readyz 90
 	./scripts/smoke-test.sh $(BASE)
 
 # ---------------------------------------------------------------------------
