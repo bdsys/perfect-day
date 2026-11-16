@@ -862,6 +862,7 @@ async def _generate_draft(
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
                 error=gen_error,
+                reservation_key=reservation_key if llm_usable else None,
             )
         elif llm_usable:
             assert llm_result is not None  # guaranteed by llm_usable check above
@@ -885,6 +886,7 @@ async def _generate_draft(
                 mode=mode,
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
+                reservation_key=reservation_key,
             )
         elif mode in ("polish", "hybrid") or leave_entry_unchanged:
             # Safety guard: NEVER overwrite user-typed body_markdown on failure.
