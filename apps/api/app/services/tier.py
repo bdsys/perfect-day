@@ -8,7 +8,7 @@ from typing import Any, Literal
 
 from fastapi import HTTPException
 
-LimitSource = Literal["diary", "ai_draft", "photo", "diary_read_only"]
+LimitSource = Literal["diary", "ai_draft", "photo", "diary_read_only", "backfill"]
 
 
 @dataclass(frozen=True)
@@ -16,14 +16,36 @@ class PlanLimits:
     diaries: int
     ai_drafts_per_month: int | None  # None = unlimited
     photos_per_entry: int | None  # None = unlimited
+    backfill: bool
+    scan_past_days: int | None  # how far back a scan or rule apply may look; None = unlimited
 
 
 # Ordered cheapest first: required_tier() returns the first plan that fits.
 PLAN_LIMITS: dict[str, PlanLimits] = {
-    "free": PlanLimits(diaries=1, ai_drafts_per_month=5, photos_per_entry=1),
-    "plus": PlanLimits(diaries=2, ai_drafts_per_month=None, photos_per_entry=None),
-    "family": PlanLimits(diaries=4, ai_drafts_per_month=None, photos_per_entry=None),
+    "free": PlanLimits(
+        diaries=1,
+        ai_drafts_per_month=5,
+        photos_per_entry=1,
+        backfill=False,
+        scan_past_days=90,
+    ),
+    "plus": PlanLimits(
+        diaries=2,
+        ai_drafts_per_month=None,
+        photos_per_entry=None,
+        backfill=True,
+        scan_past_days=None,
+    ),
+    "family": PlanLimits(
+        diaries=4,
+        ai_drafts_per_month=None,
+        photos_per_entry=None,
+        backfill=True,
+        scan_past_days=None,
+    ),
 }
+
+BACKFILL_LIMIT_NOTE = "Backfill is on Plus and Family. Free scans look back 90 days."
 
 PLAN_NAMES: dict[str, str] = {"free": "Free", "plus": "Plus", "family": "Family"}
 
@@ -38,6 +60,8 @@ def _limit_for_source(limits: PlanLimits, source: LimitSource) -> int | None:
         return limits.diaries
     if source == "ai_draft":
         return limits.ai_drafts_per_month
+    if source == "backfill":
+        return limits.scan_past_days
     return limits.photos_per_entry
 
 
@@ -67,3 +91,20 @@ def tier_limit_error(
     if resets_on is not None:
         details["resets_on"] = resets_on.isoformat()
     return HTTPException(status_code=403, detail={"code": "tier_limit", "details": details})
+
+
+def ensure_backfill_allowed(tier: str, past_days: int | None) -> None:
+    """Raise a tier_limit 403 unless *tier* may look back *past_days*.
+
+    ``past_days=None`` is a date-range backfill, which needs the backfill feature.
+    """
+    limits = limits_for(tier)
+    if past_days is None:
+        if limits.backfill:
+            return
+        # Needed is one past the cap, so required_tier() points at the first plan without one.
+        cap = limits.scan_past_days
+        raise tier_limit_error(source="backfill", limit=cap or 0, current=0, needed=(cap or 0) + 1)
+    cap = limits.scan_past_days
+    if cap is not None and past_days > cap:
+        raise tier_limit_error(source="backfill", limit=cap, current=past_days, needed=past_days)
