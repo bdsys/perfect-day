@@ -83,5 +83,19 @@ run >/dev/null
 check "client ID untouched"           test "$(val "${WORK}/app.env" GOOGLE_CLIENT_ID)" = "old-id.apps.googleusercontent.com"
 check "redirect URI updated"          test "$(val "${WORK}/app.env" GOOGLE_REDIRECT_URI)" = "https://perfectday-api.andrewlass.com/v1/integrations/google/callback"
 
+echo "a DDNS file with no token is reported, not silently kept"
+setup
+printf '{"cloudflare":[{"zone_id":"zone-abc"}]}\n' > "${WORK}/ddns.json"
+if OUT2="$(run 2>&1)"; then RC=0; else RC=$?; fi
+check "exits non-zero"                test "$RC" != 0
+check "says what is wrong"            bash -c "grep -q 'no API token' <<< \"\$1\"" _ "${OUT2}"
+check "app.env still updated"         test "$(val "${WORK}/app.env" NEXT_PUBLIC_API_URL)" = "https://perfectday-api.andrewlass.com"
+
+echo "--google-client without a file"
+setup
+if OUT3="$(run --google-client 2>&1)"; then RC=0; else RC=$?; fi
+check "exits non-zero"                test "$RC" != 0
+check "prints usage"                  bash -c "grep -q 'Usage' <<< \"\$1\"" _ "${OUT3}"
+
 echo
 if [ "${FAILS}" -eq 0 ]; then echo "all passed"; else echo "${FAILS} failed"; exit 1; fi

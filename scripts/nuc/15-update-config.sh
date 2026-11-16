@@ -31,7 +31,11 @@ fi
 GOOGLE_CLIENT=""
 while [ $# -gt 0 ]; do
     case "$1" in
-        --google-client) GOOGLE_CLIENT="${2:-}"; shift 2 ;;
+        --google-client)
+            if [ $# -lt 2 ] || [ -z "$2" ]; then
+                echo "Usage: $0 [--google-client <client.json>]" >&2; exit 2
+            fi
+            GOOGLE_CLIENT="$2"; shift 2 ;;
         *) echo "Usage: $0 [--google-client <client.json>]" >&2; exit 2 ;;
     esac
 done
@@ -84,8 +88,14 @@ def write_like(path, text):
     """Replace the file's content, keeping its mode and owner."""
     st = os.stat(path)
     tmp = f"{path}.tmp-{stamp}"
-    with open(tmp, "w") as fh:
-        fh.write(text)
+    # Created 0600 so the secrets are never readable by others, even for a moment.
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "w") as fh:
+            fh.write(text)
+    except BaseException:
+        os.unlink(tmp)
+        raise
     os.chmod(tmp, st.st_mode & 0o777)
     try:
         os.chown(tmp, st.st_uid, st.st_gid)
@@ -118,7 +128,9 @@ if os.path.exists(ddns_config):
         return re.sub(r"[\x00-\x1f\s]", "", m.group(1)) if m else ""
     token, zone = grab("api_token"), grab("zone_id")
     if not token or not zone:
-        print(f"  {ddns_config}: no API token or zone ID found; left unchanged")
+        # Exit non-zero so nobody restarts an updater that cannot work.
+        sys.exit(f"ERROR: {ddns_config}: no API token or zone ID found; left unchanged. "
+                 "app.env WAS updated. Fix the DDNS file by hand (deploy/cloudflare.md § 2.2).")
     else:
         config = {
             "cloudflare": [{

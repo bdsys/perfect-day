@@ -4,9 +4,18 @@
 #
 # 40-update.sh tags the running app images `previous` before it builds a new commit,
 # and records that commit in previous-deployed-sha. This script puts those images
-# back, checks out that commit (so compose and the Caddyfile match the images) and
-# restarts. It goes back exactly one deploy; the next 40-update.sh returns to main.
-# Database migrations are NOT rolled back (see the note at the end).
+# back, checks out that commit (so the compose file matches the images) and restarts.
+# It goes back exactly one deploy; the next 40-update.sh returns to main.
+#
+# It keeps the current Caddyfile and /etc/perfect-day/app.env: those follow the
+# public hostnames, not the code, and an older template could route names that no
+# longer exist.
+#
+# Database migrations are NOT rolled back. If the newer release migrated the schema
+# and the older code cannot run on it, downgrade BEFORE rolling back, while the newer
+# image (which has the newer migration files) is still :latest:
+#   ls via: git ls-tree --name-only <previous sha> apps/api/alembic/versions/
+#   docker compose --profile nuc run --rm api alembic downgrade <that commit's head revision>
 set -euo pipefail
 
 if [ "$(id -u)" -ne 0 ]; then
@@ -42,11 +51,8 @@ for svc in ${APP_SERVICES}; do
 done
 echo "Rolling back to ${PREV_SHA} (currently $(cat "${DEPLOY_DIR}/last-deployed-sha" 2>/dev/null || echo unknown))"
 
-echo '[1/4] Checking out the previous commit...'
+echo '[1/4] Checking out the previous commit (Caddyfile and app.env are kept)...'
 git checkout -q "${PREV_SHA}"
-FORTIGATE_LAN_IP=$(grep -E '^FORTIGATE_LAN_IP=' /etc/perfect-day/app.env 2>/dev/null | cut -d= -f2- || true)
-export FORTIGATE_LAN_IP
-./scripts/nuc/render-caddyfile.sh
 
 echo '[2/4] Restoring the previous images...'
 for svc in ${APP_SERVICES}; do
@@ -74,8 +80,8 @@ echo "${PREV_SHA}" > "${DEPLOY_DIR}/last-deployed-sha"
 echo "[4/4] Rollback complete: ${PREV_SHA}"
 echo "Log: ${LOG_FILE}"
 echo ''
-echo 'NOTE: Database migrations are NOT automatically rolled back.'
-echo 'If the newer release ran a forward migration that the rolled-back code cannot'
-echo 'use, check the history first, then step down:'
-echo '  docker compose --profile nuc run --rm api alembic history'
-echo '  docker compose --profile nuc run --rm api alembic downgrade -1'
+echo 'NOTE: Database migrations are NOT rolled back. If the older code fails on the'
+echo 'newer schema, the downgrade has to run with the NEWER image (only it has the newer'
+echo 'migration files): run 40-update.sh again to return to it, then'
+echo "  docker compose --profile nuc run --rm api alembic downgrade <head revision of ${PREV_SHA}>"
+echo 'and roll back again. See the header of this script.'

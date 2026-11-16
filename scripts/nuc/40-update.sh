@@ -38,7 +38,11 @@ IMAGE_PREFIX="perfect-day"   # compose project name (the deploy directory's name
 APP_SERVICES="api worker beat web"
 PREV_FILE="${DEPLOY_DIR}/previous-deployed-sha"
 DDNS_CONFIG="/etc/perfect-day/cloudflare-ddns.config.json"
+# Full shas are recorded; an older short one (from earlier scripts) is expanded here.
 DEPLOYED_SHA=$(cat "${DEPLOY_DIR}/last-deployed-sha" 2>/dev/null || echo '')
+if [ -n "${DEPLOYED_SHA}" ]; then
+    DEPLOYED_SHA=$(git rev-parse --verify -q "${DEPLOYED_SHA}^{commit}" || echo "${DEPLOYED_SHA}")
+fi
 
 echo '[1/8] Updating repository...'
 git fetch origin
@@ -50,7 +54,7 @@ else
     git pull --ff-only
     echo "  Updated to: $(git rev-parse --short HEAD)"
 fi
-NEW_SHA=$(git rev-parse --short HEAD)
+NEW_SHA=$(git rev-parse HEAD)
 
 echo '[2/8] Rendering Caddyfile from template...'
 ENV_FILE="/etc/perfect-day/app.env"
@@ -63,16 +67,31 @@ fi
 ./scripts/nuc/render-caddyfile.sh
 
 echo '[3/8] Keeping the running images for rollback...'
-if [ -n "${DEPLOYED_SHA}" ] && [ "${DEPLOYED_SHA}" != "${NEW_SHA}" ]; then
+previous_complete() {
     for svc in ${APP_SERVICES}; do
-        if docker image inspect "${IMAGE_PREFIX}-${svc}:latest" > /dev/null 2>&1; then
-            docker tag "${IMAGE_PREFIX}-${svc}:latest" "${IMAGE_PREFIX}-${svc}:previous"
+        docker image inspect "${IMAGE_PREFIX}-${svc}:previous" > /dev/null 2>&1 || return 1
+    done
+}
+if [ -z "${DEPLOYED_SHA}" ] || [ "${DEPLOYED_SHA}" = "${NEW_SHA}" ]; then
+    echo "  Same commit as deployed (or none recorded); :previous left as it is"
+elif [ "$(cat "${PREV_FILE}" 2>/dev/null || echo '')" = "${DEPLOYED_SHA}" ] && previous_complete; then
+    # An earlier attempt at this update failed after tagging. The running containers
+    # may already be the new build, so do not tag them over the good images.
+    echo "  :previous already holds ${DEPLOYED_SHA} from an earlier attempt; keeping it"
+else
+    # Tag what is running, not :latest: after a failed build, :latest can be a new image.
+    for svc in ${APP_SERVICES}; do
+        CID=$(docker compose --profile nuc ps -q "${svc}")
+        if [ -z "${CID}" ]; then
+            echo "ERROR: ${svc} is not running, so there is nothing to keep for a rollback." >&2
+            echo "  Start the stack first (docker compose --profile nuc up -d), or deploy" >&2
+            echo "  without a rollback copy by removing ${DEPLOY_DIR}/last-deployed-sha." >&2
+            exit 1
         fi
+        docker tag "$(docker inspect -f '{{.Image}}' "${CID}")" "${IMAGE_PREFIX}-${svc}:previous"
     done
     echo "${DEPLOYED_SHA}" > "${PREV_FILE}"
-    echo "  Tagged images of ${DEPLOYED_SHA} as :previous"
-else
-    echo "  Same commit as deployed (or none recorded); :previous left as it is"
+    echo "  Tagged the running images (${DEPLOYED_SHA}) as :previous"
 fi
 
 echo '[4/8] Building app images...'
@@ -81,7 +100,14 @@ docker compose --profile nuc build ${APP_SERVICES}
 docker compose --profile nuc pull edge
 
 echo '[5/8] Running migrations...'
-docker compose --profile nuc run --rm api alembic upgrade head
+# The worker and beat would otherwise run old code against a half-changed schema.
+docker compose --profile nuc stop worker beat
+if ! docker compose --profile nuc run --rm api alembic upgrade head; then
+    echo "ERROR: migrations failed. Each migration runs in one transaction, so the" >&2
+    echo "  database is unchanged, but :latest now holds the new images, which a reboot" >&2
+    echo "  would start on the old schema. Run now: sudo ./scripts/nuc/50-rollback.sh" >&2
+    exit 1
+fi
 echo '  Migrations complete'
 
 echo '[6/8] Restarting app services (infra stays up)...'

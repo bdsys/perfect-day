@@ -346,6 +346,17 @@ Tests: `bash scripts/nuc/tests/update-config.test.sh` (not in CI).
 
 ## B-Update — routine update
 
+**First update of a NUC deployed before 2026-11-16** (it still has the old scripts, which never deployed new code):
+
+```bash
+cd /opt/perfect-day
+sudo git fetch origin && sudo git checkout main && sudo git pull --ff-only   # get the new scripts
+cat last-deployed-sha                      # must exist; if not: echo <running sha> | sudo tee last-deployed-sha
+docker image ls 'perfect-day-*'            # expect perfect-day-api, -worker, -beat, -web :latest
+```
+
+Then run [B-Config](#b-config--change-an-existing-nucs-config) if the hostnames or Google client changed, and the update below.
+
 Builds the app images on the NUC from `main` (or a specific SHA), runs migrations and restarts the app services. Infra (Postgres, Redis, MinIO) stays up. CI-built images pulled on a timer are planned (PoC 25.4, finding P-2).
 
 ```bash
@@ -376,7 +387,13 @@ If `40-update.sh` aborts (or you discover a regression after a deploy):
 sudo ./scripts/nuc/50-rollback.sh
 ```
 
-It goes back exactly one deploy: it checks out the commit in `previous-deployed-sha`, retags the `:previous` images as `:latest`, recreates the app services and Caddy, and waits for `/readyz`. The next `40-update.sh` returns to `main`. Database migrations are **not** reverted. Check `alembic history` and run `docker compose --profile nuc run --rm api alembic downgrade -1` by hand if the older code needs it.
+It goes back exactly one deploy: it checks out the commit in `previous-deployed-sha`, retags the `:previous` images as `:latest`, recreates the app services and Caddy, and waits for `/readyz`. It keeps the current Caddyfile and `app.env`, which follow the hostnames rather than the code. The next `40-update.sh` returns to `main`.
+
+**Migrations are not reverted.** If the older code cannot run on the newer schema, the downgrade must run with the newer image, the only one that has the newer migration files: while it is still `:latest`, run `docker compose --profile nuc run --rm api alembic downgrade <revision>`, where `<revision>` is the newest file in `git ls-tree --name-only <previous sha> apps/api/alembic/versions/`. Then roll back. `downgrade -1` goes back only one migration.
+
+**If `40-update.sh` stops at the migration step,** run `50-rollback.sh` straight away. The database is unchanged (each migration runs in one transaction), but `:latest` already holds the new images, and a reboot would start them on the old schema.
+
+**Rolling back across the hostname change (P-9) does not work:** the code before it only knew the old hostnames. For that deploy the plan is to fix forward.
 
 If rollback also fails, fall back to [B3.5 — Full reinstall](#b35--full-reinstall-when-incremental-cleanup-is-not-working) and restore the latest backup.
 
