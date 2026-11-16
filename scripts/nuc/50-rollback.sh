@@ -13,7 +13,7 @@ fi
 
 TARGET_SHA="${1:-}"
 DEPLOY_DIR="/opt/perfect-day"
-HEALTH_URL="https://api.diary.perfectday.andrewlass.com/readyz"
+HEALTH_URL="https://perfectday-api.andrewlass.com/readyz"
 HEALTH_TIMEOUT=90
 GHCR_OWNER="andrewlass"
 

@@ -98,7 +98,7 @@ docker compose run --rm api alembic upgrade head
 docker compose up -d --no-deps api worker beat web
 
 # Health check — wait up to 60s for /readyz to return 200
-./scripts/wait-for-healthy.sh https://diary.perfectday.andrewlass.com/readyz 60
+./scripts/wait-for-healthy.sh https://perfectday.andrewlass.com/readyz 60
 # Health check failure → rollback (see below)
 ```
 

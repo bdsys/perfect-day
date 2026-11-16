@@ -4,8 +4,8 @@
 
 | Subdomain | Purpose |
 |---|---|
-| `diary.perfectday.andrewlass.com` | Main web app and API |
-| `media.diary.perfectday.andrewlass.com` | MinIO upload endpoint — PUT-only (signed URLs), edge proxy restricts |
+| `perfectday.andrewlass.com` | Main web app and API |
+| `perfectday-media.andrewlass.com` | MinIO upload endpoint — PUT-only (signed URLs), edge proxy restricts |
 | `andrewlass.com` | Apex domain — controls email identity (SPF/DKIM/DMARC) |
 
 ## DNS records
@@ -16,8 +16,8 @@ Both subdomains point to the NUC public IP (or cloud LB when deployed to cloud).
 
 | Name | Type | Value | TTL |
 |---|---|---|---|
-| `diary.perfectday.andrewlass.com` | A | `<NUC public IP>` | 300 (PoC) → 3600 (post-launch) |
-| `media.diary.perfectday.andrewlass.com` | A | `<NUC public IP>` | 300 (PoC) → 3600 (post-launch) |
+| `perfectday.andrewlass.com` | A | `<NUC public IP>` | 300 (PoC) → 3600 (post-launch) |
+| `perfectday-media.andrewlass.com` | A | `<NUC public IP>` | 300 (PoC) → 3600 (post-launch) |
 
 Low TTL (300s) during PoC for easy IP changes. Raise to 3600s before public launch to reduce resolver load.
 
@@ -124,7 +124,7 @@ All transactional emails use SendGrid Dynamic Templates. Template IDs are stored
 The NUC sits behind a Comcast residential connection with a dynamic public
 IPv4. Comcast does not guarantee a static lease — the address can change
 on modem reboot, lease renewal, or upstream maintenance. The DNS A records
-above (`diary.perfectday.andrewlass.com`, `media.diary.perfectday.andrewlass.com`)
+above (`perfectday.andrewlass.com`, `perfectday-media.andrewlass.com`)
 must track the current WAN IP automatically, otherwise the service goes
 dark whenever the lease rolls.
 
@@ -136,7 +136,7 @@ the current WAN IP to Cloudflare's DNS API on a schedule.
 
 **Why Cloudflare over a dedicated DDNS service:**
 - DNS is already at Cloudflare, so no second vendor to operate.
-- We get to keep the real domain (`diary.perfectday.andrewlass.com`) instead of
+- We get to keep the real domain (`perfectday.andrewlass.com`) instead of
   a third-party hostname like `perfectday.duckdns.org`.
 - Free plan covers unlimited A-record updates.
 - API token can be scoped to "Edit DNS for zone andrewlass.com" only — much
@@ -172,20 +172,20 @@ the current WAN IP to Cloudflare's DNS API on a schedule.
 If the WAN IP changes and the updater fails to push within 15 minutes,
 DNS resolves to a stale address and the site is down. Add a synthetic
 check (covered in `design/observability.md`) that resolves
-`diary.perfectday.andrewlass.com` and compares to the current public IP
+`perfectday.andrewlass.com` and compares to the current public IP
 (`api.ipify.org`); page on mismatch lasting > 15 min.
 
 ### Verification
 
-> **Note:** With Cloudflare proxy **on** (orange cloud), `dig +short diary.perfectday.andrewlass.com`
+> **Note:** With Cloudflare proxy **on** (orange cloud), `dig +short perfectday.andrewlass.com`
 > returns Cloudflare anycast IPs, not your home WAN IP. This is expected. To verify the DDNS
 > updater pushed the correct origin IP, check the A record value directly in the Cloudflare dashboard,
 > or compare `docker compose logs cloudflare-ddns` output against `curl https://api.ipify.org`.
 
-1. Note the current A record origin IP in the Cloudflare dashboard (DNS tab) for `diary.perfectday`.
+1. Note the current A record origin IP in the Cloudflare dashboard (DNS tab) for `perfectday`.
 2. Reboot the Comcast modem (forces a DHCP renew; the lease often, but
    not always, returns a different IP).
 3. Within 10 minutes, the Cloudflare dashboard A record should match `curl https://api.ipify.org`
-   from the NUC. `dig +short diary.perfectday.andrewlass.com` will return CF anycast IPs — that is correct.
-4. `curl -I https://diary.perfectday.andrewlass.com/healthz` returns 200 from
+   from the NUC. `dig +short perfectday.andrewlass.com` will return CF anycast IPs — that is correct.
+4. `curl -I https://perfectday.andrewlass.com/healthz` returns 200 from
    off-network (mobile hotspot).

@@ -1,7 +1,8 @@
 # Cloudflare Setup
 
-This document covers every place Cloudflare is used in Perfect Day, how to
-configure each, and the step-by-step setup sequence.
+How Perfect Day uses Cloudflare, as configured and verified on 2026-11-16 (PoC 25.6, finding P-9
+in [`design/code-review-2026-11.md`](../design/code-review-2026-11.md)). The FortiGate side is in
+[`deploy/nuc.md` § FortiGate Virtual Server setup](nuc.md#fortigate-virtual-server-setup).
 
 ---
 
@@ -9,155 +10,78 @@ configure each, and the step-by-step setup sequence.
 
 | Use | Deployment target | Cost |
 |---|---|---|
-| Authoritative DNS for `perfectday.andrewlass.com` (subdomain delegation) | All | Free |
-| DDNS — keeps A records tracking the Comcast dynamic WAN IP | NUC (home-lab) | Free |
-| **Proxy (orange cloud)** — public-facing TLS via Universal SSL; hides residential WAN IP | NUC (home-lab) | Free |
-| Origin Certificate — CF↔FortiGate TLS using a Cloudflare-signed cert (15-year validity) | NUC (home-lab) | Free |
-| R2 object storage — encrypted photo chunks | Hybrid (NUC + CX21) | Free at PoC scale |
-
-Cloudflare proxy is **on** (orange cloud) for the three diary subdomains. Cloudflare terminates the
-public-facing TLS (browser ↔ CF) via Universal SSL, and forwards to FortiGate over a second TLS
-hop using a Cloudflare Origin Certificate installed on the FortiGate. FortiGate decrypts that hop,
-runs WAF/IPS/Content Routing on the plaintext, and forwards plain HTTP to the NUC on the home LAN.
+| Authoritative DNS for the whole `andrewlass.com` zone | All | Free |
+| DDNS: keeps the A records on the Comcast dynamic WAN IP | NUC | Free |
+| **Proxy (orange cloud):** public TLS via Universal SSL; hides the home WAN IP | NUC | Free |
+| Origin Certificate for the Cloudflare→FortiGate TLS hop | NUC | Free |
+| R2 object storage for encrypted photo chunks | Hybrid (NUC + CX21) | Free at PoC scale |
 
 ---
 
-## One-time account setup
+## Section 1 — Zone and hostnames
 
-1. Create a free Cloudflare account at cloudflare.com.
-2. Add the zone `andrewlass.com` to Cloudflare. Cloudflare will ask you to
-   change the authoritative nameservers for the entire zone, but **do not
-   do that** — see § 1 below for why you only delegate a subdomain.
-3. Note the **Account ID** from the Cloudflare dashboard → right sidebar.
-   You will need it for R2 bucket URLs.
+The whole `andrewlass.com` zone is on Cloudflare (nameservers `*.ns.cloudflare.com`); GoDaddy is
+only the registrar. Other sites share the zone (`andrewlass.com` and `www` are served elsewhere),
+so zone-wide settings affect them too.
 
----
+**Every public name has exactly one label before `andrewlass.com`.** Cloudflare's free Universal
+SSL covers "the root domain … and first-level subdomains" only; deeper names "will not serve a
+valid certificate"
+([Cloudflare](https://developers.cloudflare.com/ssl/edge-certificates/universal-ssl/limitations/)).
+The original `diary.perfectday.andrewlass.com` names were two levels deep and never worked.
 
-## Section 1 — DNS / subdomain delegation
+### DNS records
 
-### Background
+| Name | Type | Content | Proxy | TTL | Used for |
+|---|---|---|---|---|---|
+| `perfectday` | A | home WAN IP | **Proxied** | Auto | Web (Next.js) |
+| `perfectday-api` | A | home WAN IP | **Proxied** | Auto | API (FastAPI) |
+| `perfectday-media` | A | home WAN IP | **Proxied** | Auto | Reserved for photo links; no route yet (P-10) |
 
-`andrewlass.com` is registered at GoDaddy, with GoDaddy as the authoritative
-nameserver. GoDaddy holds all your existing records (MX, SPF, DKIM, etc.).
-You do not want to move the entire zone to Cloudflare and risk disrupting
-email or other existing services.
+- Proxied records always use TTL Auto (300 s); it cannot be changed
+  ([Cloudflare](https://developers.cloudflare.com/dns/proxy-status/)).
+- With the proxy on, `dig` returns Cloudflare's IPs (104.21.x.x, 172.67.x.x), never the WAN IP.
+- The old `diary.perfectday`, `api.diary.perfectday` and `media.diary.perfectday` records are to be
+  deleted once the app is deployed on the new names.
 
-Instead, delegate only the `perfectday.andrewlass.com` sub-zone to Cloudflare.
-GoDaddy remains authoritative for `andrewlass.com`; Cloudflare becomes
-authoritative for `*.perfectday.andrewlass.com`. This is a standard NS
-delegation — no migration of existing records required.
+### SSL/TLS settings
 
-### Step 1.1 — Add `perfectday.andrewlass.com` as a zone in Cloudflare
-
-Cloudflare's free plan supports full-zone management. You need to add a
-zone for `perfectday.andrewlass.com` specifically (not `andrewlass.com`).
-
-> **Note:** Cloudflare's standard "add a site" flow assumes you own the
-> apex domain and want to move all NS there. For a subdomain delegation,
-> you may need to contact Cloudflare support or use the "partial zone /
-> CNAME setup" option under Enterprise — **or** use the simpler workaround
-> below.
-
-**Simpler workaround (no Cloudflare account zone needed):** Use Cloudflare
-only for DDNS via the `andrewlass.com` zone API. Add `andrewlass.com` to Cloudflare
-but do **not** change GoDaddy's nameservers. Instead, use Cloudflare in
-"partial / secondary DNS" mode — or just use the Cloudflare API directly
-to update records without making Cloudflare authoritative at all.
-
-**Practical recommendation for this project:** Keep GoDaddy authoritative.
-Use Cloudflare only for DDNS via its API (a scoped API token updates the A
-records in GoDaddy indirectly — see § 2 for the DDNS mechanism). If you
-want Cloudflare to actually be authoritative for the subdomains (for the
-proxy benefit), the cleanest path is:
-
-1. Add `perfectday.andrewlass.com` A records to GoDaddy pointing to the NUC WAN IP.
-2. Create a free Cloudflare account and add `andrewlass.com` as a zone (Cloudflare
-   imports all existing records from GoDaddy via DNS scan).
-3. Change GoDaddy's nameservers to Cloudflare's assigned NS servers.
-   Cloudflare now serves the entire `andrewlass.com` zone including all existing
-   MX/SPF/DKIM records it imported.
-4. Verify email still works (check MX, SPF, DKIM records were imported
-   correctly before cutting over nameservers).
-
-This is a 15-minute operation and the safest path if you eventually want
-the Cloudflare proxy. Email records carry over automatically.
-
-### Step 1.2 — Create DNS A records in Cloudflare
-
-Once Cloudflare is authoritative (or even just used for API-based DDNS
-updates against GoDaddy), create these records:
-
-| Name | Type | Value | TTL | Proxy |
-|---|---|---|---|---|
-| `diary.perfectday.andrewlass.com` | A | `<current NUC WAN IP>` | 300 | **On (orange cloud)** |
-| `api.diary.perfectday.andrewlass.com` | A | `<current NUC WAN IP>` | 300 | **On (orange cloud)** |
-| `media.diary.perfectday.andrewlass.com` | A | `<current NUC WAN IP>` | 300 | **On (orange cloud)** |
-
-TTL 300s (5 min) during PoC allows the DDNS updater to converge within ~10 min
-of a Comcast lease change. Raise to 3600s before public launch.
-
-**On the Cloudflare proxy ("orange cloud"):** All three diary subdomains use the Cloudflare proxy.
-This means:
-- Browsers see a Cloudflare Universal SSL certificate (auto-renewed by CF, browser-trusted). Your residential WAN IP is never exposed in DNS — `dig` returns Cloudflare anycast IPs.
-- Traffic between CF and FortiGate uses a **Cloudflare Origin Certificate** installed on FortiGate (see § 4 — Cloudflare Origin Certificate setup below).
-- Cloudflare provides free DDoS protection, bot filtering, and edge WAF in front of your FortiGate.
-- **Tradeoffs:** Cloudflare sees request/response plaintext at their edge (acceptable for a personal/family deployment). The real client IP arrives in the `CF-Connecting-IP` header rather than the TCP source — FastAPI should read from that header for rate limiting and logging. Cloudflare availability becomes a SPOF for public access (CF availability is excellent but not 100%).
+- **Encryption mode: Full (strict)** (SSL/TLS → Overview). It is zone-wide. Do not change it: other
+  sites share the zone. To change it for our names only, use a Configuration Rule
+  ([Cloudflare](https://developers.cloudflare.com/ssl/origin-configuration/ssl-modes/)).
+- **Edge certificate:** the Universal SSL certificate for `andrewlass.com, *.andrewlass.com`
+  (Google Trust Services) covers all three names. Nothing to configure.
+- **Origin certificate:** `*.andrewlass.com, andrewlass.com`, installed on the FortiGate.
+  **Expires 2027-11-16.** See Section 4.
 
 ---
 
 ## Section 2 — DDNS (dynamic Comcast IP)
 
-The NUC has a Comcast residential connection with a dynamic public IPv4. The
-A records above must track the current WAN IP automatically.
+The NUC has a Comcast residential connection with a dynamic public IPv4. The A records above must
+follow it. The updater is the `cloudflare-ddns` service in `docker-compose.yml`
+(`timothyjmiller/cloudflare-ddns`, `nuc` profile). Background and alternatives:
+[`design/dns-and-email.md`](../design/dns-and-email.md) § Dynamic DNS.
 
-See [`design/dns-and-email.md`](../design/dns-and-email.md) § Dynamic DNS for
-the full background and alternatives considered. This section is the
-step-by-step setup.
+### Step 2.1 — API token and zone ID
 
-The DDNS updater runs as a Docker sidecar (`timothyjmiller/cloudflare-ddns`) in
-the same `docker-compose.yml` as the application stack. No manual container
-management is needed — `docker compose up -d` brings it up with everything else.
+- **API token:** My Profile → API Tokens → Create Token → "Edit zone DNS" template. Zone Resources:
+  Include → Specific zone → `andrewlass.com`. Permission `Zone.DNS:Edit` only. It is shown once;
+  store it in your password manager. A token scoped to the zone covers every record in it.
+- **Zone ID:** the zone's Overview page, right sidebar. Not a secret.
 
-### Step 2.1 — Collect the two Cloudflare values you will need
+### Step 2.2 — The config file on the NUC
 
-**API token:**
+`sudo ./scripts/nuc/10-secrets.sh` writes `/etc/perfect-day/cloudflare-ddns.config.json`
+(mode 0600) when you give it the token and zone ID. It contains:
 
-1. Cloudflare dashboard → **My Profile → API Tokens → Create Token**
-2. Use the "Edit zone DNS" template.
-3. Scope: **Zone Resources → Include → Specific zone → `andrewlass.com`**
-4. Permissions: `Zone.DNS:Edit` only. Nothing else.
-5. Create the token and copy it immediately — it is shown only once. Store in your password manager.
-
-**Zone ID:**
-
-On the Cloudflare dashboard, click your zone (`andrewlass.com` or `perfectday.andrewlass.com`) and look at the right sidebar. The Zone ID is a 32-character hex string. It is not a secret — it is visible in public DNS — but you need it for the config file.
-
-### Step 2.2 — Provision the DDNS config file on the NUC
-
-The `cloudflare-ddns` service is already in the in-repo `docker-compose.yml`. You do not edit the compose file. The container reads its configuration from `/etc/perfect-day/cloudflare-ddns.config.json` (mode 0600, `root:docker`), mounted at `/config.json` inside the container.
-
-The easiest way to provision this file is to provide the API token and Zone ID when prompted by `10-secrets.sh`. The script writes the JSON for you:
-
-```bash
-cd ~/perfect-day
-sudo ./scripts/nuc/10-secrets.sh
-# At the "Cloudflare DDNS (optional)" prompts, enter your token and zone ID.
-```
-
-If you skipped those prompts earlier and need to provision now, re-run `10-secrets.sh`. It re-generates all auto-generated secrets if run fresh, so use this alternative to write only the DDNS config:
-
-```bash
-sudo tee /etc/perfect-day/cloudflare-ddns.config.json <<'EOF'
+```json
 {
   "cloudflare": [
     {
-      "authentication": { "api_token": "<your-token-here>" },
-      "zone_id": "<your-zone-id-here>",
-      "subdomains": [
-        "diary.perfectday",
-        "api.diary.perfectday",
-        "media.diary.perfectday"
-      ],
+      "authentication": { "api_token": "<token>" },
+      "zone_id": "<zone id>",
+      "subdomains": ["perfectday", "perfectday-api", "perfectday-media"],
       "proxied": true
     }
   ],
@@ -166,86 +90,34 @@ sudo tee /etc/perfect-day/cloudflare-ddns.config.json <<'EOF'
   "purgeUnknownRecords": false,
   "ttl": 300
 }
-EOF
-sudo chmod 600 /etc/perfect-day/cloudflare-ddns.config.json
-sudo chown root:docker /etc/perfect-day/cloudflare-ddns.config.json
 ```
 
-> **Note on `subdomains`:** the container prepends the zone name automatically. Use only the left-hand portion of the FQDN here. For example, `diary.perfectday.andrewlass.com` → `"diary.perfectday"`.
+- **`subdomains`:** the container adds the zone name, so `perfectday` means
+  `perfectday.andrewlass.com`.
+- **`proxied` must be `true`.** Until 2026-11-16 the script wrote `false`. If the updater applies
+  that, it switches the records to DNS only: browsers then connect straight to the FortiGate, get the
+  Origin certificate (not publicly trusted) and fail, and the home WAN IP is public.
 
-> **Note on `proxied`:** set to `true` — the records are CF-proxied (orange cloud). The DDNS
-> updater still needs to push the real WAN IP as the origin A record so CF knows where to forward
-> traffic. With proxy on, `dig` returns CF anycast IPs, not your WAN IP — that is expected.
+To change only this file on a running NUC without regenerating the other secrets, edit it in
+place (`sudo nano /etc/perfect-day/cloudflare-ddns.config.json`), keep mode 0600, then
+`docker compose --profile nuc up -d cloudflare-ddns`.
 
-### Step 2.3 — Start the DDNS updater
-
-If the NUC is already deployed:
+### Step 2.3 — Verify
 
 ```bash
-cd /opt/perfect-day
-docker compose up -d cloudflare-ddns
+docker compose --profile nuc ps cloudflare-ddns
+docker compose --profile nuc logs cloudflare-ddns --tail=30
+# Expect: updates or "unchanged" for perfectday, perfectday-api, perfectday-media
 ```
 
-If you are deploying for the first time, `20-deploy.sh` brings it up automatically as part of `docker compose up -d`. No extra step needed.
-
-If you skipped provisioning the config file and do not want to DDNS-update records automatically, stop the container so it doesn't error-loop:
-
-```bash
-cd /opt/perfect-day
-docker compose stop cloudflare-ddns
-```
-
-### Step 2.4 — Verify DDNS is working
-
-```bash
-# Container must be running:
-docker compose ps cloudflare-ddns
-
-# Check its logs for successful updates:
-docker compose logs cloudflare-ddns --tail=30
-# Expect: lines like "Updated A record diary.perfectday.andrewlass.com → <IP>"
-# or "IP unchanged" if the WAN IP hasn't changed since last check.
-
-# Current WAN IP from the NUC's perspective:
-curl -s https://api.ipify.org
-
-# Current DNS resolution:
-dig +short diary.perfectday.andrewlass.com
-
-# They should match. The container polls every 5 minutes by default.
-```
+`dig` shows Cloudflare's IPs, not the WAN IP. To check the origin IP, compare the record's
+Content in the Cloudflare dashboard with `curl https://api.ipify.org` run on the NUC, and check the
+records still show the orange cloud.
 
 ### Failure mode
 
-If the WAN IP changes and the updater fails to push within 15 minutes, DNS resolves to a stale address and the site is unreachable. The observability plan in `design/observability.md` includes a synthetic check for this. Set an alert on IP-mismatch lasting > 15 min.
-
-### Alternatives (not the recommended path for this deployment)
-
-**FortiGate built-in DDNS:** FortiOS 7.2+ may have Cloudflare as a DDNS provider under **Network → DNS → Dynamic DNS**. If so, configure it with the API token from Step 2.1 — this removes any NUC component. Verify against your specific FortiOS 7.2 build; provider support varies by firmware version.
-
-**`ddclient` on the NUC (systemd):**
-
-```bash
-sudo apt-get install -y ddclient
-```
-
-`/etc/ddclient.conf` (mode 600, root-owned):
-```
-daemon=300
-syslog=yes
-protocol=cloudflare
-use=web, web=api.ipify.org
-login=token
-password=<your-token>
-zone=andrewlass.com
-diary.perfectday.andrewlass.com,api.diary.perfectday.andrewlass.com,media.diary.perfectday.andrewlass.com
-```
-
-```bash
-sudo systemctl enable --now ddclient
-```
-
-If you use `ddclient`, remove the `cloudflare-ddns` service from `docker-compose.yml` or stop it to avoid duplicate updates.
+If the WAN IP changes and the updater fails, Cloudflare forwards to a stale address and the site
+is unreachable (error 521/522). See `design/observability.md` for the IP-mismatch check.
 
 ---
 
@@ -329,110 +201,34 @@ aws s3 rm s3://perfectday-photos/test.txt \
 
 ---
 
-## Section 4 — Cloudflare Origin Certificate setup (NUC deployment)
+## Section 4 — Origin certificate (NUC deployment)
 
-A Cloudflare Origin Certificate is installed on FortiGate to secure the CF↔origin TLS hop.
-It is signed by Cloudflare's private CA (not a public CA), so browsers reject it if they connect
-directly to the FortiGate — but Cloudflare's edge trusts it natively. Validity is 15 years.
+The Cloudflare→FortiGate hop uses a Cloudflare Origin CA certificate, which Full (strict)
+accepts
+([Cloudflare](https://developers.cloudflare.com/ssl/origin-configuration/ssl-modes/full-strict/)).
+Browsers do not trust it; only Cloudflare's edge does.
 
-### Step 4.1 — Generate a CSR on FortiGate
-
-**FortiGate UI:** System → Certificates → Create/Import → Certificate → Generate CSR
-
-| Field | Value |
-|---|---|
-| Certificate Name | `perfectday-cf-origin` |
-| Subject → Common Name (CN) | `diary.perfectday.andrewlass.com` |
-| Subject Alternative Name | `DNS:diary.perfectday.andrewlass.com,DNS:api.diary.perfectday.andrewlass.com,DNS:media.diary.perfectday.andrewlass.com` |
-| Key Type | RSA |
-| Key Size | 2048 |
-| Enrollment Method | File Based |
-
-Download the resulting `.csr` file.
-
-**Verify all three SANs are present before submitting:**
-
-```bash
-openssl req -in perfectday-cf-origin.csr -noout -text | grep -A1 "Subject Alternative Name"
-# Expect: DNS:diary.perfectday.andrewlass.com, DNS:api.diary.perfectday.andrewlass.com, DNS:media.diary.perfectday.andrewlass.com
-```
-
-### Step 4.2 — Submit the CSR to Cloudflare
-
-Cloudflare dashboard → **SSL/TLS → Origin Server → Create Certificate**
-
-1. **Uncheck** "Generate private key and CSR with Cloudflare" (use your own CSR).
-2. Paste the entire `-----BEGIN CERTIFICATE REQUEST-----` … `-----END CERTIFICATE REQUEST-----` block.
-3. Verify all three hostnames appear in the Hostnames list (auto-populated from the CSR SANs).
-4. Certificate validity: **15 years**.
-5. Click **Create**. Copy the signed certificate PEM — it is shown only once.
-
-### Step 4.3 — Install the signed cert on FortiGate
-
-**FortiGate UI:** System → Certificates → find `perfectday-cf-origin` (in "Pending CSR" state)
-→ Import → Local Certificate. Upload the signed `.crt` file. The cert moves to active state.
-
-### Step 4.4 — Set Cloudflare SSL/TLS mode
-
-Cloudflare dashboard → **SSL/TLS → Overview** → Encryption mode → **Full (strict)**
-
-"Full (strict)" means CF validates the Origin Cert chain before forwarding to your origin. This
-is the correct setting — "Full" (without strict) accepts any cert and is less secure; "Flexible"
-sends plaintext from CF to your origin, which you do not want.
-
-### Step 4.5 — Bind the cert to the FortiGate Virtual Server
-
-Update the `perfectday-https` VIP to use `perfectday-cf-origin` as its SSL certificate (see
-[`deploy/nuc.md` § FortiGate Virtual Server setup](nuc.md#fortigate-virtual-server-setup) Step 3).
-
-### Step 4.6 — Verify
-
-```bash
-# Public-facing cert (browser→CF) — should be CF Universal SSL, not the Origin Cert:
-openssl s_client -connect diary.perfectday.andrewlass.com:443 \
-  -servername diary.perfectday.andrewlass.com </dev/null 2>/dev/null \
-  | openssl x509 -noout -issuer -subject -dates
-# Expect: issuer = Let's Encrypt or Google Trust Services (CF's Universal SSL provider).
-#         Validity ~90 days (auto-renewed by CF).
-
-# Origin cert on FortiGate — bypass Cloudflare, connect directly to WAN IP with SNI:
-openssl s_client -connect <WAN_IP>:443 \
-  -servername diary.perfectday.andrewlass.com </dev/null 2>/dev/null \
-  | openssl x509 -noout -issuer -subject -dates
-# Expect: issuer = CloudFlare Origin SSL Certificate Authority,
-#         validity ~15 years,
-#         SANs include diary.*, api.diary.*, and media.diary.perfectday.andrewlass.com.
-
-# Confirm Cloudflare is in the path (A record resolves to CF anycast, not your WAN IP):
-dig +short diary.perfectday.andrewlass.com
-# Expect: Cloudflare anycast IPs (e.g., 104.16.x.x or 172.64.x.x), NOT your home WAN IP.
-```
+- **Names:** `*.andrewlass.com, andrewlass.com`. A wildcard covers one level only
+  ([Cloudflare](https://developers.cloudflare.com/ssl/origin-configuration/origin-ca/)), which is
+  exactly our naming rule.
+- **Made by:** a CSR generated on the FortiGate (the key never leaves it), signed under SSL/TLS →
+  Origin Server → Create Certificate. Step-by-step:
+  [`deploy/nuc.md` § Step 1](nuc.md#step-1--origin-certificate).
+- **Expires 2027-11-16** (issued for one year). Cloudflare sends no expiry notice for Origin CA
+  certificates. An expired certificate gives Cloudflare error 526 on every request.
 
 ---
 
-## Setup sequence summary
+## Setup sequence summary (NUC)
 
-### NUC-only deployment
+1. DNS: the three proxied A records in Section 1.
+2. SSL/TLS mode: confirm Full (strict).
+3. DDNS: token and zone ID into `10-secrets.sh`; confirm `proxied: true` (Section 2).
+4. Origin certificate on the FortiGate (Section 4 and `deploy/nuc.md`).
+5. FortiGate VIP, health check and proxy-mode policy (`deploy/nuc.md`).
+6. Verify: `deploy/nuc.md` § Step 5.
 
-1. Add `andrewlass.com` to Cloudflare (or just create a scoped API token if keeping GoDaddy authoritative)
-2. Create the three A records (`diary.*`, `api.diary.*`, `media.diary.*`) with proxy **ON** (orange cloud)
-3. Create the scoped `Zone.DNS:Edit` API token
-4. Deploy the DDNS updater (FortiGate built-in or Docker container) — `proxied: true` in config
-5. Verify DNS resolves to Cloudflare anycast IPs (not WAN IP)
-6. Generate CSR on FortiGate, submit to Cloudflare Origin Server, install signed cert on FortiGate
-7. Set CF SSL/TLS mode to Full (strict)
-8. Verify end-to-end (§ 4.6)
-
-### Hybrid deployment (adds R2)
-
-Steps 1–8 above, then:
-
-6. Create the R2 bucket (`perfectday-photos`, public access disabled)
-7. Create the R2 API token (Object R+W on that bucket only)
-8. Add `r2_access_key` / `r2_secret_key` / `S3_ENDPOINT_URL` to sops config
-   on both NUC and CX21
-9. Verify R2 upload/download round-trip works
-10. Switch `S3_ENDPOINT_URL` from MinIO local to R2 in production config
+The hybrid deployment adds R2 (Section 3).
 
 ---
 

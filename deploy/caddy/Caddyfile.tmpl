@@ -7,12 +7,12 @@
 }
 
 :80 {
-	@diary host diary.perfectday.andrewlass.com
+	@diary host perfectday.andrewlass.com
 	handle @diary {
 		reverse_proxy web:3000
 	}
 
-	@api host api.diary.perfectday.andrewlass.com
+	@api host perfectday-api.andrewlass.com
 	handle @api {
 		reverse_proxy api:8000
 	}

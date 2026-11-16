@@ -4,8 +4,8 @@ Caddy runs as a Docker service on the NUC, listening on port 80. It does Host-he
 
 | Host header | Backend |
 |---|---|
-| `diary.perfectday.andrewlass.com` | `web:3000` (Next.js) |
-| `api.diary.perfectday.andrewlass.com` | `api:8000` (FastAPI) |
+| `perfectday.andrewlass.com` | `web:3000` (Next.js) |
+| `perfectday-api.andrewlass.com` | `api:8000` (FastAPI) |
 
 Any other `Host` value returns 404.
 
@@ -29,7 +29,7 @@ Use this when you need to test the production-shaped Host-routing path locally �
 
 ```bash
 sudo tee -a /etc/hosts <<'EOF'
-127.0.0.1  diary.perfectday.local api.diary.perfectday.local
+127.0.0.1  perfectday.local perfectday-api.local
 EOF
 ```
 
@@ -42,8 +42,8 @@ FORTIGATE_LAN_IP= ./scripts/nuc/render-caddyfile.sh
 
 Then edit `deploy/caddy/Caddyfile` (gitignored, safe to edit) to use local hostnames:
 ```
-@diary host diary.perfectday.local
-@api host api.diary.perfectday.local
+@diary host perfectday.local
+@api host perfectday-api.local
 ```
 
 ### Step 3 — Start the stack with the `nuc` profile
@@ -57,14 +57,14 @@ This starts everything in `make up` PLUS the Caddy edge. Do NOT include `-f dock
 ### Step 4 — Test
 
 ```bash
-curl -sH "Host: diary.perfectday.local" http://localhost:80/
+curl -sH "Host: perfectday.local" http://localhost:80/
 # Expect: Next.js HTML response
 
-curl -sH "Host: api.diary.perfectday.local" http://localhost:80/healthz
+curl -sH "Host: perfectday-api.local" http://localhost:80/healthz
 # Expect: {"status":"ok"} from FastAPI
 ```
 
-Or browse to `http://diary.perfectday.local` and `http://api.diary.perfectday.local` (after adding `/etc/hosts` entries).
+Or browse to `http://perfectday.local` and `http://perfectday-api.local` (after adding `/etc/hosts` entries).
 
 ### Step 5 — Tear down
 
