@@ -8,9 +8,11 @@ describe('PlansPage', () => {
     for (const name of ['Free', 'Plus', 'Family']) {
       expect(screen.getByRole('columnheader', { name })).toBeInTheDocument()
     }
-    for (const row of ['Diaries', 'AI drafts per month', 'Photos per entry', 'Manual entries']) {
+    for (const row of ['Diaries', 'AI drafts per month', 'Photos per entry', 'Manual entries', 'Backfill']) {
       expect(screen.getByRole('rowheader', { name: row })).toBeInTheDocument()
     }
+    const backfill = screen.getByRole('rowheader', { name: 'Backfill' }).closest('tr')!
+    expect(Array.from(backfill.querySelectorAll('td')).map(td => td.textContent)).toEqual(['—', '✓', '✓'])
     expect(screen.getByText('Paid plans are coming soon.')).toBeInTheDocument()
   })
 })

@@ -25,11 +25,14 @@ function timeAgo(iso: string, now: Date = new Date()): string {
 export function SuggestionBox({
   suggestion,
   busy,
+  readOnly = false,
   onAccept,
   onDismiss,
 }: {
   suggestion: Suggestion
   busy: boolean
+  /** The diary is read-only on the plan: the API refuses accept and dismiss. */
+  readOnly?: boolean
   onAccept: () => void
   onDismiss: () => void
 }) {
@@ -78,10 +81,10 @@ export function SuggestionBox({
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-        <button className="btn btn-primary" style={{ minHeight: 44 }} onClick={onAccept} disabled={busy}>
+        <button className="btn btn-primary" style={{ minHeight: 44 }} onClick={onAccept} disabled={busy || readOnly}>
           Accept
         </button>
-        <button className="btn btn-secondary" style={{ minHeight: 44 }} onClick={onDismiss} disabled={busy}>
+        <button className="btn btn-secondary" style={{ minHeight: 44 }} onClick={onDismiss} disabled={busy || readOnly}>
           Dismiss
         </button>
         <span style={{ fontSize: '0.8rem', color: '#4b5563' }}>

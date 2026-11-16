@@ -6,6 +6,7 @@ const ROWS: { label: string; values: string[] }[] = [
   { label: 'AI drafts per month', values: ['5', 'Unlimited', 'Unlimited'] },
   { label: 'Photos per entry', values: ['1', 'Unlimited', 'Unlimited'] },
   { label: 'Manual entries', values: ['Unlimited', 'Unlimited', 'Unlimited'] },
+  { label: 'Backfill', values: ['—', '✓', '✓'] },
 ]
 
 export default function PlansPage() {

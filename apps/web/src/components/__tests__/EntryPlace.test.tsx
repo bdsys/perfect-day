@@ -88,3 +88,10 @@ describe('EntryPlace refused save', () => {
     expect(screen.queryByText(/tier_limit/)).toBeNull()
   })
 })
+
+describe('EntryPlace on a read-only diary', () => {
+  it('disables Edit location', () => {
+    render(<EntryPlace entry={entry()} onUpdated={jest.fn()} readOnly />)
+    expect(screen.getByRole('button', { name: 'Edit location' })).toBeDisabled()
+  })
+})

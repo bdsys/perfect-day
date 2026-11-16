@@ -11,7 +11,8 @@ import { formatDateRange } from '@/lib/date'
 import { navigateTo } from '@/lib/navigate'
 import { useResetOnBfcacheRestore } from '@/lib/useResetOnBfcacheRestore'
 import PlanBadge from '@/components/PlanBadge'
-import { formatResetDate, limitMessage, readOnlyBanner } from '@/lib/plan'
+import LimitNote from '@/components/LimitNote'
+import { BACKFILL_LIMIT_NOTE, formatResetDate, limitMessage, readOnlyBanner } from '@/lib/plan'
 
 // Must match the API's default page size for GET /v1/diaries/{id}/entries.
 const ENTRIES_PAGE_SIZE = 20
@@ -160,10 +161,15 @@ export default function DiaryDetailPage() {
     }
   }
 
+  function pastDaysCapped(days: number): number {
+    const max = diary?.plan?.scan_past_days_max
+    return max != null ? Math.min(days, max) : days
+  }
+
   async function handleScanWithOptions() {
     setShowScanOptions(false)
     try {
-      const result = await api.diaries.triggerScan(diaryId, { past_days: pastDays, future_days: futureDays })
+      const result = await api.diaries.triggerScan(diaryId, { past_days: pastDaysCapped(pastDays), future_days: futureDays })
       if (result.queued || result.alreadyRunning) {
         setLatestRun(null)
         setPollingScan(true)
@@ -343,6 +349,10 @@ export default function DiaryDetailPage() {
   const isOwner = scanAccess?.can_scan ?? false
   const calendar = scanAccess?.calendar
   const readOnly = diary?.plan?.read_only ?? false
+  // Free scans look back 90 days and have no Backfill; the API refuses more, so
+  // gray it out first. A viewer's plan is null: no plan info, the API still guards.
+  const backfillOff = diary?.plan?.backfill === false
+  const pastDaysMax = diary?.plan?.scan_past_days_max ?? null
   const calendarOff = readOnly || !isOwner || calendar !== 'connected'
   const scanHint = !scanAccess ? undefined
     : !isOwner ? OWNER_ONLY_HINT
@@ -400,7 +410,7 @@ export default function DiaryDetailPage() {
                 {googleIntegration?.google_email ? ` (${googleIntegration.google_email})` : ''} ✓
               </span>
             ) : isOwner && calendar === 'none' ? (
-              <button className="btn btn-secondary" onClick={connectCalendar} disabled={connecting}>
+              <button className="btn btn-secondary" onClick={connectCalendar} disabled={connecting || readOnly}>
                 Connect Google Calendar
               </button>
             ) : null}
@@ -433,11 +443,12 @@ export default function DiaryDetailPage() {
                     <input
                       type="number"
                       min={1}
-                      max={3650}
+                      max={pastDaysMax ?? 3650}
                       value={pastDays}
                       onChange={(e) => setPastDays(Number(e.target.value))}
                     />
                   </label>
+                  {pastDaysMax != null && <LimitNote>{BACKFILL_LIMIT_NOTE}</LimitNote>}
                   <label>
                     Future days
                     <input
@@ -461,11 +472,17 @@ export default function DiaryDetailPage() {
               <button
                 className="btn btn-secondary"
                 onClick={() => setShowBackfillOptions((v) => !v)}
-                disabled={pollingBackfill || calendarOff}
-                aria-describedby={scanHint ? 'calendar-hint' : undefined}
+                disabled={pollingBackfill || calendarOff || backfillOff}
+                aria-describedby={backfillOff ? 'backfill-limit-note' : scanHint ? 'calendar-hint' : undefined}
               >
                 {pollingBackfill ? 'Backfilling…' : 'Backfill'}
               </button>
+              {backfillOff && (
+                <>
+                  <LimitNote id="backfill-limit-note">{BACKFILL_LIMIT_NOTE}</LimitNote>
+                  <Link href="/plans" className="plan-upgrade">Upgrade now</Link>
+                </>
+              )}
               {showBackfillOptions && (
                 <div className="popover" style={{ top: '100%', right: 0, marginTop: '0.4rem' }}>
                   <label>

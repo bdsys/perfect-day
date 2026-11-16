@@ -162,6 +162,17 @@ describe('entry page: plan limits', () => {
     expect(screen.getByRole('button', { name: 'Delete' })).toBeEnabled()
   })
 
+  it('read-only disables Accept, Edit location and photo removal', async () => {
+    const suggestion = { title: 'S', body_markdown: 'New', flagged_tokens: [], body_source: 'llm', created_at: new Date().toISOString() } as never
+    get.mockResolvedValue(withPlan(freePlan({ read_only: true }), {
+      suggestion, photos: [{ id: 'p1' }] as never, location: { name: 'Here', lat: null, lon: null, source: 'parent' },
+    }))
+    render(<EntryDetailPage />)
+    expect(await screen.findByRole('button', { name: 'Accept' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Edit location' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Remove photo from entry' })).toBeDisabled()
+  })
+
   it('a tier_limit from regenerate shows the AI note, never the raw code, and keeps the badge', async () => {
     get.mockResolvedValue(withPlan(freePlan(), { events: [{ id: 'ev' }] as never }))
     ;(api.entries.regenerate as jest.Mock).mockRejectedValue(

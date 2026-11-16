@@ -9,6 +9,8 @@ import { PlaceSearch } from './PlaceSearch'
 interface Props {
   entry: Entry
   onUpdated: (entry: Entry) => void
+  /** The diary is read-only on the plan: the API refuses changes. */
+  readOnly?: boolean
 }
 
 /** "Mukilteo, Washington" in the US, "Paris, France" elsewhere — as the API names places. */
@@ -39,7 +41,7 @@ const UNNAMED_PLACE: Record<NonNullable<Entry['location']>['source'], string> = 
   parent: 'Your place',
 }
 
-export function EntryPlace({ entry, onUpdated }: Props) {
+export function EntryPlace({ entry, onUpdated, readOnly = false }: Props) {
   const [editingPlace, setEditingPlace] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -96,7 +98,7 @@ export function EntryPlace({ entry, onUpdated }: Props) {
             className="btn btn-secondary"
             style={{ fontSize: '0.8rem', padding: '0.2rem 0.6rem' }}
             onClick={() => setEditingPlace((v) => !v)}
-            disabled={busy}
+            disabled={busy || readOnly}
           >
             Edit location
           </button>

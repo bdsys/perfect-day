@@ -339,7 +339,7 @@ function EntryDetailPageInner() {
           <span style={{ fontSize: '0.875rem', color: 'var(--text-muted)' }}>{formatDateRange(entry.entry_date, entry.entry_end_date)}</span>
           <WeatherBadge enrichments={entry.enrichments ?? []} />
         </div>
-        {!editing && <EntryPlace entry={entry} onUpdated={setEntry} />}
+        {!editing && <EntryPlace entry={entry} onUpdated={setEntry} readOnly={readOnly} />}
         {!editing && entry.can_edit && (
           <AddPhotos
             entry={entry}
@@ -486,6 +486,7 @@ function EntryDetailPageInner() {
               <SuggestionBox
                 suggestion={entry.suggestion}
                 busy={answeringSuggestion}
+                readOnly={readOnly}
                 onAccept={() => answerSuggestion('accept')}
                 onDismiss={() => answerSuggestion('dismiss')}
               />
@@ -528,7 +529,7 @@ function EntryDetailPageInner() {
                         type="button"
                         className="thumbnail-action"
                         aria-label="Remove photo from entry"
-                        disabled={removingIds.has(p.id)}
+                        disabled={removingIds.has(p.id) || readOnly}
                         onClick={async (e) => {
                           e.stopPropagation();
                           if (removingIds.has(p.id)) return;
