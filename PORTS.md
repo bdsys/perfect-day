@@ -18,7 +18,7 @@ Cloudflare proxy (orange cloud) handles the public-facing TLS. FortiGate termina
 
 | Port | Service | Public URL |
 |------|---------|------------|
-| 443 | HTTPS (CF↔origin TLS termination, FortiGate; Cloudflare Origin Certificate) | https://diary.perfectday.andrewlass.com |
+| 443 | HTTPS (CF↔origin TLS termination, FortiGate; Cloudflare Origin Certificate) | https://perfectday.andrewlass.com |
 | 8443 | **Reserved** — internal TLS proxy (future e2e TLS to NUC backends via Caddy/Nginx if needed) | — |
 
 Internal container ports on the NUC mirror the local dev setup above but are not exposed externally.

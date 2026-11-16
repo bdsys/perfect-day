@@ -13,11 +13,11 @@ This document captures guidance specific to deploying Perfect Day on the home-la
 ## Edge
 
 - **Cloudflare proxy (orange cloud):** public-facing TLS (browser ↔ CF) via Cloudflare Universal SSL — auto-renewed by CF, no operator action needed.
-- **FortiGate 7.2+:** CF↔origin TLS termination via a Cloudflare Origin Certificate, WAF/IPS, virtual hosting. Forwards plain HTTP to NUC on the LAN.
-- One Cloudflare Origin Certificate (15-year validity) covering all three planned subdomains as SANs: `diary.perfectday.andrewlass.com`, `api.diary.perfectday.andrewlass.com`, and `media.diary.perfectday.andrewlass.com`. Generated once via CSR on FortiGate — private key never leaves the device.
-- FortiGate WAF rule: `media.*` subdomain accepts PUT only (uploads); all other methods blocked at edge
+- **FortiGate 7.2+:** CF↔origin TLS termination via a Cloudflare Origin Certificate, IPS and antivirus (policy 35's profiles; no WAF profile today). Forwards plain HTTP to NUC on the LAN.
+- One Cloudflare Origin Certificate for `*.andrewlass.com, andrewlass.com`, generated via CSR on FortiGate (private key never leaves the device). **Expires 2027-11-16**; see § FortiGate Virtual Server setup, Step 1.
+- Planned, not built: a FortiGate WAF rule so `perfectday-media` accepts PUT only (uploads). Depends on P-10.
 - CORS allowlist on the API for the web origin; Expo dev tunnel allowed only when `ENV=dev`
-- **Hybrid mode:** in the hybrid topology, the NUC's FortiGate vhost for `diary.perfectday.andrewlass.com` is deactivated. The NUC is reachable only over WireGuard (or LAN). DNS A records point to the CX21, which handles all public TLS. See [`deploy/hybrid.md`](hybrid.md).
+- **Hybrid mode:** in the hybrid topology, the NUC's FortiGate vhost for `perfectday.andrewlass.com` is deactivated. The NUC is reachable only over WireGuard (or LAN). DNS A records point to the CX21, which handles all public TLS. See [`deploy/hybrid.md`](hybrid.md).
 
 ## Resource budget (idle RAM)
 
@@ -81,79 +81,87 @@ All photo reads are proxied through the API (decrypt-and-stream). A typical resi
 
 ## FortiGate Virtual Server setup
 
-This section covers the FortiGate configuration needed to route two public HTTPS hostnames
-(`diary.perfectday.andrewlass.com` and `api.diary.perfectday.andrewlass.com`) to the NUC, with
-port translation (WAN:443 → NUC:3000 and NUC:8000 respectively).
+This is the configuration as built and verified on 2026-11-16 (PoC 25.6, finding P-9 in
+[`design/code-review-2026-11.md`](../design/code-review-2026-11.md)).
 
-**TLS architecture:** Cloudflare proxy is **on** (orange cloud) for all three subdomains. Cloudflare
-terminates the public-facing TLS (browser ↔ CF) and forwards to FortiGate over a separate TLS hop
-(CF ↔ FortiGate) using a Cloudflare Origin Certificate installed on the FortiGate. FortiGate
-decrypts that second hop and forwards plain HTTP to the NUC on the LAN.
+**Hostnames.** Every public name has exactly one label before `andrewlass.com`, because
+Cloudflare's free Universal SSL covers "the root domain … and first-level subdomains" only
+([Cloudflare](https://developers.cloudflare.com/ssl/edge-certificates/universal-ssl/limitations/)).
+The old `diary.perfectday.andrewlass.com` names were never covered, and Cloudflare reset every
+handshake to them.
 
-**Prerequisite:** Cloudflare proxy must be **on** (orange cloud) for the three A records in your
-Cloudflare DNS dashboard before starting. See [`deploy/cloudflare.md`](cloudflare.md) § DNS and
-§ Cloudflare Origin Certificate setup.
-
----
-
-### Step 1 — Generate a CSR on FortiGate and obtain a Cloudflare Origin Certificate
-
-FortiGate generates the keypair and produces a CSR. You submit the CSR to Cloudflare, which signs
-it with the Cloudflare Origin CA. The private key never leaves FortiGate.
-
-**Via FortiGate UI:** System → Certificates → Create/Import → Certificate → Generate CSR
-
-| Field | Value |
+| Hostname | Caddy routes it to |
 |---|---|
-| Certificate Name | `perfectday-cf-origin` |
-| Subject → Common Name (CN) | `diary.perfectday.andrewlass.com` |
-| Subject Alternative Name | `DNS:diary.perfectday.andrewlass.com,DNS:api.diary.perfectday.andrewlass.com,DNS:media.diary.perfectday.andrewlass.com` |
-| Key Type | RSA |
-| Key Size | 2048 |
-| Enrollment Method | File Based |
+| `perfectday.andrewlass.com` | `web:3000` (Next.js) |
+| `perfectday-api.andrewlass.com` | `api:8000` (FastAPI) |
+| `perfectday-media.andrewlass.com` | nothing yet (DNS record only; P-10 decides how photo links work) |
 
-Click OK. Download the resulting `.csr` file.
+**TLS path.** Browser → Cloudflare (Universal SSL, `andrewlass.com, *.andrewlass.com`) →
+FortiGate (Cloudflare Origin Certificate, decrypts, runs IPS/AV) → plain HTTP on the LAN →
+Caddy on the NUC, port 80, which routes by `Host`. Cloudflare's encryption mode for the zone is
+**Full (strict)**, which accepts an Origin CA certificate
+([Cloudflare](https://developers.cloudflare.com/ssl/origin-configuration/ssl-modes/full-strict/)).
+The zone mode is zone-wide; do not change it, because other `andrewlass.com` sites share the zone.
 
-**Verify the CSR has all three SANs before submitting:**
+**FortiGate objects (names as configured):**
 
-```bash
-openssl req -in perfectday-cf-origin.csr -noout -text | grep -A1 "Subject Alternative Name"
-# Expect: DNS:diary.perfectday.andrewlass.com, DNS:api.diary.perfectday.andrewlass.com, DNS:media.diary.perfectday.andrewlass.com
-```
-
-**Submit to Cloudflare:** Dashboard → SSL/TLS → Origin Server → Create Certificate.
-- Uncheck **"Generate private key and CSR with Cloudflare"**.
-- Paste the entire `-----BEGIN CERTIFICATE REQUEST-----` … `-----END CERTIFICATE REQUEST-----` block.
-- Validity: **15 years**.
-- Click Create. Copy the signed certificate PEM — it is shown only once.
-
-**Install on FortiGate:** System → Certificates → find `perfectday-cf-origin` (Pending CSR state)
-→ Import → Local Certificate. Upload the signed `.crt` file. The cert moves to active state.
-
-**Set Cloudflare SSL/TLS mode to Full (strict):** Dashboard → SSL/TLS → Overview →
-Encryption mode → **Full (strict)**. This ensures CF validates the Origin Cert chain before
-forwarding to your origin.
+| Object | Name |
+|---|---|
+| Origin certificate | `perfectday-cf-origin-2026` |
+| Health check | `perfectday-caddy-tcp` |
+| Virtual server (VIP) | `perfectday-https-cf-origin` |
+| Firewall policy | 35, `perfectday-https-cf-origin` |
+| SSL/SSH inspection profile on the policy | `perfectday-cf-origin` (contents not reviewed) |
 
 ---
 
-### Step 2 — Create the HTTPS Virtual Server on WAN:443
+### Step 1 — Origin certificate
 
-In FortiOS 7.2, a `firewall vip` with `type server-load-balance` and `server-type https` terminates
-the Cloudflare↔origin TLS hop (using the Origin Cert from Step 1) and forwards decrypted traffic
-to a single backend. All Host-header routing happens inside Caddy on the NUC — FortiGate only needs
-one realserver entry pointing at the Caddy edge on port 80.
+FortiGate generates the key pair and a CSR; Cloudflare signs it. The private key never leaves
+the FortiGate.
 
-**Via CLI:**
+1. **FortiGate:** System → Certificates → Create/Import → Generate CSR.
 
-First, create the HTTP health-check monitor that probes the Caddy edge:
+   | Field | Value |
+   |---|---|
+   | Certificate Name | `perfectday-cf-origin-2026` |
+   | Common Name | `andrewlass.com` |
+   | Subject Alternative Name | `DNS:*.andrewlass.com,DNS:andrewlass.com` |
+   | Key | RSA 2048 |
+
+   The wildcard covers any first-level name, so adding `perfectday-media` routes later needs no
+   new certificate. A wildcard covers one level only
+   ([Cloudflare](https://developers.cloudflare.com/ssl/origin-configuration/origin-ca/)). The
+   cost: this key is accepted by Cloudflare for any `andrewlass.com` subdomain on the
+   Cloudflare→FortiGate hop, which matters only if the FortiGate itself is compromised.
+
+2. **Cloudflare:** SSL/TLS → Origin Server → Create Certificate → use my private key and CSR.
+   Paste the CSR, and set the hostnames field to `*.andrewlass.com, andrewlass.com` as well
+   (Cloudflare's docs do not say whether the CSR or the field decides the names, so set both).
+
+3. **Check the PEM before importing:**
+   ```bash
+   openssl x509 -in cert.pem -noout -ext subjectAltName -enddate
+   # Expect: DNS:*.andrewlass.com, DNS:andrewlass.com
+   ```
+
+4. **FortiGate:** import the PEM into the pending CSR. It becomes an active local certificate.
+
+> **Expiry:** the certificate in use expires **2027-11-16** (issued for one year).
+> Cloudflare does not send expiry notices for Origin CA certificates
+> ([Cloudflare](https://developers.cloudflare.com/ssl/origin-configuration/origin-ca/)).
+> When it expires, every request fails with Cloudflare error 526. Renew it before then by
+> repeating this step.
+
+---
+
+### Step 2 — Health check
 
 ```
 config firewall ldb-monitor
-    edit "perfectday-caddy-http"
-        set type http
+    edit "perfectday-caddy-tcp"
+        set type tcp
         set port 80
-        set http-get "/healthz"
-        set http-match "Not Found"
         set interval 10
         set timeout 2
         set retry 3
@@ -161,20 +169,29 @@ config firewall ldb-monitor
 end
 ```
 
-Then create the VIP and bind the monitor at the VIP level (not inside `config realservers` — when
-a top-level `monitor` is bound to a `server-load-balance` VIP, FortiGate health-checks every
-realserver in the pool against that monitor automatically):
+A TCP check only proves Caddy accepts connections on port 80. The earlier HTTP check
+(`perfectday-caddy-http`: `GET /healthz`, match "Not Found") never marked the NUC up, so the VIP
+had no healthy server and Cloudflare returned 522. The likely cause, not yet confirmed from
+Caddy's log: if the FortiGate's probe is HTTP/1.1 without a `Host` header, Caddy (Go's HTTP server)
+answers `400 Bad Request: missing required Host header` before any route runs, so no Caddyfile
+route can fix it. Caddy's access log will not show such a request, so confirm it on the
+FortiGate with a short capture of the probe and Caddy's reply:
+`diagnose sniffer packet any 'host <NUC_LAN_IP> and port 80' 6 10`.
+
+---
+
+### Step 3 — Virtual server (VIP)
 
 ```
 config firewall vip
-    edit "perfectday-https"
+    edit "perfectday-https-cf-origin"
         set type server-load-balance
-        set extip <WAN_IP>
+        set extip 0.0.0.0
         set extintf "wan1"
-        set extport 443
         set server-type https
-        set ssl-certificate "perfectday-cf-origin"
-        set monitor "perfectday-caddy-http"
+        set extport 443
+        set ssl-certificate "perfectday-cf-origin-2026"
+        set monitor "perfectday-caddy-tcp"
         config realservers
             edit 1
                 set ip <NUC_LAN_IP>
@@ -185,43 +202,114 @@ config firewall vip
 end
 ```
 
-Replace `<WAN_IP>` with your FortiGate WAN IP and `<NUC_LAN_IP>` with the NUC's LAN IP.
+One real server on port 80: the FortiGate forwards decrypted HTTP to Caddy, and Caddy routes by
+`Host`.
 
-> **Why match "Not Found":** Caddy's catch-all returns `404 Not Found` for `/healthz` (the probe
-> arrives without a `Host` header that matches `@diary` or `@api`). A 404 with that body proves
-> Caddy is alive and routing — exactly what we want to verify. We're checking Caddy itself, not
-> the backends. Without this monitor, FortiGate has no way to know if Caddy crashed, and would
-> keep forwarding traffic into a black hole.
+`extip 0.0.0.0` matches any address on `wan1`. The WAN IP is dynamic (Comcast), so a fixed
+`extip` would stop matching after a lease change while DDNS moved the DNS records to the new
+address. Set to `0.0.0.0` and verified working on 2026-11-16.
 
-> **`set extintf`**: substitute your actual WAN interface name if it differs from `wan1`
-> (check with `get system interface` — look for the interface with your WAN IP).
+> **Watch for other VIPs on WAN:443.** On 2026-11-16 three VIPs claimed it: this one, a plain
+> port-forward (`perfectday-nuc`, WAN:443 → NUC:80) and `blacknight-ssl-offload` (another
+> service). Policy 35 used the port-forward, so Cloudflare's TLS hello reached Caddy's
+> plain-HTTP port and Cloudflare returned 525. After policy 35 was pointed at this VIP, the site
+> worked with `blacknight-ssl-offload` still defined; which VIP wins when several share an IP and
+> port, and whether an unused one can interfere, is not established. Forum reports say two
+> TLS-terminating VIPs cannot share one IP and port, and a VIP takes one certificate
+> ([Fortinet community](https://community.fortinet.com/t5/Support-Forum/Two-services-with-same-port/m-p/91360),
+> [SNI thread](https://community.fortinet.com/t5/Support-Forum/Fortigate-SSL-Offloading-with-SNI/td-p/252027));
+> this is not in Fortinet's documentation. Delete the port-forward VIP. If another service must
+> keep WAN:443, move Perfect Day to another external port and add a Cloudflare Origin Rule that
+> overrides the destination port (available on the Free plan:
+> [Cloudflare](https://developers.cloudflare.com/rules/origin-rules/)).
 
-> **One realserver, port 80:** FortiGate forwards decrypted HTTP to the Caddy edge container on
-> the NUC. Caddy reads the `Host` header and routes to `web:3000` or `api:8000` over the Docker
-> internal network. This is necessary because FortiGate's `firewall vip` does not support
-> Host-header routing — that feature is exclusive to FortiADC, a separate product.
+---
 
-**Via GUI (if preferred):** Policy & Objects → Virtual IPs → New
+### Step 4 — Firewall policy
 
-| Field | Value |
-|---|---|
-| Name | `perfectday-https` |
-| Type | Server Load Balance |
-| External interface | WAN (`wan1`) |
-| External IP | `<WAN_IP>` |
-| External service port | 443 |
-| Virtual server type | HTTPS |
-| Server SSL certificate | `perfectday-cf-origin` |
-| Health Check | `perfectday-caddy-http` (create under Policy & Objects → Health Check first) |
+```
+config firewall policy
+    edit 35
+        set name "perfectday-https-cf-origin"
+        set srcintf "wan1"
+        set dstintf "<LAN_INTERFACE>"
+        set action accept
+        set srcaddr "all"
+        set dstaddr "perfectday-https-cf-origin"
+        set schedule "always"
+        set service "ALL"
+        set inspection-mode proxy
+        set utm-status enable
+        set ssl-ssh-profile "perfectday-cf-origin"
+        set av-profile "default"
+        set ips-sensor "default"
+        set logtraffic all
+        set nat enable
+    next
+end
+```
 
-Add one real server:
+- **`inspection-mode proxy` is required.** Fortinet's 7.2 guide says a flow-based policy accepts
+  only TCP/UDP/IP virtual servers, so an HTTPS virtual server needs a proxy-based policy
+  ([FortiOS 7.2.10](https://docs.fortinet.com/document/fortigate/7.2.10/administration-guide/713497/virtual-server-load-balance)).
+  Flow is the default and `show` does not print it, so a missing `inspection-mode` line means
+  flow-based.
+- **Open item: restrict `srcaddr` to Cloudflare.** Make an address group from
+  <https://www.cloudflare.com/ips-v4> and use it instead of `all`, so only Cloudflare's edge can
+  reach the origin.
+- **Port 80 inbound is not needed.** Cloudflare redirects HTTP to HTTPS at its edge.
 
-| Real server | IP | Port |
+---
+
+### Step 5 — Verify
+
+```bash
+# Through Cloudflare. Before the app is deployed with the new names, Caddy answers "Not Found"
+# (404); that still proves the whole Cloudflare -> FortiGate -> Caddy path works.
+curl -s -o /dev/null -w "%{http_code}\n" https://perfectday.andrewlass.com/
+curl -s https://perfectday-api.andrewlass.com/readyz
+# Expect after deploy: the web page (not Caddy's "Not Found"), and readyz 200.
+
+# The edge certificate browsers see:
+openssl s_client -connect perfectday.andrewlass.com:443 -servername perfectday.andrewlass.com \
+  </dev/null 2>/dev/null | openssl x509 -noout -issuer -ext subjectAltName
+# Expect: Google Trust Services (or Let's Encrypt); DNS:andrewlass.com, DNS:*.andrewlass.com
+
+# The next two checks connect straight to the WAN IP. Run them from off-network (e.g. a phone
+# hotspot): from the LAN, a hairpin path may use a different policy than Cloudflare's traffic.
+# The origin certificate:
+openssl s_client -connect <WAN_IP>:443 -servername perfectday.andrewlass.com \
+  </dev/null 2>/dev/null | openssl x509 -noout -issuer -ext subjectAltName -enddate
+# Expect: CloudFlare Origin SSL Certificate Authority; DNS:*.andrewlass.com, DNS:andrewlass.com
+
+# Plain HTTP on 443 must not reach Caddy (that would mean a port-forward is in the path):
+curl -s -i --max-time 8 -H "Host: perfectday.andrewlass.com" http://<WAN_IP>:443/
+# Expect: no response
+
+# On the FortiGate:
+#   diagnose firewall vip realserver list    -> status=up alive=1
+```
+
+**Cloudflare error codes seen while building this, and what they meant:**
+
+| Error | Meaning | Cause on 2026-11-16 |
 |---|---|---|
-| 1 | `<NUC_LAN_IP>` | 80 |
+| 525 | TLS handshake to the origin failed | Policy 35 used the plain port-forward VIP; nothing decrypted |
+| 522 | Cloudflare could not open a connection | VIP had no healthy real server (HTTP health check failing) |
+| 526 | Origin certificate invalid for the name | Not seen; expect it if the origin certificate expires or lacks the name |
 
-The health check is bound at the VIP level, not on the real server. FortiGate uses it to probe
-every realserver in the pool automatically.
+To trace one connection on the FortiGate:
+
+```
+diagnose debug reset
+diagnose debug flow filter dport 443
+diagnose debug flow show function-name enable
+diagnose debug flow trace start 20
+diagnose debug enable
+# load the site, then:
+diagnose debug disable
+diagnose debug reset
+```
 
 ---
 
@@ -242,79 +330,6 @@ To bring up only the edge service:
 ```bash
 docker compose --profile nuc up -d edge
 ```
-
----
-
-### Step 3 — Create firewall policies
-
-Two policies are needed: one for HTTPS inbound from Cloudflare, and one to lock down inbound
-traffic to Cloudflare IP ranges only.
-
-**Via GUI:** Policy & Objects → IPv4 Policy → New
-
-| Policy | Incoming interface | Outgoing interface | Destination | Service | Action |
-|---|---|---|---|---|---|
-| `perfectday-https-in` | WAN | Virtual server zone | `perfectday-https` VIP | HTTPS | ACCEPT |
-
-Enable **NAT** on the policy (FortiGate rewrites the source IP when forwarding to the backend).
-
-> **Restrict to Cloudflare IPs (recommended):** Create an address group containing
-> [Cloudflare's published IP ranges](https://www.cloudflare.com/ips/) and use it as the
-> source address on `perfectday-https-in` instead of `all`. This ensures FortiGate only
-> accepts origin traffic from Cloudflare's edge — direct connections to your WAN IP are
-> blocked at the firewall even if an attacker knows it. Cloudflare publishes its IP ranges
-> at `https://www.cloudflare.com/ips/` and updates them infrequently; review quarterly.
-
-> **HTTP (port 80) inbound is not needed.** Cloudflare handles HTTP→HTTPS redirects at
-> its edge before traffic reaches your WAN. Do not open port 80 on FortiGate.
-
----
-
-### Step 4 — Verify
-
-After saving all the above, test from **off-network** (mobile hotspot, not the home LAN):
-
-```bash
-# HTTPS routing — web app (through Cloudflare):
-curl -I https://diary.perfectday.andrewlass.com/healthz
-# Expect: HTTP/2 200
-
-# HTTPS routing — API (through Cloudflare):
-curl -I https://api.diary.perfectday.andrewlass.com/healthz
-# Expect: HTTP/2 200, body {"status":"ok"}
-
-# Public-facing cert is Cloudflare Universal SSL (not the Origin Cert):
-openssl s_client -connect diary.perfectday.andrewlass.com:443 \
-  -servername diary.perfectday.andrewlass.com </dev/null 2>/dev/null \
-  | openssl x509 -noout -subject -issuer -dates
-# Expect: issuer = Let's Encrypt or Google Trust Services (CF's Universal SSL provider),
-#         not-after ≥ 60 days from today. This is the cert browsers see.
-
-# Origin cert on FortiGate — bypass Cloudflare and hit the WAN IP directly with SNI:
-openssl s_client -connect <WAN_IP>:443 \
-  -servername diary.perfectday.andrewlass.com </dev/null 2>/dev/null \
-  | openssl x509 -noout -subject -issuer -dates
-# Expect: issuer = CloudFlare Origin SSL Certificate Authority, validity ~15 years,
-#         SANs include all three planned hostnames.
-
-# Confirm CF is in the path (A record resolves to Cloudflare anycast, not your WAN IP):
-dig +short diary.perfectday.andrewlass.com
-# Expect: Cloudflare anycast IPs (e.g., 104.16.x.x or 172.64.x.x), NOT your home WAN IP.
-
-# Confirm Host-header routing (FortiGate → Caddy → backends):
-# Both subdomains resolve through the same VIP but Caddy dispatches to different backends.
-curl -sk --resolve "diary.perfectday.andrewlass.com:443:<WAN_IP>" \
-  https://diary.perfectday.andrewlass.com/healthz
-# Expect: 200 from Next.js
-
-curl -sk --resolve "api.diary.perfectday.andrewlass.com:443:<WAN_IP>" \
-  https://api.diary.perfectday.andrewlass.com/healthz
-# Expect: 200 {"status":"ok"} from FastAPI
-```
-
-> **Note on direct WAN tests:** With Cloudflare proxy on, `dig` returns CF anycast IPs, not your
-> home WAN IP. The `--resolve` flag above forces curl to bypass DNS and connect directly to FortiGate's
-> WAN IP so you can verify FortiGate's routing independently of Cloudflare. Substitute your actual WAN IP.
 
 ---
 

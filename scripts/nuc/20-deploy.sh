@@ -23,7 +23,7 @@ done
 REPO_URL="git@github.com:bdsys/perfect-day.git"
 DEPLOY_DIR="/opt/perfect-day"
 ENV_FILE="/etc/perfect-day/app.env"
-HEALTH_URL="https://api.diary.perfectday.andrewlass.com/readyz"
+HEALTH_URL="https://perfectday-api.andrewlass.com/readyz"
 HEALTH_TIMEOUT=90
 
 LOG_DIR=/var/log/perfect-day

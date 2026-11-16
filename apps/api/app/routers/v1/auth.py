@@ -264,8 +264,8 @@ async def refresh(
     # Origin check for CSRF defence-in-depth
     origin = request.headers.get("origin", "")
     allowed = {
-        "https://diary.perfectday.andrewlass.com",
-        "https://api.diary.perfectday.andrewlass.com",
+        "https://perfectday.andrewlass.com",
+        "https://perfectday-api.andrewlass.com",
         "http://localhost:3000",
     }
     if origin and origin not in allowed:

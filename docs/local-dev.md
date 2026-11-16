@@ -205,7 +205,7 @@ Calls the real Anthropic API. Use this to refresh `tests/cassettes/llm_draft_sim
 
 ```bash
 make test-smoke                                                    # default: http://localhost:8000
-make test-smoke BASE=https://api.diary.perfectday.andrewlass.com  # against deployed stack
+make test-smoke BASE=https://perfectday-api.andrewlass.com  # against deployed stack
 ```
 
 ---
@@ -268,15 +268,19 @@ export MASTER_SECRET=$(python3 -c "import secrets; print(secrets.token_hex(32))"
 
 ### Google Cloud — Project Strategy
 
-The plan uses **three separate GCP projects** to keep credentials isolated and avoid accidentally hitting production quotas during development:
+**As set up on 2026-11-16 (Andrew): one project, `perfect-day`, in Andrew's new Google account, with two Web OAuth clients.** A separate production project is backlog row 35 in `POC_PHASE2_TODO.md`. CI never calls Google, so it needs no project.
 
-| GCP Project | Purpose | OAuth redirect URIs |
-|---|---|---|
-| `perfect-day-dev` | Local development | `http://localhost:8000/v1/integrations/google/callback` |
-| `perfect-day-test` | CI / automated testing | (same as dev) |
-| `perfect-day-prod` | NUC production | `https://api.diary.perfectday.andrewlass.com/v1/integrations/google/callback` |
+| OAuth client | Used by | Authorized JavaScript origins | Authorized redirect URIs |
+|---|---|---|---|
+| `Perfect Day local` | Local development | `http://localhost`, `http://localhost:3000` | `http://localhost:8000/v1/integrations/google/callback` |
+| `Perfect Day NUC` | NUC production | `https://perfectday.andrewlass.com` | `https://perfectday-api.andrewlass.com/v1/integrations/google/callback` |
 
-For local testing, create and use `perfect-day-dev`.
+- The JavaScript origins serve the "Sign in with Google" button; for local testing Google says to add both `http://localhost` and `http://localhost:<port>` (<https://developers.google.com/identity/gsi/web/guides/get-google-api-clientid>).
+- The redirect URI serves Calendar and Photos connect and must match exactly, scheme and trailing slash included (<https://developers.google.com/identity/protocols/oauth2/web-server>).
+- **Changing clients or projects disconnects Google for every user:** stored Calendar/Photos tokens belong to the old client, so each user reconnects once. Photos Picker sessions only work with the client that created them.
+- The project is in **Testing**: only listed test users can connect, and their Calendar/Photos consent expires after 7 days (<https://support.google.com/cloud/answer/15549945>).
+
+The steps below create the project (name it `perfect-day`). Create both clients in Step 4.
 
 ---
 
@@ -284,7 +288,7 @@ For local testing, create and use `perfect-day-dev`.
 
 1. Go to [console.cloud.google.com](https://console.cloud.google.com).
 2. Click the project dropdown at the top → **New Project**.
-3. Name: `perfect-day-dev` → **Create**.
+3. Name: `perfect-day` → **Create**.
 4. Make sure the new project is selected in the dropdown before continuing.
 
 ---
@@ -292,48 +296,34 @@ For local testing, create and use `perfect-day-dev`.
 ### Step 2 — Enable APIs
 
 1. In the left sidebar: **APIs & Services → Library**.
-2. Search for and enable each of the following:
+2. Search for and enable each of the following. Do this before Step 3: Google only lists scopes for APIs that are turned on.
    - **Google Calendar API**
-   - **Google Photos Picker API** (needed for "Add from Google Photos" on an entry). See [Get started with the Picker API](https://developers.google.com/photos/picker/guides/get-started-picker). The old Photos Library API cannot read a person's photos any more, so do not enable it for this.
+   - **Google Photos Picker API** (needed for "Add from Google Photos" on an entry). Not the similarly named "Google Picker API", which is for Google Drive. See [Get started with the Picker API](https://developers.google.com/photos/picker/guides/get-started-picker). The old Photos Library API cannot read a person's photos any more, so do not enable it for this.
 
 ---
 
-### Step 3 — Configure OAuth consent screen
+### Step 3 — Configure the consent screen (Google Auth platform)
 
-1. **APIs & Services → OAuth consent screen**.
-2. User type: **External** → **Create**.
-3. Fill in required fields:
-   - App name: `Perfect Day (dev)`
-   - User support email: your Google account email
-   - Developer contact email: same
-4. Click **Save and Continue** through Scopes. Calendar needs none here (it is requested at runtime). For Google Photos, add the Picker scope `https://www.googleapis.com/auth/photospicker.mediaitems.readonly` to the consent screen's scopes (the Picker guide above lists it).
-5. On the **Test users** step, add your own Google account email address.  
-   *(This keeps the app in "testing" mode — only listed test users can authorize. You won't need to go through Google's verification process for local dev.)*
-6. **Save and Continue** → **Back to Dashboard**.
+1. **Google Auth platform → Branding:** app name `Perfect Day`; support email and developer contact: your Google account email. Under **Authorized domains** add `andrewlass.com` (proving you own it, through Search Console, is only needed when applying for app verification: <https://support.google.com/cloud/answer/13464321>).
+2. **Audience:** user type **External**, status **Testing**. Under **Test users**, add every Google account that will connect Calendar or Photos.
+3. **Data Access → Add or Remove Scopes:** `openid`, `.../auth/userinfo.email`, `.../auth/userinfo.profile`, `https://www.googleapis.com/auth/calendar.readonly`, `https://www.googleapis.com/auth/photospicker.mediaitems.readonly`. Type any that aren't listed under **Manually add scopes**. Save.
 
 ---
 
-### Step 4 — Create OAuth 2.0 credentials
+### Step 4 — Create the two OAuth clients
 
-1. **APIs & Services → Credentials → + Create Credentials → OAuth client ID**.
-2. Application type: **Web application**.
-3. Name: `Perfect Day dev web`.
-4. Under **Authorized redirect URIs**, click **Add URI** and enter:
-   ```
-   http://localhost:8000/v1/integrations/google/callback
-   ```
-5. Click **Create**.
-6. A dialog shows your **Client ID** and **Client secret** — copy both now (you can retrieve them again later from the Credentials page).
+**Google Auth platform → Clients → Create client → Web application**, once per row of the table in § Project Strategy above (`Perfect Day local` and `Perfect Day NUC`), with exactly those JavaScript origins and redirect URIs. Copy each Client ID and secret into your password manager.
 
 ---
 
 ### Step 5 — Add Google credentials to `.env`
 
-Open `apps/api/.env` and set:
+Use the **`Perfect Day local`** client. Open `apps/api/.env` and set:
 ```
-GOOGLE_CLIENT_ID=<your Client ID from step 4>
-GOOGLE_CLIENT_SECRET=<your Client secret from step 4>
+GOOGLE_CLIENT_ID=<Client ID of Perfect Day local>
+GOOGLE_CLIENT_SECRET=<Client secret of Perfect Day local>
 ```
+The web's Sign in with Google button reads the same client ID from `NEXT_PUBLIC_GOOGLE_CLIENT_ID`. The `Perfect Day NUC` client's values go into the NUC's `app.env` (`deploy/nuc-ops.md`).
 
 **Connecting Google from a phone.** The cookie that ties a Google connect to your browser (`__Host-pd_google_connect`) is always `Secure`. Browsers only keep a `Secure` cookie on HTTPS or on `localhost`. So Google connect from a phone on your LAN, or from any other plain-http address, fails with `reason=browser_mismatch`. Use HTTPS for that test (for example the Cloudflare-fronted dev domain). Photo upload from a phone does not need this; only the Google connect does.
 

@@ -74,13 +74,13 @@ Cloudflare becomes the authoritative DNS for `andrewlass.com`. GoDaddy stays as 
 
 1. In Cloudflare → **DNS** for `andrewlass.com`, add three A records:
    ```
-   Type: A   Name: diary.perfectday          Value: <YOUR_NUC_WAN_IP>   TTL: 300   Proxy: ON
-   Type: A   Name: api.diary.perfectday      Value: <YOUR_NUC_WAN_IP>   TTL: 300   Proxy: ON
-   Type: A   Name: media.diary.perfectday    Value: <YOUR_NUC_WAN_IP>   TTL: 300   Proxy: ON
+   Type: A   Name: perfectday         Value: <YOUR_NUC_WAN_IP>   Proxy: ON   TTL: Auto
+   Type: A   Name: perfectday-api     Value: <YOUR_NUC_WAN_IP>   Proxy: ON   TTL: Auto
+   Type: A   Name: perfectday-media   Value: <YOUR_NUC_WAN_IP>   Proxy: ON   TTL: Auto
    ```
    To find your NUC WAN IP: `curl https://api.ipify.org` (run from the NUC or any home device).
 
-   Proxy must be **ON** (orange cloud) — Cloudflare handles the public-facing TLS; FortiGate uses a Cloudflare Origin Certificate for the CF↔origin hop. See [`deploy/cloudflare.md`](cloudflare.md) § Cloudflare Origin Certificate setup.
+   Every name has exactly one label before `andrewlass.com`: Cloudflare's free Universal SSL does not cover deeper names (P-9). Proxy must be **ON** (orange cloud): Cloudflare handles the public-facing TLS; FortiGate uses a Cloudflare Origin Certificate for the CF↔origin hop. See [`deploy/cloudflare.md`](cloudflare.md) and [`deploy/nuc.md` § FortiGate Virtual Server setup](nuc.md#fortigate-virtual-server-setup).
 
 2. Create a scoped API token for DDNS updates:
    - Cloudflare → **My Profile** → **API Tokens** → **Create Token**
@@ -91,7 +91,7 @@ Cloudflare becomes the authoritative DNS for `andrewlass.com`. GoDaddy stays as 
 
 3. Verify DNS resolves:
    ```bash
-   dig +short diary.perfectday.andrewlass.com
+   dig +short perfectday.andrewlass.com
    # Expect: your NUC WAN IP (or Cloudflare anycast IPs once Proxy is ON)
    ```
 
@@ -265,10 +265,11 @@ docker compose up -d cloudflare-ddns
 
 **Verify:**
 ```bash
-WAN_IP=$(curl -s https://api.ipify.org)
-DNS_IP=$(dig +short diary.perfectday.andrewlass.com)
-[ "$WAN_IP" = "$DNS_IP" ] && echo "OK: DNS matches WAN" || echo "MISMATCH: WAN=$WAN_IP DNS=$DNS_IP"
-docker compose logs cloudflare-ddns --tail=20
+docker compose --profile nuc logs cloudflare-ddns --tail=20
+# Expect: updates or "unchanged" for perfectday, perfectday-api, perfectday-media.
+# The records are proxied, so `dig` returns Cloudflare's IPs, never the WAN IP. To check the
+# origin IP, compare each record's Content in the Cloudflare dashboard with
+# `curl -s https://api.ipify.org` on the NUC, and check the orange cloud is still on.
 ```
 
 ### B5 — FortiGate: virtual hosts and TLS certificates
@@ -277,15 +278,15 @@ docker compose logs cloudflare-ddns --tail=20
 
 Follow the procedure in [`deploy/nuc.md` → FortiGate Virtual Server setup](nuc.md#fortigate-virtual-server-setup). It covers:
 
-1. Generate a CSR on FortiGate and obtain a Cloudflare Origin Certificate (multi-SAN, 15-year validity)
-2. Create a single HTTPS Virtual Server on WAN:443 with one realserver → NUC:80 (Caddy edge), and bind an HTTP health-check monitor at the VIP level
-3. One firewall policy permitting inbound HTTPS from Cloudflare IP ranges only
+1. An Origin Certificate for `*.andrewlass.com, andrewlass.com` from a CSR generated on the FortiGate (the one in use expires 2027-11-16)
+2. A TCP health check, and a single HTTPS virtual server on WAN:443 with one real server → NUC:80 (Caddy edge)
+3. One proxy-mode firewall policy to that virtual server. Restricting it to Cloudflare's IP ranges is still an open item
 
 When complete, verify from off-network:
 ```bash
-curl -I https://diary.perfectday.andrewlass.com/healthz       # Expect: 200 from Next.js
-curl -I https://api.diary.perfectday.andrewlass.com/healthz   # Expect: 200 from FastAPI
-dig +short diary.perfectday.andrewlass.com                    # Expect: Cloudflare anycast IPs
+curl -sI https://perfectday.andrewlass.com/                 # Expect: the web app (200 or a redirect), not Caddy's "Not Found"
+curl -s  https://perfectday-api.andrewlass.com/readyz       # Expect: 200 from FastAPI
+dig +short perfectday.andrewlass.com                    # Expect: Cloudflare anycast IPs
 ```
 
 ### B5.5 — Bring up the Caddy edge on the NUC
@@ -299,10 +300,10 @@ docker compose --profile nuc up -d edge
 
 Verify Host-header routing from inside the NUC LAN:
 ```bash
-curl -sH "Host: diary.perfectday.andrewlass.com" http://<NUC_LAN_IP>:80/healthz
-# Expect: 200 from Next.js
+curl -sI -H "Host: perfectday.andrewlass.com" http://<NUC_LAN_IP>:80/
+# Expect: the web app (200 or a redirect), not Caddy's "Not Found"
 
-curl -sH "Host: api.diary.perfectday.andrewlass.com" http://<NUC_LAN_IP>:80/healthz
+curl -sH "Host: perfectday-api.andrewlass.com" http://<NUC_LAN_IP>:80/healthz
 # Expect: {"status":"ok"} from FastAPI
 ```
 
@@ -315,7 +316,7 @@ Now that HTTPS is working, add the production callback URL:
 1. Google Cloud Console → **APIs & Services** → **Credentials** → your OAuth 2.0 client
 2. Under **Authorized redirect URIs**, add:
    ```
-   https://api.diary.perfectday.andrewlass.com/v1/integrations/google/callback
+   https://perfectday-api.andrewlass.com/v1/integrations/google/callback
    ```
 3. **Save**
 
@@ -333,11 +334,11 @@ The `age` private key for decryption lives **off-NUC** (USB key, password manage
 ### B8 — Validate production deployment
 
 ```bash
-make test-smoke BASE=https://api.diary.perfectday.andrewlass.com
+make test-smoke BASE=https://perfectday-api.andrewlass.com
 # Expect: 16 PASS lines
 ```
 
-Then manually walk through the app at `https://diary.perfectday.andrewlass.com`:
+Then manually walk through the app at `https://perfectday.andrewlass.com`:
 - Register with email+password
 - Log in with Google OAuth
 - Create a diary, connect Google Calendar

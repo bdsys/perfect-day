@@ -185,12 +185,12 @@ MASTER_SECRET=${MASTER_SECRET}
 OAUTH_TOKEN_SECRET=${OAUTH_TOKEN_SECRET}
 
 # CORS
-CORS_ORIGINS=["https://diary.perfectday.andrewlass.com"]
+CORS_ORIGINS=["https://perfectday.andrewlass.com"]
 
 # Google OAuth
 GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
 GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
-GOOGLE_REDIRECT_URI=https://api.diary.perfectday.andrewlass.com/v1/integrations/google/callback
+GOOGLE_REDIRECT_URI=https://perfectday-api.andrewlass.com/v1/integrations/google/callback
 
 # Anthropic
 ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
@@ -210,7 +210,7 @@ RATE_LIMIT_AUTH=10/minute
 FORTIGATE_LAN_IP=${FORTIGATE_LAN_IP:-}
 
 # Web (Next.js)
-NEXT_PUBLIC_API_URL=https://api.diary.perfectday.andrewlass.com
+NEXT_PUBLIC_API_URL=https://perfectday-api.andrewlass.com
 NEXT_PUBLIC_GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
 EOF
 
@@ -233,8 +233,8 @@ if [[ -n "${CLOUDFLARE_API_TOKEN:-}" && -n "${CLOUDFLARE_ZONE_ID:-}" ]]; then
         {
           authentication: { api_token: $token },
           zone_id: $zone,
-          subdomains: ["diary.perfectday", "api.diary.perfectday", "media.diary.perfectday"],
-          proxied: false
+          subdomains: ["perfectday", "perfectday-api", "perfectday-media"],
+          proxied: true
         }
       ],
       a: true,
