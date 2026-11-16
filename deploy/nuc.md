@@ -186,7 +186,7 @@ FortiGate with a short capture of the probe and Caddy's reply:
 config firewall vip
     edit "perfectday-https-cf-origin"
         set type server-load-balance
-        set extip <WAN_IP>
+        set extip 0.0.0.0
         set extintf "wan1"
         set server-type https
         set extport 443
@@ -205,10 +205,9 @@ end
 One real server on port 80: the FortiGate forwards decrypted HTTP to Caddy, and Caddy routes by
 `Host`.
 
-> **Open risk: `extip` is the WAN IP, which Comcast can change.** DDNS updates the DNS records,
-> but not this VIP, so after a lease change Cloudflare would reach the new IP and no VIP would
-> match. Whether a server-load-balance VIP accepts `0.0.0.0` (any address on `wan1`) is not
-> confirmed. Until it is, update `extip` after an IP change.
+`extip 0.0.0.0` matches any address on `wan1`. The WAN IP is dynamic (Comcast), so a fixed
+`extip` would stop matching after a lease change while DDNS moved the DNS records to the new
+address. Set to `0.0.0.0` and verified working on 2026-11-16.
 
 > **Watch for other VIPs on WAN:443.** On 2026-11-16 three VIPs claimed it: this one, a plain
 > port-forward (`perfectday-nuc`, WAN:443 → NUC:80) and `blacknight-ssl-offload` (another
