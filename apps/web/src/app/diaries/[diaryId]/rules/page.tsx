@@ -3,9 +3,8 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
-import { api, ApiError, type OwnerPlan, type Rule } from '@/lib/api'
-import LimitNote from '@/components/LimitNote'
-import { BACKFILL_LIMIT_NOTE, limitMessage } from '@/lib/plan'
+import { api, ApiError, type Rule } from '@/lib/api'
+import { limitMessage } from '@/lib/plan'
 import { useAuth } from '@/lib/auth-context'
 
 export default function RulesListPage() {
@@ -21,7 +20,6 @@ export default function RulesListPage() {
   const [deleting, setDeleting] = useState<string | null>(null)
   const [applying, setApplying] = useState<string | null>(null)
   const [applyDays, setApplyDays] = useState<Record<string, number>>({})
-  const [plan, setPlan] = useState<OwnerPlan | null>(null)
   const [applySuccess, setApplySuccess] = useState<string | null>(null)
 
   useEffect(() => {
@@ -39,14 +37,6 @@ export default function RulesListPage() {
       })
       .finally(() => setLoading(false))
   }, [user, diaryId])
-
-  // The plan only grays out and caps; if it can't load, the API still guards.
-  useEffect(() => {
-    if (!user || !diaryId) return
-    api.diaries.get(diaryId).then((d) => setPlan(d.plan ?? null)).catch(() => {})
-  }, [user, diaryId])
-
-  const applyMax = plan?.scan_past_days_max ?? null
 
   async function handleToggle(rule: Rule) {
     setToggling(rule.id)
@@ -74,7 +64,7 @@ export default function RulesListPage() {
   }
 
   async function handleApply(rule: Rule) {
-    const days = Math.min(applyDays[rule.id] ?? 30, applyMax ?? Infinity)
+    const days = applyDays[rule.id] ?? 30
     setApplying(rule.id)
     setApplySuccess(null)
     try {
@@ -187,16 +177,15 @@ export default function RulesListPage() {
                 {/* Apply to past N days */}
                 <div style={{ marginTop: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem', borderTop: '1px solid #eee', paddingTop: '0.75rem' }}>
                   <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Apply to past</span>
-                  <input
-                    type="number"
-                    aria-label="Apply days"
-                    min={1}
-                    max={applyMax ?? 3650}
+                  <select
                     value={applyDays[rule.id] ?? 30}
                     onChange={(e) => setApplyDays(prev => ({ ...prev, [rule.id]: Number(e.target.value) }))}
-                    style={{ fontSize: '0.85rem', padding: '0.2rem 0.4rem', width: '5rem' }}
-                  />
-                  <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>days</span>
+                    style={{ fontSize: '0.85rem', padding: '0.2rem 0.4rem' }}
+                  >
+                    <option value={7}>7 days</option>
+                    <option value={30}>30 days</option>
+                    <option value={90}>90 days</option>
+                  </select>
                   <button
                     className="btn btn-secondary"
                     style={{ fontSize: '0.8rem', padding: '0.3rem 0.6rem' }}
@@ -209,7 +198,6 @@ export default function RulesListPage() {
                     <span style={{ fontSize: '0.8rem', color: '#166534' }}>Queued ✓</span>
                   )}
                 </div>
-                {applyMax != null && <LimitNote>{BACKFILL_LIMIT_NOTE}</LimitNote>}
               </div>
             ))}
           </div>
