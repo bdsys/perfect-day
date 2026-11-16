@@ -7,6 +7,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 import pytest_asyncio
 from httpx import AsyncClient
 from sqlalchemy import select
@@ -101,6 +102,20 @@ class TestQueueRedraft:
         ):
             await _generate_entry_draft(str(entry_id), "regenerate")
         assert await get_redis().exists(f"redraft_pending:{entry_id}")
+
+    async def test_broker_down_releases_key_and_raises(self, entry_id):
+        from app.core.dependencies import get_redis
+        from app.workers.tasks import queue_redraft
+
+        with patch("app.workers.tasks.generate_entry_draft") as task:
+            task.apply_async.side_effect = ConnectionError("broker down")
+            with pytest.raises(ConnectionError):
+                await queue_redraft(entry_id)
+        assert not await get_redis().exists(f"redraft_pending:{entry_id}")
+
+        with patch("app.workers.tasks.generate_entry_draft") as again:
+            await queue_redraft(entry_id)
+        again.apply_async.assert_called_once()
 
     async def test_redis_down_queues_directly(self, entry_id):
         from app.workers.tasks import queue_redraft

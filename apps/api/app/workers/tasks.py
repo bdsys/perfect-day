@@ -751,19 +751,28 @@ async def queue_redraft(entry_id: uuid.UUID) -> None:
     """
     from app.core.dependencies import get_redis
 
+    redis = None
     try:
-        first = await get_redis().set(
-            _redraft_key(entry_id), "1", nx=True, ex=REDRAFT_KEY_TTL_SECONDS
-        )
+        redis = get_redis()
+        first = await redis.set(_redraft_key(entry_id), "1", nx=True, ex=REDRAFT_KEY_TTL_SECONDS)
     except Exception:
         # Coalescing is an optimisation; without Redis, redraft straight away.
         log.warning("redraft_coalescing_unavailable", entry_id=str(entry_id), exc_info=True)
         generate_entry_draft.delay(str(entry_id))
         return
     if first:
-        generate_entry_draft.apply_async(
-            (str(entry_id),), {"coalesced": True}, countdown=REDRAFT_WINDOW_SECONDS
-        )
+        try:
+            generate_entry_draft.apply_async(
+                (str(entry_id),), {"coalesced": True}, countdown=REDRAFT_WINDOW_SECONDS
+            )
+        except Exception:
+            # The broker is down, so a fallback .delay would fail too. Release the
+            # key, or every redraft for 15 minutes would be dropped as "coalesced".
+            try:
+                await redis.delete(_redraft_key(entry_id))
+            except Exception:
+                log.warning("redraft_key_release_failed", entry_id=str(entry_id), exc_info=True)
+            raise
     else:
         log.info("redraft_coalesced", entry_id=str(entry_id))
 
