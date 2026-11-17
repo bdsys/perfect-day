@@ -60,7 +60,7 @@ not data.
 
 | Column | Type | Notes |
 |---|---|---|
-| `task_id` | text, primary key | The Celery task id. It is also the AI-draft reservation key, so a job and its spend share one id |
+| `id` | uuid, primary key | The job id. It's passed to the draft task as a `job_id` argument (see below) |
 | `entry_id` | uuid, FK `entries.id` `ON DELETE CASCADE`, indexed | |
 | `queued_at` | timestamptz, default now() | |
 | `run_after` | timestamptz | `queued_at` plus the countdown (600 s for a coalesced redraft, else equal to `queued_at`) |
@@ -74,11 +74,19 @@ An entry's status: **writing** if any of its rows has `started_at`; else
 `enqueue_entry_draft(entry_id, *, trigger="background", coalesced=False, countdown=None)`
 in `app/workers/tasks.py`:
 
-1. Make the task id up front (`uuid4`).
+1. Make a job id (`uuid4`).
 2. Insert the job row in its own short transaction and commit. If that fails,
    log it and still queue the task (best-effort indicator).
-3. `generate_entry_draft.apply_async(..., task_id=..., countdown=...)`.
+3. Queue the task with `job_id` as an extra keyword argument, the same way as
+   today: `.delay(...)`, or `.apply_async(..., countdown=600)` for a coalesced
+   redraft.
 4. If sending fails, delete the row, then re-raise as the call sites expect today.
+
+Planning note (2026-11-17): the job id is a separate argument rather than a
+Celery task id fixed in advance. Fixing the task id would force every queue
+call onto `apply_async`. About 40 existing tests assert
+`generate_entry_draft.delay.assert_not_called()`, and those would then pass
+without testing anything.
 
 Every place that queues `generate_entry_draft` goes through it. Today that's:
 
@@ -98,8 +106,8 @@ the send.
 
 ### Running: mark started, always clean up
 
-At the top of `generate_entry_draft`'s body, set `started_at = now()` on the
-row whose `task_id` is `self.request.id`. A missing row is fine: it means a
+At the top of the draft, set `started_at = now()` on the row whose `id` is
+the task's `job_id`. With no `job_id` or no row, nothing is written: that's a
 task queued before this deploy. Wrap the whole draft in `try/finally` and
 delete that row in the `finally`. That covers success, fallback, failure, the
 plan limit, an early return and an exception. Both writes are best-effort:
