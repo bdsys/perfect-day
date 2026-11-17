@@ -1,12 +1,24 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { ApiError } from '@/lib/api'
 import { useAuth } from '@/lib/auth-context'
 import GoogleSignInButton from '@/components/GoogleSignInButton'
 import { authErrorMessage } from '@/lib/authErrors'
+import { formatDeadline } from '@/lib/deadline'
+
+/** After deleting an account, /login?deleted=<iso> says when it will be deleted. */
+function DeletionNotice() {
+  const iso = useSearchParams().get('deleted')
+  if (!iso || Number.isNaN(new Date(iso).getTime())) return null
+  return (
+    <p className="success-message" role="status" style={{ marginBottom: '1rem' }}>
+      Your account will be deleted on {formatDeadline(iso)}. Log in before then to restore it.
+    </p>
+  )
+}
 
 export default function LoginPage() {
   const { user, loading: authLoading, login, loginWithGoogle } = useAuth()
@@ -63,6 +75,9 @@ export default function LoginPage() {
     <div className="container" style={{ maxWidth: 400, paddingTop: '4rem' }}>
       <div className="card">
         <h1 style={{ fontSize: '1.5rem', fontWeight: 700, marginBottom: '1.5rem' }}>Sign in</h1>
+        <Suspense>
+          <DeletionNotice />
+        </Suspense>
         <form onSubmit={handleSubmit}>
           <div className="form-field">
             <label className="form-label" htmlFor="email">Email</label>
