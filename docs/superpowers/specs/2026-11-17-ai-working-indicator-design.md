@@ -107,22 +107,27 @@ the send.
 ### Running: mark started, always clean up
 
 At the top of the draft, set `started_at = now()` on the row whose `id` is
-the task's `job_id`. With no `job_id` or no row, nothing is written: that's a
-task queued before this deploy. Wrap the whole draft in `try/finally` and
+the task's `job_id`. This is an upsert: if the row is gone, it is created
+already started. With no `job_id`, nothing is written: that's a task queued
+before this deploy. Wrap the whole draft in `try/finally` and
 delete that row in the `finally`. That covers success, fallback, failure, the
 plan limit, an early return and an exception. Both writes are best-effort:
 log on error, never fail the draft.
 
-A redelivered task (worker killed, Celery redelivers) finds its row still
-there, sets `started_at` again and deletes it at the end. The behaviour
-stays correct.
+A redelivered task (worker killed, Celery redelivers), or a task whose row
+the sweep removed while it waited, sets `started_at` again, creating the row
+if needed, and deletes it at the end. The entry shows "writing" while it runs.
 
 ### Sweep
 
 The existing beat task `release_lost_ai_drafts` runs every 10 minutes. It
-also deletes jobs where `coalesce(started_at, run_after) < now() - 30 min`,
-reusing `LOST_DRAFT_AFTER`. Worst case, a dead worker's spinner lingers
-about 40 minutes.
+also deletes started jobs where `started_at < now() - 30 min`, reusing
+`LOST_DRAFT_AFTER`, and jobs that never started where
+`run_after < now() - 6 h` (`UNSTARTED_JOB_STALE_AFTER`). A job that hasn't
+started is waiting in the queue, not lost: a rule applied over a year can
+queue hundreds of drafts, and the NUC drafts two at a time. Worst case, a
+dead worker's spinner lingers about 40 minutes, and a lost unstarted job's
+badge about 6 hours.
 
 ### API
 

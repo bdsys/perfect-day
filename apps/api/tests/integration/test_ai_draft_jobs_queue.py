@@ -112,6 +112,26 @@ class TestTaskRuns:
         assert seen == {e.id: "writing"}
         assert await _jobs(db_session, e.id) == []
 
+    async def test_task_whose_row_was_swept_shows_writing_again(self, db_session):
+        from app.workers.tasks import _generate_entry_draft
+
+        e = await _entry(db_session)
+        await db_session.commit()
+        job_id = uuid.uuid4()  # its row is gone: swept, or the task was redelivered
+        seen: dict = {}
+
+        async def draft(*args, **kwargs):
+            seen.update(await ai_statuses(db_session, [e.id]))
+
+        with (
+            patch("app.services.entry_location.update_place_and_weather", AsyncMock()),
+            patch("app.workers.llm.generate_draft_for_entry", AsyncMock(side_effect=draft)),
+        ):
+            await _generate_entry_draft(str(e.id), job_id=str(job_id))
+
+        assert seen == {e.id: "writing"}
+        assert await _jobs(db_session, e.id) == []
+
     async def test_task_clears_job_when_draft_raises(self, db_session):
         from app.workers.tasks import _generate_entry_draft
 
@@ -168,7 +188,9 @@ class TestBeatSweep:
 
         e = await _entry(db_session)
         old = datetime.now(UTC) - timedelta(minutes=31)
-        db_session.add(AiDraftJob(id=uuid.uuid4(), entry_id=e.id, queued_at=old, run_after=old))
+        db_session.add(
+            AiDraftJob(id=uuid.uuid4(), entry_id=e.id, queued_at=old, run_after=old, started_at=old)
+        )
         await db_session.commit()
 
         await beat_tasks._release_lost_ai_drafts()

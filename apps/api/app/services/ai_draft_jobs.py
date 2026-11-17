@@ -12,13 +12,21 @@ from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Literal, cast
 
-from sqlalchemy import CursorResult, delete, func, select, update
+from sqlalchemy import CursorResult, and_, delete, func, or_, select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import AiDraftJob, Entry
 from app.services.ai_drafts import LOST_DRAFT_AFTER
 
 AiStatus = Literal["queued", "writing"]
+
+# A job that has not started is still waiting for a worker, not lost. A rule
+# applied over a year queues hundreds of drafts, and the NUC runs two at a time,
+# so a job can wait hours after it is due. Sweep it only after this long, so the
+# indicator does not vanish while drafts are still coming. A started job is lost
+# after LOST_DRAFT_AFTER, as its AI-draft reservation is.
+UNSTARTED_JOB_STALE_AFTER = timedelta(hours=6)
 
 
 async def add_job(
@@ -43,9 +51,19 @@ async def add_job(
     return job_id
 
 
-async def mark_started(db: AsyncSession, job_id: uuid.UUID) -> None:
+async def mark_started(db: AsyncSession, job_id: uuid.UUID, entry_id: uuid.UUID) -> None:
+    """Mark the job started, creating its row if it is gone.
+
+    The row can be gone when the sweep removed it while the job waited, or when
+    the task is redelivered after it finished; either way the entry is being
+    written now. If the entry itself is gone the foreign key fails, and the
+    caller logs and carries on.
+    """
+    now = datetime.now(UTC)
     await db.execute(
-        update(AiDraftJob).where(AiDraftJob.id == job_id).values(started_at=func.now())
+        insert(AiDraftJob)
+        .values(id=job_id, entry_id=entry_id, queued_at=now, run_after=now, started_at=now)
+        .on_conflict_do_update(index_elements=[AiDraftJob.id], set_={"started_at": now})
     )
 
 
@@ -54,11 +72,22 @@ async def finish_job(db: AsyncSession, job_id: uuid.UUID) -> None:
 
 
 async def sweep_stale_jobs(db: AsyncSession, now: datetime | None = None) -> int:
-    """Delete jobs whose worker is gone: started, or due, more than LOST_DRAFT_AFTER ago."""
-    cutoff = (now or datetime.now(UTC)) - LOST_DRAFT_AFTER
+    """Delete jobs whose worker is gone.
+
+    A started job is lost once it started more than LOST_DRAFT_AFTER ago. One
+    that has not started is only waiting in the queue, so it is kept until it
+    has been due for UNSTARTED_JOB_STALE_AFTER.
+    """
+    now = now or datetime.now(UTC)
     result = await db.execute(
         delete(AiDraftJob).where(
-            func.coalesce(AiDraftJob.started_at, AiDraftJob.run_after) < cutoff
+            or_(
+                AiDraftJob.started_at < now - LOST_DRAFT_AFTER,
+                and_(
+                    AiDraftJob.started_at.is_(None),
+                    AiDraftJob.run_after < now - UNSTARTED_JOB_STALE_AFTER,
+                ),
+            )
         )
     )
     return cast(CursorResult, result).rowcount

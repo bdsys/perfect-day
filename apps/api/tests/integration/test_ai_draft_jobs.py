@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import AiDraftJob, Entry
 from app.services.ai_draft_jobs import (
+    UNSTARTED_JOB_STALE_AFTER,
     add_job,
     ai_statuses,
     diary_ai_statuses,
@@ -35,7 +36,7 @@ async def test_add_job_reports_queued(db_session: AsyncSession):
 async def test_started_job_reports_writing(db_session: AsyncSession):
     e = await _entry(db_session)
     job_id = await add_job(db_session, e.id)
-    await mark_started(db_session, job_id)
+    await mark_started(db_session, job_id, e.id)
     assert await ai_statuses(db_session, [e.id]) == {e.id: "writing"}
 
 
@@ -43,7 +44,7 @@ async def test_overlapping_jobs_writing_then_queued_then_none(db_session: AsyncS
     e = await _entry(db_session)
     first = await add_job(db_session, e.id)
     second = await add_job(db_session, e.id)
-    await mark_started(db_session, first)
+    await mark_started(db_session, first, e.id)
     assert await ai_statuses(db_session, [e.id]) == {e.id: "writing"}
     await finish_job(db_session, first)
     assert await ai_statuses(db_session, [e.id]) == {e.id: "queued"}
@@ -51,9 +52,20 @@ async def test_overlapping_jobs_writing_then_queued_then_none(db_session: AsyncS
     assert await ai_statuses(db_session, [e.id]) == {}
 
 
-async def test_finish_and_mark_missing_job_are_noops(db_session: AsyncSession):
-    await mark_started(db_session, uuid.uuid4())
+async def test_finish_missing_job_is_noop(db_session: AsyncSession):
     await finish_job(db_session, uuid.uuid4())
+
+
+async def test_mark_started_on_missing_row_creates_it(db_session: AsyncSession):
+    # The sweep removed the row, or the task was redelivered after finishing.
+    e = await _entry(db_session)
+    job_id = uuid.uuid4()
+    await mark_started(db_session, job_id, e.id)
+    await db_session.commit()
+    assert await ai_statuses(db_session, [e.id]) == {e.id: "writing"}
+    job = (await db_session.execute(select(AiDraftJob).where(AiDraftJob.id == job_id))).scalar_one()
+    assert job.entry_id == e.id
+    assert job.started_at is not None
 
 
 async def test_empty_input_returns_empty(db_session: AsyncSession):
@@ -80,17 +92,26 @@ async def test_sweep_deletes_stale_keeps_fresh(db_session: AsyncSession):
     queued = await add_job(db_session, e.id)
     coalesced = await add_job(db_session, e.id, delay_seconds=600)
     started = await add_job(db_session, e.id)
-    await mark_started(db_session, started)
+    await mark_started(db_session, started, e.id)
     await db_session.commit()
 
+    # 31 minutes on, only the started job's worker is presumed lost; a job still
+    # waiting in a long queue survives.
     swept = await sweep_stale_jobs(db_session, now=datetime.now(UTC) + timedelta(minutes=31))
     await db_session.commit()
+    assert swept == 1
+    left = (await db_session.execute(select(AiDraftJob.id))).scalars().all()
+    assert set(left) == {queued, coalesced}
 
-    assert swept == 2
+    # An unstarted job is swept once it has been due for UNSTARTED_JOB_STALE_AFTER.
+    assert UNSTARTED_JOB_STALE_AFTER == timedelta(hours=6)
+    swept = await sweep_stale_jobs(
+        db_session, now=datetime.now(UTC) + timedelta(hours=6, minutes=1)
+    )
+    await db_session.commit()
+    assert swept == 1
     left = (await db_session.execute(select(AiDraftJob.id))).scalars().all()
     assert set(left) == {coalesced}
-    assert queued not in left
-    assert started not in left
 
 
 async def test_diary_statuses_filters(db_session: AsyncSession):

@@ -31,7 +31,7 @@ async def _queued(db: AsyncSession, entry) -> None:
 
 async def _writing(db: AsyncSession, entry) -> None:
     job_id = await add_job(db, entry.id)
-    await mark_started(db, job_id)
+    await mark_started(db, job_id, entry.id)
     await db.commit()
 
 

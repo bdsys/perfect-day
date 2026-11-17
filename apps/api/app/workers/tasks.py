@@ -869,7 +869,7 @@ async def _generate_entry_draft(
         if job_uuid is not None:
             try:
                 async with db_session() as db:
-                    await ai_draft_jobs.mark_started(db, job_uuid)
+                    await ai_draft_jobs.mark_started(db, job_uuid, entry_uuid)
             except Exception:
                 log.warning("ai_draft_job_mark_failed", entry_id=entry_id_str, exc_info=True)
         try:
