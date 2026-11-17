@@ -16,6 +16,11 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
+# Step 1 pulls a new copy of this script; carry on with that copy (lib/self-update.sh).
+# shellcheck source=lib/self-update.sh
+source "$(dirname "$(readlink -f "$0")")/lib/self-update.sh"
+self_update_snapshot
+
 TARGET_SHA="${1:-}"
 DEPLOY_DIR="/opt/perfect-day"
 HEALTH_URL="https://perfectday-api.andrewlass.com/readyz"
@@ -55,6 +60,9 @@ else
     echo "  Updated to: $(git rev-parse --short HEAD)"
 fi
 NEW_SHA=$(git rev-parse HEAD)
+# If the pull changed this script, run the new copy from the top. Everything above is
+# safe to repeat: a second log file starts, and the checkout or pull is a no-op.
+self_update_rerun_if_changed "$@"
 
 echo '[2/8] Rendering Caddyfile from template...'
 ENV_FILE="/etc/perfect-day/app.env"

@@ -374,7 +374,7 @@ sudo ./scripts/nuc/40-update.sh abc1234     # specific SHA
 ```
 
 The script:
-1. `git fetch`, then `git checkout main && git pull --ff-only` (or `git checkout <sha>`)
+1. `git fetch`, then `git checkout main && git pull --ff-only` (or `git checkout <sha>`). If that changed `40-update.sh` itself, the script starts again with the new copy ("40-update.sh changed in this update; running the new copy", and a second log file). Without this, bash would finish the deploy with the old copy, so a fix to the script would apply one deploy late (`scripts/nuc/lib/self-update.sh`; this works from the deploy after the one that brings it)
 2. Re-renders `Caddyfile` from `Caddyfile.tmpl` using `FORTIGATE_LAN_IP` from `app.env`
 3. If the commit differs from the one deployed, tags the running `perfect-day-{api,worker,beat,web}` images `:previous` and records that commit in `previous-deployed-sha`
 4. `docker compose build api worker beat web` (the web bakes in `NEXT_PUBLIC_API_URL` and `NEXT_PUBLIC_GOOGLE_CLIENT_ID` from `app.env`), and pulls the Caddy image
