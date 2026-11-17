@@ -361,3 +361,29 @@ class TestBodySourceRecordsEdits:
         _, entry = await self._draft(client, "bs5@example.com", body_markdown="Written by hand.")
 
         assert entry["body_source"] == "user"
+
+
+async def test_get_entry_carries_owner_temperature_unit(client, db_session):
+    """GET /entries/{id} carries the diary owner's unit; PATCH does not."""
+    import uuid as _uuid
+
+    from sqlalchemy import update
+
+    from app.models import User
+
+    email = f"tunit-{_uuid.uuid4().hex[:8]}@example.com"
+    token, diary = await _setup(client, email)
+    auth = {"Authorization": f"Bearer {token}"}
+    entry = (
+        await client.post(
+            f"/v1/diaries/{diary['id']}/entries", json={"entry_date": "2025-06-01"}, headers=auth
+        )
+    ).json()
+    await db_session.execute(update(User).where(User.email == email).values(temperature_unit="C"))
+    await db_session.commit()
+
+    got = await client.get(f"/v1/entries/{entry['id']}", headers=auth)
+    assert got.json()["temperature_unit"] == "C"
+    patched = await client.patch(f"/v1/entries/{entry['id']}", json={"title": "T"}, headers=auth)
+    assert patched.status_code == 200
+    assert patched.json()["temperature_unit"] is None

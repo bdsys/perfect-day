@@ -310,3 +310,27 @@ class TestValidateCitationEnrichments:
         ok, msg, flagged = validate_citation(output, events, mode="events", enrichments=enrichments)
         assert "Mildred" in flagged or "Aunt" in flagged
 
+
+
+def test_fact_check_source_text_uses_converted_weather():
+    from types import SimpleNamespace
+
+    from app.services.temperature import enrichment_source_text
+
+    enrichments = [
+        SimpleNamespace(kind="weather", payload={"temperature_max_c": 21.5, "condition": "Sunny"})
+    ]
+    text = enrichment_source_text(enrichments, "F")
+    assert "71" in text and "°F" in text
+    assert "temperature_max_c" not in text
+    output = {
+        "title": "A day",
+        "title_facts_used": [],
+        "body_markdown": "It was 71°F and sunny.",
+        "facts_used": [],
+    }
+    ok, _, flagged = validate_citation(
+        output, [], mode="events", enrichments=enrichments, temperature_unit="F"
+    )
+    assert ok is True
+    assert not any("71" in t for t in flagged)

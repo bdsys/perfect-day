@@ -13,6 +13,7 @@ from typing import Literal
 
 import structlog
 
+from app.services.temperature import TemperatureUnit, enrichment_line, enrichment_source_text
 from app.workers.llm_providers import (
     AnthropicProvider,
     GeminiProvider,
@@ -209,7 +210,13 @@ def _format_event_line(i: int, event) -> str:
 
 
 def build_prompt(
-    diary, entry, events, enrichments, mode: str = "events", body_seed: str = ""
+    diary,
+    entry,
+    events,
+    enrichments,
+    mode: str = "events",
+    body_seed: str = "",
+    temperature_unit: TemperatureUnit = "F",
 ) -> tuple[str, str]:
     """Return (diary_context_message, per_entry_message)."""
     voice, pronoun = _derive_voice(diary)
@@ -252,7 +259,9 @@ def build_prompt(
 
         enrichment_lines = []
         for enrichment in enrichments:
-            enrichment_lines.append(f"[{enrichment.kind}] {json.dumps(enrichment.payload)}")
+            enrichment_lines.append(
+                enrichment_line(enrichment.kind, enrichment.payload, temperature_unit)
+            )
 
         entry_parts = [date_str]
         if entry.title:
@@ -277,7 +286,9 @@ def build_prompt(
 
     enrichment_lines = []
     for enrichment in enrichments:
-        enrichment_lines.append(f"[{enrichment.kind}] {json.dumps(enrichment.payload)}")
+        enrichment_lines.append(
+                enrichment_line(enrichment.kind, enrichment.payload, temperature_unit)
+            )
 
     entry_parts = [date_str, "", "EVENTS:"] + event_lines
     if enrichment_lines:
@@ -373,6 +384,7 @@ _EVENT_WRAPPER = re.compile(r'<event index="\d+">|</event>')
 def validate_citation(
     output: dict, events: list, mode: str = "events", body_seed: str = "",
     enrichments: list | None = None, known_words: str = "",
+    temperature_unit: TemperatureUnit = "F",
 ) -> tuple[bool, str, list[str]]:
     """Check a reply's event citations and flag words no source supports.
 
@@ -380,7 +392,7 @@ def validate_citation(
     ("hybrid") and "polish" modes it counts as a source, so a word the parent
     wrote is never flagged; a word found in no source is.
     """
-    enrichment_text = " ".join(json.dumps(e.payload) for e in (enrichments or []))
+    enrichment_text = enrichment_source_text(enrichments or [], temperature_unit)
 
     # Polish: the parent's text with no events, so there are no citations to check.
     if mode == "polish":
@@ -584,6 +596,9 @@ async def _generate_draft(
             log.info("diary_read_only_skip", diary_id=str(diary.id), where="draft")
             return
 
+        owner = await db.get(User, diary.owner_user_id)
+        temperature_unit: TemperatureUnit = "C" if owner and owner.temperature_unit == "C" else "F"
+
         events = sorted(
             entry.events, key=lambda e: e.occurred_at or datetime.min.replace(tzinfo=UTC)
         )
@@ -674,7 +689,8 @@ async def _generate_draft(
     row_key = None if free_redraft else reservation_key
 
     diary_context, entry_data = build_prompt(
-        diary, entry, events, enrichments, mode=mode, body_seed=body if parents_writing else ""
+        diary, entry, events, enrichments, mode=mode,
+        body_seed=body if parents_writing else "", temperature_unit=temperature_unit,
     )
 
     prompt_text = diary_context + "\n\n" + entry_data
@@ -746,7 +762,7 @@ async def _generate_draft(
 
                 valid, err, flagged_tokens = validate_citation(
                     parsed, events, mode=mode, body_seed=parents_text, enrichments=enrichments,
-                    known_words=diary.subject_name or "",
+                    known_words=diary.subject_name or "", temperature_unit=temperature_unit,
                 )
                 if not valid:
                     log.warning(

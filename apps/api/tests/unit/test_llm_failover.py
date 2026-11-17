@@ -146,6 +146,7 @@ def _db_context(entry, diary):
         return result
 
     db = MagicMock()
+    db.get = AsyncMock(return_value=None)  # no owner row: the default unit, F
     db.execute = fake_execute
     db.add = MagicMock()
 

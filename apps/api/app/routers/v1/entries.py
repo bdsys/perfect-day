@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, date, datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 import pytz
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -174,6 +174,8 @@ class EntryOut(BaseModel):
     tz_override: str | None = None
     can_edit: bool = False  # the caller may edit this entry (not a viewer)
     plan: OwnerPlanOut | None = None  # the diary owner's plan; set on GET /entries/{id} only
+    # The diary owner's temperature unit, for weather on the entry; GET /entries/{id} only.
+    temperature_unit: Literal["F", "C"] | None = None
     # An AI draft is queued or being written for this entry. Set by the list, the single
     # GET and regenerate; None everywhere else.
     ai_status: AiStatus | None = None
@@ -536,6 +538,8 @@ async def get_entry(
     out = _entry_out_from_orm(entry, can_edit=role != "viewer", exact_places=role is None)
     # The owner's numbers go to the owner and editors only, never to viewers.
     out.plan = None if role == "viewer" else await owner_plan_out(db, diary)
+    owner = await db.get(User, diary.owner_user_id)
+    out.temperature_unit = "C" if owner and owner.temperature_unit == "C" else "F"
     if role != "viewer":  # no AI indicator for viewers, as in diary_ai_status
         out.ai_status = (await ai_statuses(db, [entry.id])).get(entry.id)
     return out
