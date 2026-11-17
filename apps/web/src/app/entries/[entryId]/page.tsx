@@ -30,6 +30,11 @@ const AI_NOTICES = {
   writing: 'AI is writing this entry. Wait a moment for the draft, or edit anyway.',
   queued: 'AI will write this entry shortly. Wait for the draft, or edit anyway.',
 } as const
+// For someone who cannot edit the entry: there is no Edit to fall back on.
+const AI_NOTICES_NO_EDIT = {
+  writing: 'AI is writing this entry.',
+  queued: 'AI will write this entry shortly.',
+} as const
 
 function planDetails(plan: OwnerPlan & { ai_drafts_limit: number }) {
   return [
@@ -543,7 +548,7 @@ function EntryDetailPageInner() {
                 ) : (
                   <span aria-hidden="true">⏱</span>
                 )}
-                <span>{AI_NOTICES[entry.ai_status]}</span>
+                <span>{(entry.can_edit && !readOnly ? AI_NOTICES : AI_NOTICES_NO_EDIT)[entry.ai_status]}</span>
               </div>
             )}
 

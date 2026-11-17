@@ -346,6 +346,30 @@ describe('entry page: AI working notice', () => {
     expect(q.querySelector('.spinner')).toBeNull()
   })
 
+  it('drops "edit anyway" for someone who cannot edit', async () => {
+    get.mockResolvedValue(ai({ ai_status: 'writing', can_edit: false }))
+    const { unmount } = render(<EntryDetailPage />)
+    expect(await screen.findByTestId('ai-notice')).toHaveTextContent(/^AI is writing this entry\.$/)
+    expect(screen.queryByText(WRITING)).not.toBeInTheDocument()
+    unmount()
+    get.mockResolvedValue(ai({ ai_status: 'queued', can_edit: false }))
+    render(<EntryDetailPage />)
+    expect(await screen.findByTestId('ai-notice')).toHaveTextContent(/^⏱AI will write this entry shortly\.$/)
+    expect(screen.queryByText(QUEUED)).not.toBeInTheDocument()
+  })
+
+  it('drops "edit anyway" on a read-only diary', async () => {
+    get.mockResolvedValue({ ...ai({ ai_status: 'writing' }), plan: freePlan({ read_only: true }) } as Entry)
+    const { unmount } = render(<EntryDetailPage />)
+    expect(await screen.findByText('AI is writing this entry.')).toBeInTheDocument()
+    expect(screen.queryByText(WRITING)).not.toBeInTheDocument()
+    unmount()
+    get.mockResolvedValue({ ...ai({ ai_status: 'queued' }), plan: freePlan({ read_only: true }) } as Entry)
+    render(<EntryDetailPage />)
+    expect(await screen.findByText('AI will write this entry shortly.')).toBeInTheDocument()
+    expect(screen.queryByText(QUEUED)).not.toBeInTheDocument()
+  })
+
   const WARN = 'The AI draft arrived while you were editing. Save to keep your text instead, or Cancel to read the AI draft.'
 
   it('warns when the AI draft lands mid-edit', async () => {

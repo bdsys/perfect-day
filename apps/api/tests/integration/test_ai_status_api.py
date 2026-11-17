@@ -94,9 +94,9 @@ async def test_status_endpoint_owner(client: AsyncClient, db_session: AsyncSessi
     assert r.json() == {"entries": {str(q.id): "queued", str(w.id): "writing"}}
 
 
-async def test_status_endpoint_viewer_sees_published_only(
-    client: AsyncClient, db_session: AsyncSession
-):
+async def test_status_endpoint_viewer_sees_nothing(client: AsyncClient, db_session: AsyncSession):
+    # A viewer sees only published entries, whose AI result is always a suggestion
+    # they cannot see, so an indicator would end with no visible change.
     owner = await make_user(db_session)
     viewer = await make_user(db_session)
     diary = await make_diary(db_session, owner)
@@ -107,7 +107,25 @@ async def test_status_endpoint_viewer_sees_published_only(
     await _queued(db_session, pub)
     r = await client.get(f"/v1/diaries/{diary.id}/entries/ai-status", headers=_auth(viewer))
     assert r.status_code == 200
-    assert r.json() == {"entries": {str(pub.id): "queued"}}
+    assert r.json() == {"entries": {}}
+
+
+async def test_viewer_list_and_get_have_no_ai_status(client: AsyncClient, db_session: AsyncSession):
+    owner = await make_user(db_session)
+    viewer = await make_user(db_session)
+    diary = await make_diary(db_session, owner)
+    db_session.add(DiaryPermission(diary_id=diary.id, user_id=viewer.id, role="viewer"))
+    pub = await make_entry(db_session, diary, status="published")
+    await _writing(db_session, pub)
+    r = await client.get(f"/v1/diaries/{diary.id}/entries", headers=_auth(viewer))
+    assert r.status_code == 200
+    assert [(e["id"], e["ai_status"]) for e in r.json()] == [(str(pub.id), None)]
+    r = await client.get(f"/v1/entries/{pub.id}", headers=_auth(viewer))
+    assert r.status_code == 200
+    assert r.json()["ai_status"] is None
+    # The owner still sees it.
+    r = await client.get(f"/v1/entries/{pub.id}", headers=_auth(owner))
+    assert r.json()["ai_status"] == "writing"
 
 
 async def test_status_endpoint_excludes_trashed(client: AsyncClient, db_session: AsyncSession):

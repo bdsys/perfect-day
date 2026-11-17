@@ -410,10 +410,16 @@ async def diary_ai_status(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> AiStatusMapOut:
-    """Entries of this diary with an AI draft queued or being written. Viewers only
-    see published entries, as in the list."""
+    """Entries of this diary with an AI draft queued or being written.
+
+    Viewers get none: they see only published entries, and a published entry's
+    AI result is always a suggestion they cannot see, so the indicator would end
+    with no visible change.
+    """
     _, role = await _get_diary_or_404(diary_id, user, db)
-    statuses = await diary_ai_statuses(db, diary_id, published_only=role == "viewer")
+    if role == "viewer":
+        return AiStatusMapOut(entries={})
+    statuses = await diary_ai_statuses(db, diary_id, published_only=False)
     return AiStatusMapOut(entries={str(k): v for k, v in statuses.items()})
 
 
@@ -474,6 +480,8 @@ async def list_entries(
         _entry_out_from_orm(e, can_edit=role != "viewer", exact_places=role is None)
         for e in result.scalars()
     ]
+    if role == "viewer":
+        return outs  # no AI indicator for viewers, as in diary_ai_status
     statuses = await ai_statuses(db, [o.id for o in outs])
     return [o.model_copy(update={"ai_status": statuses.get(o.id)}) for o in outs]
 
@@ -528,7 +536,8 @@ async def get_entry(
     out = _entry_out_from_orm(entry, can_edit=role != "viewer", exact_places=role is None)
     # The owner's numbers go to the owner and editors only, never to viewers.
     out.plan = None if role == "viewer" else await owner_plan_out(db, diary)
-    out.ai_status = (await ai_statuses(db, [entry.id])).get(entry.id)
+    if role != "viewer":  # no AI indicator for viewers, as in diary_ai_status
+        out.ai_status = (await ai_statuses(db, [entry.id])).get(entry.id)
     return out
 
 
