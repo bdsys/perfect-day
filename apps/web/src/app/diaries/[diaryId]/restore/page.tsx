@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
+import AppHeader from '@/components/AppHeader'
 import { useParams, useRouter } from 'next/navigation'
 import { api, type Diary, type Entry, ApiError } from '@/lib/api'
 import { useAuth } from '@/lib/auth-context'
@@ -71,11 +72,7 @@ export default function EntryRestorePage() {
 
   return (
     <>
-      <nav className="nav">
-        <div className="nav-inner">
-          <Link href={`/diaries/${diaryId}`} className="nav-brand">← {diary?.name ?? 'Diary'}</Link>
-        </div>
-      </nav>
+      <AppHeader back={{ href: `/diaries/${diaryId}`, label: `← ${diary?.name ?? 'Diary'}` }} />
       <div className="container" style={{ paddingTop: '1.5rem' }}>
         <div className="page-header">
           <h1 className="page-title">Deleted entries</h1>

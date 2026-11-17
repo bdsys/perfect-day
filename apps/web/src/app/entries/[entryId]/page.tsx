@@ -1,7 +1,7 @@
 'use client'
 
 import { Suspense, useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
-import Link from 'next/link'
+import AppHeader from '@/components/AppHeader'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import { api, type Entry, type OwnerPlan } from '@/lib/api'
 import { formatEventTime } from '@/lib/eventTime'
@@ -396,11 +396,7 @@ function EntryDetailPageInner() {
 
   return (
     <>
-      <nav className="nav">
-        <div className="nav-inner">
-          <Link href={diaryHref} className="nav-brand">← Diary</Link>
-        </div>
-      </nav>
+      <AppHeader back={{ href: diaryHref, label: '← Diary' }} />
 
       <div className="container" style={{ paddingTop: '1.5rem', maxWidth: 720 }}>
         {error && <p className="error-message" style={{ marginBottom: '1rem' }}>{error}</p>}

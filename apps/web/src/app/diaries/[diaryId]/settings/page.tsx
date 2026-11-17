@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import Link from 'next/link'
+import AppHeader from '@/components/AppHeader'
 import { useParams, useRouter } from 'next/navigation'
 import { api, type Diary } from '@/lib/api'
 import { limitMessage } from '@/lib/plan'
@@ -78,11 +78,7 @@ export default function DiarySettingsPage() {
 
   return (
     <>
-      <nav className="nav">
-        <div className="nav-inner">
-          <Link href={`/diaries/${diaryId}`} className="nav-brand">← Diary</Link>
-        </div>
-      </nav>
+      <AppHeader back={{ href: `/diaries/${diaryId}`, label: '← Diary' }} />
 
       <div className="page-container">
         <div className="page-header">

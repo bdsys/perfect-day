@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
+import AppHeader from '@/components/AppHeader'
 import { useParams, useRouter } from 'next/navigation'
 import { api, type CalendarEventSummary } from '@/lib/api'
 import { limitMessage } from '@/lib/plan'
@@ -150,11 +151,7 @@ export default function CalendarPickPage() {
 
   return (
     <>
-      <nav className="nav">
-        <div className="nav-inner">
-          <Link href={`/diaries/${diaryId}`} className="nav-brand">← Diary</Link>
-        </div>
-      </nav>
+      <AppHeader back={{ href: `/diaries/${diaryId}`, label: '← Diary' }} />
       <div className="container" style={{ paddingTop: '1.5rem', maxWidth: 960, paddingRight: selectedDay ? '380px' : undefined }}>
         <h1 className="page-title">New entry from Google Calendar</h1>
         <p style={{ color: 'var(--text-muted)', marginBottom: '1.5rem', fontSize: '0.9rem' }}>

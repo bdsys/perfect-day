@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
+import AppHeader from '@/components/AppHeader'
 import { useParams, useRouter } from 'next/navigation'
 import { api, ApiError, type Diary, type Entry, type Integration, type ScanRun, type ScanConfig, type BackfillRun } from '@/lib/api'
 import { useAuth } from '@/lib/auth-context'
@@ -406,11 +407,7 @@ export default function DiaryDetailPage() {
 
   return (
     <>
-      <nav className="nav">
-        <div className="nav-inner">
-          <Link href="/diaries" className="nav-brand">← Perfect Day</Link>
-        </div>
-      </nav>
+      <AppHeader back={{ href: '/diaries', label: '← Perfect Day' }} />
       <div className="container" style={{ paddingTop: '1.5rem' }}>
         {readOnly && diary?.plan && (
           <div className="error-message" style={{ marginBottom: '1rem' }}>
