@@ -4,6 +4,7 @@ import uuid
 from datetime import date, datetime, time
 
 from sqlalchemy import (
+    CHAR,
     BigInteger,
     Boolean,
     CheckConstraint,
@@ -55,6 +56,26 @@ class SoftDeleteMixin:
 # ---------------------------------------------------------------------------
 
 
+AVATAR_ICONS: tuple[str, ...] = (
+    "cat",
+    "dog",
+    "bird",
+    "fish",
+    "rabbit",
+    "squirrel",
+    "turtle",
+    "panda",
+    "snail",
+    "flower",
+    "sun",
+    "moon",
+    "rocket",
+    "rainbow",
+    "cake",
+    "paw-print",
+)
+
+
 class User(TimestampMixin, SoftDeleteMixin, Base):
     __tablename__ = "users"
 
@@ -73,6 +94,10 @@ class User(TimestampMixin, SoftDeleteMixin, Base):
     stripe_customer_id: Mapped[str | None] = mapped_column(Text)
     is_admin: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     hard_delete_after: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    temperature_unit: Mapped[str] = mapped_column(CHAR(1), nullable=False, server_default="F")
+    avatar_icon: Mapped[str | None] = mapped_column(Text)
+    avatar_s3_key: Mapped[str | None] = mapped_column(Text)
+    avatar_dek_ciphertext: Mapped[bytes | None] = mapped_column(LargeBinary)
 
     # relationships
     social_identities: Mapped[list[SocialIdentity]] = relationship(
@@ -99,6 +124,15 @@ class User(TimestampMixin, SoftDeleteMixin, Base):
         CheckConstraint(
             "subscription_tier IN ('free','plus','family')",
             name="ck_users_subscription_tier",
+        ),
+        CheckConstraint("temperature_unit IN ('F','C')", name="ck_users_temperature_unit"),
+        CheckConstraint(
+            "avatar_icon IN (" + ",".join(f"'{n}'" for n in AVATAR_ICONS) + ")",
+            name="ck_users_avatar_icon",
+        ),
+        CheckConstraint(
+            "NOT (avatar_icon IS NOT NULL AND avatar_s3_key IS NOT NULL)",
+            name="ck_users_avatar_exclusive",
         ),
     )
 
@@ -312,7 +346,8 @@ class Entry(TimestampMixin, SoftDeleteMixin, Base):
 
     diary: Mapped[Diary] = relationship(back_populates="entries")
     events: Mapped[list[Event]] = relationship(
-        back_populates="entry", cascade="all, delete-orphan",
+        back_populates="entry",
+        cascade="all, delete-orphan",
         foreign_keys="Event.entry_id",
     )
     entry_photos: Mapped[list[EntryPhoto]] = relationship(
@@ -462,9 +497,7 @@ class AiDraftSpend(Base):
     month: Mapped[str] = mapped_column(String(7), nullable=False)
     key: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
     # Only spends made after migration 0018 may be given back by the lost-draft sweeper.
-    sweepable: Mapped[bool] = mapped_column(
-        Boolean, server_default=text("false"), nullable=False
-    )
+    sweepable: Mapped[bool] = mapped_column(Boolean, server_default=text("false"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -504,10 +537,14 @@ class PhotoImport(TimestampMixin, Base):
         UUID(as_uuid=True), ForeignKey("entries.id", ondelete="CASCADE"), nullable=False
     )
     google_session_id: Mapped[str] = mapped_column(Text, nullable=False)
-    status: Mapped[str] = mapped_column(String(20), nullable=False, default="waiting", server_default="waiting")
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="waiting", server_default="waiting"
+    )
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     added_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
-    skipped_videos: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    skipped_videos: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
     failed_names: Mapped[list] = mapped_column(
         JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
     )
@@ -573,7 +610,9 @@ class Enrichment(TimestampMixin, Base):
 
     __table_args__ = (
         UniqueConstraint(
-            "entry_id", "kind", "captured_for_at",
+            "entry_id",
+            "kind",
+            "captured_for_at",
             name="uq_enrichments_entry_kind_captured",
         ),
     )
@@ -603,7 +642,9 @@ class LLMGeneration(TimestampMixin, Base):
     __table_args__ = (
         Index("ix_llm_generations_reservation_key", "reservation_key"),
         CheckConstraint("status IN ('success','failed')", name="ck_llm_generations_status"),
-        CheckConstraint("mode IN ('events','polish','hybrid','none')", name="ck_llm_generations_mode"),
+        CheckConstraint(
+            "mode IN ('events','polish','hybrid','none')", name="ck_llm_generations_mode"
+        ),
     )
 
 
@@ -765,9 +806,7 @@ class AutoCreationRule(TimestampMixin, Base):
         back_populates="rule", cascade="all, delete-orphan"
     )
 
-    __table_args__ = (
-        Index("ix_auto_creation_rules_diary_enabled", "diary_id", "enabled"),
-    )
+    __table_args__ = (Index("ix_auto_creation_rules_diary_enabled", "diary_id", "enabled"),)
 
 
 class EntryRuleMatch(Base):
