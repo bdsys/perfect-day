@@ -22,3 +22,8 @@ it.each(PAGES)('%s renders AppHeader and no className="nav"', (p) => {
   expect(src).toContain('<AppHeader')
   expect(src).not.toContain('className="nav"')
 })
+
+it.each(PAGES)('%s does not repeat the brand as its back link', (p) => {
+  const src = fs.readFileSync(path.join(__dirname, '..', p), 'utf8')
+  expect(src).not.toContain("label: '← Perfect Day'")
+})

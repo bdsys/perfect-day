@@ -60,7 +60,7 @@ export default function DiaryRestorePage() {
 
   return (
     <>
-      <AppHeader back={{ href: '/diaries', label: '← Perfect Day' }} />
+      <AppHeader />
       <div className="container" style={{ paddingTop: '1.5rem' }}>
         <div className="page-header">
           <h1 className="page-title">Deleted diaries</h1>

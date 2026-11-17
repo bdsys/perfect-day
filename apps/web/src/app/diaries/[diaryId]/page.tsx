@@ -407,7 +407,7 @@ export default function DiaryDetailPage() {
 
   return (
     <>
-      <AppHeader back={{ href: '/diaries', label: '← Perfect Day' }} />
+      <AppHeader />
       <div className="container" style={{ paddingTop: '1.5rem' }}>
         {readOnly && diary?.plan && (
           <div className="error-message" style={{ marginBottom: '1rem' }}>
