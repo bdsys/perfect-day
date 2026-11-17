@@ -439,6 +439,12 @@ describe('entry page: AI working notice', () => {
     expect(screen.queryByText(WARN)).not.toBeInTheDocument()
     await act(async () => { jest.advanceTimersByTime(3000) })
     expect(screen.getByText(WARN)).toHaveAttribute('role', 'status')
+    // The same callout as the AI notice, not small print, and nothing spinning.
+    const warn = screen.getByText(WARN)
+    expect(warn).not.toHaveClass('limit-note')
+    expect(warn.getAttribute('style')).toContain('var(--accent)')
+    expect(warn).toHaveStyle({ fontSize: '0.95rem', borderLeftWidth: '4px' })
+    expect(warn.querySelector('.spinner')).toBeNull()
     expect(screen.getByLabelText('Body')).toHaveValue('My typed body')
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
     expect(screen.getByText('The AI body')).toBeInTheDocument()

@@ -1,6 +1,6 @@
 'use client'
 
-import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
+import { Suspense, useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import Link from 'next/link'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import { api, type Entry, type OwnerPlan } from '@/lib/api'
@@ -37,6 +37,12 @@ const AI_NOTICES_NO_EDIT = {
 } as const
 // Polling gave up, so the status may be stale.
 const AI_NOTICE_STALLED = "Couldn't check on the AI draft. Refresh the page to see it."
+// The AI notice and the mid-edit warning share one callout: an accent border and body-size text.
+const AI_CALLOUT_STYLE: CSSProperties = {
+  display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '1rem',
+  padding: '0.75rem 1rem', fontSize: '0.95rem',
+  border: '1px solid var(--accent)', borderLeftWidth: 4, borderRadius: 6,
+}
 
 function planDetails(plan: OwnerPlan & { ai_drafts_limit: number }) {
   return [
@@ -473,7 +479,7 @@ function EntryDetailPageInner() {
               <p className="error-message" style={{ marginBottom: '0.5rem' }}>{editDateError}</p>
             )}
             {aiLandedMidEdit && (
-              <p role="status" className="limit-note" style={{ marginBottom: '0.5rem' }}>
+              <p role="status" style={AI_CALLOUT_STYLE}>
                 The AI draft arrived while you were editing. Save to keep your text instead, or Cancel to read the AI draft.
               </p>
             )}
@@ -555,15 +561,7 @@ function EntryDetailPageInner() {
             )}
 
             {entry.ai_status && !pollingRegen && (
-              <div
-                role="status"
-                data-testid="ai-notice"
-                style={{
-                  display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '1rem',
-                  padding: '0.75rem 1rem', fontSize: '0.95rem',
-                  border: '1px solid var(--accent)', borderLeftWidth: 4, borderRadius: 6,
-                }}
-              >
+              <div role="status" data-testid="ai-notice" style={AI_CALLOUT_STYLE}>
                 {aiStalled ? null : entry.ai_status === 'writing' ? (
                   <span className="spinner" aria-hidden="true" style={{ width: 16, height: 16 }} />
                 ) : (
