@@ -75,6 +75,9 @@ class FakeGoogle:
         self.deleted: list[str] = []
         self.tokens: list[str] = []
         self.on_download = None  # async callable(item), awaited before each download
+        # What create_session reports: Google's pollingConfig.timeoutIn and expireTime.
+        self.session_timeout_s: float | None = 1800.0
+        self.session_expire_in: timedelta | None = timedelta(minutes=30)
 
     def client(self, access_token: str, transport=None):
         self.tokens.append(access_token)
@@ -96,8 +99,12 @@ class _FakeClient:
             picker_uri=f"https://photos.google.com/picker/{sid}",
             items_set=False,
             poll_interval_s=POLL_S,
-            timeout_s=1800.0,
-            expire_time=datetime.now(tz=UTC) + timedelta(minutes=30),
+            timeout_s=self.g.session_timeout_s,
+            expire_time=(
+                None
+                if self.g.session_expire_in is None
+                else datetime.now(tz=UTC) + self.g.session_expire_in
+            ),
         )
 
     async def get_session(self, session_id: str) -> PickerSession:
@@ -283,6 +290,36 @@ async def test_create_import_returns_picker_uri_and_queues_task(client, db_sessi
     assert str(row.entry_id) == entry["id"]
     assert row.status == "waiting"
     assert row.expires_at is not None and row.expires_at > datetime.now(tz=UTC)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("timeout_s", "expire_in", "expected"),
+    [
+        # Google: stop polling after timeoutIn. expireTime (about a week) is how long the
+        # picked items stay readable, not how long to wait for a pick (row 50 follow-up).
+        (1800.0, timedelta(days=7), timedelta(minutes=30)),
+        (7 * 86400.0, timedelta(minutes=30), timedelta(minutes=30)),
+        (None, timedelta(days=7), timedelta(days=7)),
+        (1800.0, None, timedelta(minutes=30)),
+        (None, None, timedelta(hours=1)),
+    ],
+)
+async def test_import_waits_until_the_earlier_of_timeout_and_expiry(
+    client, db_session, timeout_s, expire_in, expected
+):
+    auth, entry = await _owner_with_entry(client, db_session, "pi-deadline")
+    fake = FakeGoogle()
+    fake.session_timeout_s = timeout_s
+    fake.session_expire_in = expire_in
+
+    before = datetime.now(tz=UTC)
+    with _google(fake), patch("app.workers.tasks.process_photo_import.apply_async"):
+        r = await client.post(f"/v1/entries/{entry['id']}/photo-imports", headers=auth)
+    assert r.status_code == 201, r.text
+
+    row = await _import_row(db_session, r.json()["id"])
+    assert abs(row.expires_at - (before + expected)) < timedelta(seconds=30)
 
 
 @pytest.mark.asyncio

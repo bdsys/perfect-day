@@ -15,6 +15,8 @@ import { api, ApiError } from '@/lib/api'
 import { limitMessage } from '@/lib/plan'
 import { replaceLocation } from '@/lib/navigate'
 
+const SLOW_MS = 5_000
+const SLOW_TEXT = 'Google Photos is loading. This can take a minute or two. Please hang with us while we wait for Google...'
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 function startError(e: unknown): string {
@@ -36,6 +38,14 @@ function OpenGooglePhotos() {
   const validEntry = UUID.test(entryId)
   const [error, setError] = useState<string | null>(null)
   const startedRef = useRef(false) // one session, even when React runs effects twice
+  const [slow, setSlow] = useState(false)
+
+  // Our part takes about 3 s; on a phone, Google's picker can then take a minute or two to
+  // load the first time, while this page stays on screen (prod logs, 2026-11-17).
+  useEffect(() => {
+    const t = setTimeout(() => setSlow(true), SLOW_MS)
+    return () => clearTimeout(t)
+  }, [])
 
   useEffect(() => {
     if (loading || !user || !validEntry || startedRef.current) return
@@ -52,7 +62,7 @@ function OpenGooglePhotos() {
 
   return (
     <div className="container" style={{ paddingTop: '2rem' }}>
-      {message ? <p role="alert" className="error-message">{message}</p> : <p>Opening Google Photos…</p>}
+      {message ? <p role="alert" className="error-message">{message}</p> : <p>{slow ? SLOW_TEXT : 'Opening Google Photos…'}</p>}
     </div>
   )
 }

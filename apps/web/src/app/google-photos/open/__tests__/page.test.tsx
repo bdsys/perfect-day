@@ -1,5 +1,5 @@
 import { StrictMode } from 'react'
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import GooglePhotosOpenPage from '../page'
 import { api, ApiError } from '@/lib/api'
 import { replaceLocation } from '@/lib/navigate'
@@ -60,6 +60,31 @@ describe('Google Photos opener tab', () => {
     render(<GooglePhotosOpenPage />)
     expect(screen.getByRole('alert')).toHaveTextContent("This link doesn't say which entry to add photos to. Close this tab and try again.")
     expect(create).not.toHaveBeenCalled()
+  })
+
+  describe('while Google is slow to load (row 50 follow-up)', () => {
+    const SLOW = 'Google Photos is loading. This can take a minute or two. Please hang with us while we wait for Google...'
+    beforeEach(() => jest.useFakeTimers())
+    afterEach(() => jest.useRealTimers())
+
+    it('after 5 seconds, says Google can take a minute or two', async () => {
+      create.mockResolvedValue({ id: 'i1', picker_uri: 'https://p', status: 'waiting' })
+      render(<GooglePhotosOpenPage />)
+      await act(async () => { jest.advanceTimersByTime(4999) })
+      expect(screen.getByText('Opening Google Photos…')).toBeInTheDocument()
+      expect(screen.queryByText(SLOW)).not.toBeInTheDocument()
+      await act(async () => { jest.advanceTimersByTime(1) })
+      expect(screen.getByText(SLOW)).toBeInTheDocument()
+      expect(screen.queryByText('Opening Google Photos…')).not.toBeInTheDocument()
+    })
+
+    it('an error still wins over the loading note', async () => {
+      create.mockRejectedValue(new ApiError(503, 'x', 'queue_unavailable'))
+      render(<GooglePhotosOpenPage />)
+      await act(async () => { jest.advanceTimersByTime(6000) })
+      expect(screen.getByRole('alert')).toHaveTextContent("Google Photos isn't responding.")
+      expect(screen.queryByText(SLOW)).not.toBeInTheDocument()
+    })
   })
 
   it.each([
