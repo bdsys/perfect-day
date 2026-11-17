@@ -121,11 +121,16 @@ def release_lost_ai_drafts() -> int:
 
 
 async def _release_lost_ai_drafts() -> int:
+    from app.services.ai_draft_jobs import sweep_stale_jobs
     from app.services.ai_drafts import release_lost_ai_drafts as sweep
     from app.workers.utils import db_session
 
     async with db_session() as db:
-        return await sweep(db)
+        released = await sweep(db)
+        stale_jobs = await sweep_stale_jobs(db)
+        if stale_jobs:
+            log.info("ai_draft_jobs_swept", count=stale_jobs)
+        return released
 
 
 @celery_app.task(name="app.workers.beat_tasks.sweep_orphaned_photos")

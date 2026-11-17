@@ -713,8 +713,8 @@ async def regenerate_entry(
                 needed=usage.used + 1,
                 resets_on=usage.period.resets_on,
             )
-    from app.workers.tasks import generate_entry_draft
+    from app.workers.tasks import enqueue_entry_draft
 
     # Nothing about the entry changes here, so there is no commit to wait for.
-    generate_entry_draft.delay(str(entry.id), trigger="regenerate")
+    await enqueue_entry_draft(entry.id, trigger="regenerate")
     return _entry_out_from_orm(entry, can_edit=True, exact_places=role is None)

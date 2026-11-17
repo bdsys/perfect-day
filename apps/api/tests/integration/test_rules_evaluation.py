@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 from sqlalchemy import select
@@ -172,7 +172,7 @@ class TestEvaluateEventAgainstRules:
         )
         assert match_result.scalar_one_or_none() is not None, "EntryRuleMatch row must exist"
 
-        mock_task.delay.assert_called_once_with(str(entry.id))
+        mock_task.delay.assert_called_once_with(str(entry.id), job_id=ANY)
 
     async def test_non_matching_rule_no_entry(self, db_session: AsyncSession):
         """A rule that does not match the event payload must not create any Entry."""
@@ -277,7 +277,7 @@ class TestEvaluateEventAgainstRules:
         assert len(matches) == 1, "one EntryRuleMatch for (entry, rule) pair"
 
         # LLM queued exactly once — only for the new entry
-        mock_task.delay.assert_called_once_with(str(entries[0].id))
+        mock_task.delay.assert_called_once_with(str(entries[0].id), job_id=ANY)
 
     async def test_disabled_rule_no_entry(self, db_session: AsyncSession):
         """A disabled rule must be ignored even when the event matches its condition."""
@@ -385,7 +385,7 @@ class TestEvaluateEventAgainstRules:
             )
         ).scalars().all()
         assert set(matched_rule_ids) == {rule1.id, rule2.id}
-        mock_task.delay.assert_called_once_with(str(entry_ids[0]))
+        mock_task.delay.assert_called_once_with(str(entry_ids[0]), job_id=ANY)
 
     async def test_older_per_series_rule_decides_grouping(self, db_session: AsyncSession):
         """Oldest matching rule is per-series: the event joins a series entry."""
@@ -606,7 +606,7 @@ class TestMultiDayGrouping:
 
         # The first draft is queued at once; grouping event2 in redrafts through
         # the coalescing queue instead of a second immediate draft.
-        mock_task.delay.assert_called_once_with(str(entry.id))
+        mock_task.delay.assert_called_once_with(str(entry.id), job_id=ANY)
         redraft.assert_awaited_once_with(entry.id)
 
     async def test_spanning_join_coalesces_new_entry_does_not(self, db_session: AsyncSession):
@@ -849,4 +849,4 @@ class TestMultiDayGrouping:
         assert len(claims_result.scalars().all()) == 1
 
         # LLM queued exactly once (per_series reuse path does not regenerate).
-        mock_task.delay.assert_called_once_with(str(entries[0].id))
+        mock_task.delay.assert_called_once_with(str(entries[0].id), job_id=ANY)

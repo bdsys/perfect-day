@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 from httpx import AsyncClient
 from sqlalchemy import update
@@ -131,7 +131,7 @@ class TestCreateFromEvent:
             occurred_at=datetime(2026, 5, 20, 10, 0, tzinfo=UTC),
         )
 
-        with patch("app.routers.v1.calendar_events.generate_entry_draft") as mock_task:
+        with patch("app.workers.tasks.generate_entry_draft") as mock_task:
             mock_task.delay = MagicMock()
             r = await client.post(
                 f"/v1/diaries/{diary['id']}/entries/from-event",
@@ -147,7 +147,7 @@ class TestCreateFromEvent:
         assert len(data["events"]) == 1
         assert data["events"][0]["summary"] == "Soccer practice"
 
-        mock_task.delay.assert_called_once_with(data["id"])
+        mock_task.delay.assert_called_once_with(data["id"], job_id=ANY)
 
         await db_session.refresh(ev)
         assert ev.entry_id == uuid.UUID(data["id"])
@@ -213,7 +213,7 @@ class TestCreateFromEvent:
 
         ev = await make_event(db_session, diary_id=diary_id)
 
-        with patch("app.routers.v1.calendar_events.generate_entry_draft") as mock_task:
+        with patch("app.workers.tasks.generate_entry_draft") as mock_task:
             mock_task.delay.side_effect = Exception("broker unavailable")
             r = await client.post(
                 f"/v1/diaries/{diary['id']}/entries/from-event",
@@ -259,7 +259,7 @@ class TestPickerOffersEndedEventsOnly:
             ends_at=datetime.now(tz=UTC) + timedelta(days=2),
         )
 
-        with patch("app.routers.v1.calendar_events.generate_entry_draft") as draft:
+        with patch("app.workers.tasks.generate_entry_draft") as draft:
             r = await client.post(
                 f"/v1/diaries/{diary['id']}/entries/from-event",
                 json={"event_id": str(future.id)},

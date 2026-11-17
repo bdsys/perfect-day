@@ -341,10 +341,10 @@ class TestJobsQueuedAfterCommit:
         event = await make_event(db_session, diary_id=uuid.UUID(diary["id"]))
         seen: list[bool] = []
 
-        def _on_queue(entry_id: str) -> None:
+        def _on_queue(entry_id: str, job_id: str | None = None) -> None:
             seen.append(_visible_to_another_connection(sync_engine, "entries", entry_id))
 
-        with patch("app.routers.v1.calendar_events.generate_entry_draft") as draft_task:
+        with patch("app.workers.tasks.generate_entry_draft") as draft_task:
             draft_task.delay = MagicMock(side_effect=_on_queue)
             r = await client.post(
                 f"/v1/diaries/{diary['id']}/entries/from-event",
@@ -397,7 +397,7 @@ class TestJobsQueuedAfterCommit:
         )
         seen: list[bool] = []
 
-        def _on_queue(entry_id: str) -> None:
+        def _on_queue(entry_id: str, job_id: str | None = None) -> None:
             seen.append(_visible_to_another_connection(sync_engine, "entries", entry_id))
 
         with patch("app.workers.tasks.generate_entry_draft") as draft_task:

@@ -16,7 +16,7 @@ from app.models import Entry, Event, User
 from app.routers.v1.diaries import _get_diary_or_404
 from app.routers.v1.entries import EntryOut, _entry_out_from_orm
 from app.services.read_only import ensure_diary_writable
-from app.workers.tasks import generate_entry_draft
+from app.workers.tasks import enqueue_entry_draft
 
 router = APIRouter(tags=["calendar_events"])
 
@@ -149,7 +149,7 @@ async def create_entry_from_event(
     await db.commit()
 
     try:
-        generate_entry_draft.delay(str(out.id))
+        await enqueue_entry_draft(out.id)
     except Exception:
         import logging
         logging.getLogger(__name__).exception(

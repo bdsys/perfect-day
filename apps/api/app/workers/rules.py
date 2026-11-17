@@ -96,11 +96,11 @@ async def evaluate_event_against_rules(
     that entry; when they disagree about grouping, the oldest rule decides.
     An event that has not ended yet is left alone, to be evaluated later.
 
-    Queues ``generate_entry_draft`` after commit, once per entry that needs it.
+    Queues the draft (``enqueue_entry_draft``) after commit, once per entry that needs it.
     """
     # Import here to avoid circular imports (tasks → rules → tasks)
     from app.workers.tasks import (  # noqa: PLC0415
-        generate_entry_draft,
+        enqueue_entry_draft,
         queue_location_refresh,
         queue_redraft,
     )
@@ -176,7 +176,7 @@ async def evaluate_event_against_rules(
             if joined_existing:
                 await queue_redraft(entry_id)  # coalesced; a new entry is drafted at once
             else:
-                generate_entry_draft.delay(str(entry_id))
+                await enqueue_entry_draft(entry_id)
         except Exception:
             log.exception("evaluate_rules_llm_queue_failed", entry_id=str(entry_id))
     elif entry_id is not None and joined_without_draft:
