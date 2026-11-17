@@ -1,7 +1,9 @@
 # Profile screen — design (tracker rows 29 and 32)
 
 Agreed with Andrew on 2026-11-17. The mockup is the "Profile icon picker" artifact
-(https://claude.ai/artifact/DgcdkhwwBPY5gFtP7DcewG); Andrew: "I love that mockup".
+(https://claude.ai/artifact/DgcdkhwwBPY5gFtP7DcewG); Andrew: "I love that mockup". A copy of
+its HTML is in `docs/superpowers/specs/assets/2026-11-17-profile-icons-mockup.html`; open it in a browser.
+It holds the 16 icons' real Lucide SVG paths and the colour tokens.
 
 ## Why
 
@@ -418,7 +420,9 @@ to rediscover them.
 ## Status and next steps (2026-11-17)
 
 - **The design is approved** (Andrew: "Yes this looks good, I approve").
-- **Branch** `feat/profile-screen`. Only this document is on it so far.
+- **Branch** `feat/profile-screen`, local only (not pushed). It holds only this document and the
+  mockup copy. It was cut from `main` at `4e7597b`. Before building, rebase it onto the latest
+  `main`, which by then includes row 50, the iOS Chrome Google Photos fix (`fix/google-photos-one-tap`).
 - **Next:**
   1. Write the implementation plan with superpowers:writing-plans. Save it as
      `docs/superpowers/plans/2026-11-17-profile-screen.md`.
