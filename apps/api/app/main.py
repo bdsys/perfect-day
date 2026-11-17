@@ -65,11 +65,13 @@ def create_app() -> FastAPI:
         integrations,
         photo_imports,
         photos,
+        profile,
         rules,
         scan,
     )
 
     app.include_router(auth.router, prefix="/v1")
+    app.include_router(profile.router, prefix="/v1")
     app.include_router(diaries.router, prefix="/v1")
     app.include_router(entries.router, prefix="/v1")
     app.include_router(calendar_events.router, prefix="/v1")

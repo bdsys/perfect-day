@@ -29,6 +29,7 @@ from app.middleware.rate_limit import auth_limiter
 from app.models import NotificationPreferences, OAuthToken, RefreshToken, SocialIdentity, User
 from app.services.google_revoke import revoke_and_forget_google
 from app.services.plan_view import MyPlanOut, my_plan_out
+from app.services.profile import UserProfile, user_profile
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -393,25 +394,9 @@ async def logout_all(
 # ---------------------------------------------------------------------------
 
 
-class UserProfile(BaseModel):
-    id: uuid.UUID
-    email: str
-    display_name: str | None
-    subscription_tier: str
-    is_admin: bool
-    email_verified_at: datetime | None
-    # The exact moment the account is deleted, while it is pending deletion; else None.
-    deletion_scheduled_for: datetime | None = None
-
-    model_config = {"from_attributes": True}
-
-
 @router.get("/me", response_model=UserProfile)
 async def me(user: User = Depends(get_current_user_within_grace)) -> UserProfile:
-    profile = UserProfile.model_validate(user)
-    if deletion_state(user) == "pending":
-        profile.deletion_scheduled_for = user.hard_delete_after
-    return profile
+    return user_profile(user)
 
 
 @router.get("/me/plan", response_model=MyPlanOut)
