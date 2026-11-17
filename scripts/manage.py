@@ -13,7 +13,7 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 
 import click
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, delete
 from sqlalchemy.orm import Session, sessionmaker
 
 # Allow importing from apps/api when run directly
@@ -179,6 +179,25 @@ def users_delete(email: str, hard: bool) -> None:
                 db.query(Entry).filter(Entry.diary_id.in_(diary_ids)).update({"deleted_at": now})
         db.commit()
     click.echo(f"{'Hard-deleted' if hard else 'Soft-deleted'} user {email}.")
+
+
+# Exactly the accounts scripts/smoke-test.sh registers: smoke+<unix time>@example.com
+# and smoke2+<unix time>@example.com. example.com is reserved (RFC 2606) and can't
+# receive mail, so no real person owns one of these addresses.
+SMOKE_EMAIL = re.compile(r"smoke2?\+[0-9]+@example\.com")
+
+
+@users.command("purge-smoke")
+def users_purge_smoke() -> None:
+    """Permanently delete every smoke-test account (no prompt; the smoke test runs it)."""
+    with _make_session() as db:
+        candidates = db.query(User.id, User.email).filter(User.email.like("smoke%@example.com"))
+        ids = [uid for uid, email in candidates if SMOKE_EMAIL.fullmatch(email)]
+        if ids:
+            # DB foreign keys cascade to diaries, entries, scan jobs and the rest.
+            db.execute(delete(User).where(User.id.in_(ids)))
+        db.commit()
+    click.echo(f"Deleted {len(ids)} smoke-test user(s).")
 
 
 @users.command("set-tier")

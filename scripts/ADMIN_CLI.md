@@ -61,6 +61,13 @@ Tiers: `free` | `plus` | `family`
 ./scripts/admin.sh users delete --email alice@example.com --hard
 ```
 
+### Delete every smoke-test account
+```bash
+./scripts/admin.sh users purge-smoke
+```
+
+Permanently deletes every user whose email is exactly `smoke+<digits>@example.com` or `smoke2+<digits>@example.com` (the accounts `scripts/smoke-test.sh` registers), with their diaries and entries. It does not ask for `yes`: the smoke test runs it unattended when it exits (on a `localhost` URL, or on the NUC with `SMOKE_CLEANUP=1`, which `40-update.sh` sets).
+
 ---
 
 ## Diaries

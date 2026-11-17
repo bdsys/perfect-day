@@ -141,7 +141,8 @@ echo "Log: ${LOG_FILE}"
 
 echo ""
 echo "Running smoke test against ${HEALTH_URL%/readyz}..."
-if "${SMOKE_SCRIPT}" "${HEALTH_URL%/readyz}" 2>/dev/null; then
+# SMOKE_CLEANUP=1: this runs beside the database, so the smoke test deletes its accounts.
+if SMOKE_CLEANUP=1 "${SMOKE_SCRIPT}" "${HEALTH_URL%/readyz}" 2>/dev/null; then
     echo "Smoke test passed."
 else
     echo "WARNING: Smoke test failed. Check logs or run rollback:"
