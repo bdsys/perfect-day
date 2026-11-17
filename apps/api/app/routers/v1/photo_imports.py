@@ -14,6 +14,7 @@ import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi import status as http_status
 from pydantic import BaseModel
@@ -129,13 +130,26 @@ async def create_photo_import(
     except GoogleError:
         raise HTTPException(status_code=502, detail="google_error") from None
 
+    # Wait for the pick until the earlier of Google's two limits. timeoutIn is "the length of
+    # time after which the client should stop polling"; expireTime (about a week) is when the
+    # picked items stop being readable. Using expireTime alone polled an abandoned pick every
+    # few seconds for a week (row 50 follow-up, 2026-11-17).
     now = datetime.now(tz=UTC)
+    limits = [
+        t
+        for t in (
+            session.expire_time,
+            None if session.timeout_s is None else now + timedelta(seconds=session.timeout_s),
+        )
+        if t is not None
+    ]
+    expires_at = min(limits) if limits else now + FALLBACK_SESSION_LIFETIME
+    expire_in_s = None
     if session.expire_time is not None:
-        expires_at = session.expire_time
-    elif session.timeout_s is not None:
-        expires_at = now + timedelta(seconds=session.timeout_s)
-    else:
-        expires_at = now + FALLBACK_SESSION_LIFETIME
+        expire_in_s = round((session.expire_time - now).total_seconds())
+    structlog.get_logger().info(
+        "photo_import_session_limits", timeout_s=session.timeout_s, expire_in_s=expire_in_s
+    )
 
     imp = PhotoImport(
         user_id=user.id,
