@@ -66,6 +66,9 @@ export default function CalendarPickPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [creating, setCreating] = useState<string | null>(null)
+  // null while checking. Picking needs the owner's calendar connected; a lost or
+  // missing connection, or a co-parent, gets a note instead of an empty month.
+  const [blocked, setBlocked] = useState<string | null | undefined>(undefined)
 
   const [cursorMonth, setCursorMonth] = useState<Date>(() => {
     const d = new Date()
@@ -81,6 +84,20 @@ export default function CalendarPickPage() {
 
   useEffect(() => {
     if (!user || !diaryId) return
+    api.diaries.getScanConfig(diaryId)
+      .then(cfg => {
+        const reason = !cfg.can_scan ? 'Only the diary owner can make entries from their Google Calendar.'
+          : cfg.calendar !== 'connected' ? "Google Calendar isn't connected, so there are no events to pick from. Connect it on the diary page."
+          : null
+        setBlocked(reason)
+        if (reason) setLoading(false)
+      })
+      // If the check itself fails, show the calendar; the events call reports its own errors.
+      .catch(() => setBlocked(null))
+  }, [user, diaryId])
+
+  useEffect(() => {
+    if (!user || !diaryId || blocked !== null) return
     setLoading(true)
     const gridDays = buildMonthDays(cursorMonth)
     const from = ymd(gridDays[0])
@@ -89,7 +106,7 @@ export default function CalendarPickPage() {
       .then(data => setEvents(data))
       .catch((e: unknown) => setError(e instanceof Error ? e.message : 'Failed to load events'))
       .finally(() => setLoading(false))
-  }, [user, diaryId, cursorMonth])
+  }, [user, diaryId, cursorMonth, blocked])
 
   async function handlePick(event: CalendarEventSummary) {
     setCreating(event.id)
@@ -146,6 +163,14 @@ export default function CalendarPickPage() {
 
         {error && <p className="error-message" style={{ marginBottom: '1rem' }}>{error}</p>}
 
+        {blocked && (
+          <div className="card" style={{ marginBottom: '1rem' }}>
+            <p style={{ marginTop: 0 }}>{blocked}</p>
+            <Link href={`/diaries/${diaryId}`} className="btn btn-secondary">Back to the diary</Link>
+          </div>
+        )}
+
+        {blocked === null && (<>
         {/* Month navigation toolbar */}
         <div className="cal-toolbar">
           <button className="btn btn-secondary" onClick={() => setCursorMonth(m => {
@@ -203,6 +228,7 @@ export default function CalendarPickPage() {
             )
           })}
         </div>
+        </>)}
 
         {/* Day-detail panel */}
         {selectedDay && (

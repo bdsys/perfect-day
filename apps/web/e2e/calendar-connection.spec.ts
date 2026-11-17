@@ -13,7 +13,7 @@ import { test, expect, request as playwrightRequest, type Page } from '@playwrig
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
 const REPO_ROOT = path.resolve(__dirname, '../../..')
-const HINT = 'Connect Google Calendar to scan for new events and backfill past ones.'
+const HINT = 'Connect Google Calendar to scan for new events, backfill past ones and make entries from your events.'
 // Next.js adds its own role="alert" route announcer, so the banner is found by its text.
 const BANNER = /Google Calendar is disconnected/
 const OWNER_ONLY = 'Only the diary owner can scan for new events.'

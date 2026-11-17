@@ -43,7 +43,7 @@ function EntryCard({ entry }: { entry: Entry }) {
   )
 }
 
-const CALENDAR_HINT = 'Connect Google Calendar to scan for new events and backfill past ones.'
+const CALENDAR_HINT = 'Connect Google Calendar to scan for new events, backfill past ones and make entries from your events.'
 const OWNER_ONLY_HINT = 'Only the diary owner can scan for new events.'
 
 // A scan's own count leaves out drafts made from the events it just fetched
@@ -568,13 +568,17 @@ export default function DiaryDetailPage() {
             </div>
             {/* The synced events are the owner's own calendar (S-11, decision 2026-11-12). */}
             {isOwner && (
-              <button
-                className="btn btn-secondary"
-                onClick={() => router.push(`/diaries/${diaryId}/calendar-pick`)}
-                disabled={readOnly}
-              >
-                New entry from Google Calendar
-              </button>
+              // A disabled button shows no tooltip, so the wrapper carries it (as for Scan now).
+              <span style={{ display: 'inline-block' }} title={scanHint}>
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => router.push(`/diaries/${diaryId}/calendar-pick`)}
+                  disabled={calendarOff}
+                  aria-describedby={scanHint ? 'calendar-hint' : undefined}
+                >
+                  New entry from Google Calendar
+                </button>
+              </span>
             )}
             {/* Rules run over the owner's calendar, so they are the owner's (S-14). */}
             {isOwner && (

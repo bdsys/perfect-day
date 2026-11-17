@@ -377,3 +377,34 @@ describe('diary page: gray out what the API refuses', () => {
     expect(screen.queryByText(BACKFILL_NOTE)).toBeNull()
   })
 })
+
+describe('diary page: New entry from Google Calendar needs a connected calendar', () => {
+  const scanConfig = (calendar: string) => ({
+    can_scan: true, calendar, scan_enabled: true, scan_interval_minutes: 60,
+    last_scan_status: null, next_scan_after: null, consecutive_failures: 0,
+  })
+  const HINT = 'Connect Google Calendar to scan for new events, backfill past ones and make entries from your events.'
+
+  it('is grayed with the hint when Calendar was never connected', async () => {
+    ;(api.diaries.getScanConfig as jest.Mock).mockResolvedValue(scanConfig('none'))
+    render(<DiaryDetailPage />)
+    const button = await screen.findByRole('button', { name: 'New entry from Google Calendar' })
+    await waitFor(() => expect(button).toBeDisabled())
+    expect(button).toHaveAttribute('aria-describedby', 'calendar-hint')
+    expect(screen.getByText(HINT)).toBeInTheDocument()
+  })
+
+  it('is grayed when the connection is lost', async () => {
+    ;(api.diaries.getScanConfig as jest.Mock).mockResolvedValue(scanConfig('lost'))
+    render(<DiaryDetailPage />)
+    const button = await screen.findByRole('button', { name: 'New entry from Google Calendar' })
+    await waitFor(() => expect(button).toBeDisabled())
+  })
+
+  it('is enabled when Calendar is connected', async () => {
+    render(<DiaryDetailPage />)
+    const button = await screen.findByRole('button', { name: 'New entry from Google Calendar' })
+    await waitFor(() => expect(api.diaries.getScanConfig).toHaveBeenCalled())
+    expect(button).not.toBeDisabled()
+  })
+})
