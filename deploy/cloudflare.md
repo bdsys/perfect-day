@@ -68,6 +68,10 @@ follow it. The updater is the `cloudflare-ddns` service in `docker-compose.yml`
 - **API token:** My Profile → API Tokens → Create Token → "Edit zone DNS" template. Zone Resources:
   Include → Specific zone → `andrewlass.com`. Permission `Zone.DNS:Edit` only. It is shown once;
   store it in your password manager. A token scoped to the zone covers every record in it.
+  New tokens start with `cfut_` ([token formats](https://developers.cloudflare.com/fundamentals/api/get-started/token-formats/)).
+  **Not the Global API Key** (it starts with `cfk_`, and is under "API Keys" on the same page):
+  the updater rejects it with error 9109 "Invalid access token", and it can do anything on the
+  account. `15-update-config.sh` refuses it.
 - **Zone ID:** the zone's Overview page, right sidebar. Not a secret.
 
 ### Step 2.2 — The config file on the NUC

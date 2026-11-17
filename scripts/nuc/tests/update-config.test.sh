@@ -129,5 +129,21 @@ if printf '%s\n%s\n' "${TOKEN}" "not-a-zone" | run --ddns-credentials >/dev/null
 check "exits non-zero"                test "$RC" != 0
 check "DDNS file unchanged"           cmp -s "${WORK}/ddns.json" "${WORK}/ddns.orig"
 
+echo "--ddns-credentials refuses a Global API Key (cfk_)"
+setup
+cp "${WORK}/ddns.json" "${WORK}/ddns.orig"
+GLOBAL_KEY="cfk_0123456789abcdefABCDEF0123456789abcdefAB01234567"   # 52 chars, like a Global API Key
+if OUT6="$(printf '%s\n%s\n' "${GLOBAL_KEY}" "${ZONE}" | run --ddns-credentials 2>&1)"; then RC=0; else RC=$?; fi
+check "exits non-zero"                test "$RC" != 0
+check "DDNS file unchanged"           cmp -s "${WORK}/ddns.json" "${WORK}/ddns.orig"
+check "names the Global API Key"      bash -c "grep -q 'Global API Key' <<< \"\$1\"" _ "${OUT6}"
+check "key never printed"             bash -c "! grep -q 'cfk_0123' <<< \"\$1\"" _ "${OUT6}"
+
+echo "--ddns-credentials accepts a new-format user token (cfut_)"
+setup
+NEW_TOKEN="cfut_0123456789abcdefABCDEF0123456789abcdefAB0123abcd"
+printf '%s\n%s\n' "${NEW_TOKEN}" "${ZONE}" | run --ddns-credentials >/dev/null 2>&1
+check "token stored"                  test "$(jq -r '.cloudflare[0].authentication.api_token' "${WORK}/ddns.json")" = "${NEW_TOKEN}"
+
 echo
 if [ "${FAILS}" -eq 0 ]; then echo "all passed"; else echo "${FAILS} failed"; exit 1; fi
