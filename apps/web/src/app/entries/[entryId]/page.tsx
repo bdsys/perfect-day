@@ -27,8 +27,8 @@ const MAX_POLL_FAILURES = 5
 const AI_STATUS_POLL_MS = 3000
 
 const AI_NOTICES = {
-  writing: 'AI is writing this entry. Wait a moment, or edit anyway: your text is kept and the AI draft appears as a suggestion.',
-  queued: 'AI will write this entry shortly. You can wait, or edit anyway: your text is kept and the AI draft appears as a suggestion.',
+  writing: 'AI is writing this entry. Wait a moment for the draft, or edit anyway.',
+  queued: 'AI will write this entry shortly. Wait for the draft, or edit anyway.',
 } as const
 
 function planDetails(plan: OwnerPlan & { ai_drafts_limit: number }) {
@@ -88,6 +88,9 @@ function EntryDetailPageInner() {
   const [deleting, setDeleting] = useState(false)
   const [aiFailures, setAiFailures] = useState(0)
   const aiInFlightRef = useRef(false)
+  // What the entry held when Edit was clicked, and the latest server copy seen mid-edit.
+  const [editBase, setEditBase] = useState<{ title: string; body: string } | null>(null)
+  const [serverEntry, setServerEntry] = useState<Entry | null>(null)
   const editingRef = useRef(false)
   editingRef.current = editing
   const [answeringSuggestion, setAnsweringSuggestion] = useState(false)
@@ -137,8 +140,21 @@ function EntryDetailPageInner() {
     setEditEntryDate(entry.entry_date)
     setEditEntryEndDate(entry.entry_end_date ?? '')
     setEditDateError('')
+    setEditBase({ title: entry.title ?? '', body: entry.body_markdown ?? '' })
+    setServerEntry(null)
     setEditing(true)
   }
+
+  function handleCancelEdit() {
+    // Show whatever the AI wrote while the form was open.
+    if (serverEntry) setEntry(serverEntry)
+    setServerEntry(null)
+    setEditing(false)
+  }
+
+  const aiLandedMidEdit =
+    editing && !!serverEntry && !serverEntry.ai_status && !!editBase &&
+    ((serverEntry.body_markdown ?? '') !== editBase.body || (serverEntry.title ?? '') !== editBase.title)
 
   async function handleSave() {
     if (!entry) return
@@ -258,6 +274,7 @@ function EntryDetailPageInner() {
     try {
       const updated = await api.entries.get(entry.id)
       // Mid-edit, take only the AI fields so nothing typed is touched.
+      if (editingRef.current) setServerEntry(updated)
       setEntry((current) =>
         editingRef.current && current
           ? { ...current, ai_status: updated.ai_status, suggestion: updated.suggestion, last_generation: updated.last_generation }
@@ -429,11 +446,16 @@ function EntryDetailPageInner() {
             {editDateError && (
               <p className="error-message" style={{ marginBottom: '0.5rem' }}>{editDateError}</p>
             )}
+            {aiLandedMidEdit && (
+              <p role="status" className="limit-note" style={{ marginBottom: '0.5rem' }}>
+                The AI draft arrived while you were editing. Save to keep your text instead, or Cancel to read the AI draft.
+              </p>
+            )}
             <div style={{ display: 'flex', gap: '0.5rem' }}>
               <button className="btn btn-primary" onClick={handleSave} disabled={saving || !editEntryDate}>
                 {saving ? 'Saving…' : 'Save'}
               </button>
-              <button className="btn btn-secondary" onClick={() => setEditing(false)} disabled={saving}>
+              <button className="btn btn-secondary" onClick={handleCancelEdit} disabled={saving}>
                 Cancel
               </button>
             </div>
@@ -507,7 +529,22 @@ function EntryDetailPageInner() {
             )}
 
             {entry.ai_status && !pollingRegen && (
-              <LimitNote>{AI_NOTICES[entry.ai_status]}</LimitNote>
+              <div
+                role="status"
+                data-testid="ai-notice"
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '1rem',
+                  padding: '0.75rem 1rem', fontSize: '0.95rem',
+                  border: '1px solid var(--accent)', borderLeftWidth: 4, borderRadius: 6,
+                }}
+              >
+                {entry.ai_status === 'writing' ? (
+                  <span className="spinner" aria-hidden="true" style={{ width: 16, height: 16 }} />
+                ) : (
+                  <span aria-hidden="true">⏱</span>
+                )}
+                <span>{AI_NOTICES[entry.ai_status]}</span>
+              </div>
             )}
 
             {entry.body_markdown ? (

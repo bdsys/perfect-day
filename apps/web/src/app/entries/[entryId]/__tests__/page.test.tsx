@@ -257,8 +257,8 @@ describe('entry page: event moved or removed note', () => {
 })
 
 describe('entry page: AI working notice', () => {
-  const WRITING = 'AI is writing this entry. Wait a moment, or edit anyway: your text is kept and the AI draft appears as a suggestion.'
-  const QUEUED = 'AI will write this entry shortly. You can wait, or edit anyway: your text is kept and the AI draft appears as a suggestion.'
+  const WRITING = 'AI is writing this entry. Wait a moment for the draft, or edit anyway.'
+  const QUEUED = 'AI will write this entry shortly. Wait for the draft, or edit anyway.'
   const ai = (over: Partial<Entry>): Entry => ({ ...entry([]), ...over }) as Entry
 
   beforeEach(() => {
@@ -330,5 +330,55 @@ describe('entry page: AI working notice', () => {
     render(<EntryDetailPage />)
     expect(await screen.findByText(WRITING)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Edit' })).toBeEnabled()
+  })
+  it('the notice is a status callout with an icon', async () => {
+    get.mockResolvedValue(ai({ ai_status: 'writing' }))
+    const { unmount } = render(<EntryDetailPage />)
+    const box = await screen.findByTestId('ai-notice')
+    expect(box).toHaveAttribute('role', 'status')
+    expect(box).toHaveTextContent(WRITING)
+    expect(box.querySelector('.spinner')).not.toBeNull()
+    unmount()
+    get.mockResolvedValue(ai({ ai_status: 'queued' }))
+    render(<EntryDetailPage />)
+    const q = await screen.findByTestId('ai-notice')
+    expect(q).toHaveTextContent('⏱')
+    expect(q.querySelector('.spinner')).toBeNull()
+  })
+
+  const WARN = 'The AI draft arrived while you were editing. Save to keep your text instead, or Cancel to read the AI draft.'
+
+  it('warns when the AI draft lands mid-edit', async () => {
+    jest.useFakeTimers()
+    get
+      .mockResolvedValueOnce(ai({ ai_status: 'writing', body_markdown: null }))
+      .mockResolvedValueOnce(ai({ ai_status: 'writing', body_markdown: null }))
+      .mockResolvedValue(ai({ ai_status: null, body_markdown: 'The AI body' }))
+    render(<EntryDetailPage />)
+    await act(async () => {})
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
+    fireEvent.change(screen.getByLabelText('Body'), { target: { value: 'My typed body' } })
+    expect(screen.queryByText(WARN)).not.toBeInTheDocument()
+    await act(async () => { jest.advanceTimersByTime(3000) })
+    expect(screen.getByText(WARN)).toHaveAttribute('role', 'status')
+    expect(screen.getByLabelText('Body')).toHaveValue('My typed body')
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(screen.getByText('The AI body')).toBeInTheDocument()
+  })
+
+  it('no warning when the draft lands as a suggestion', async () => {
+    jest.useFakeTimers()
+    const suggestion = { title: 'S', body_markdown: 'AI text', flagged_tokens: [], body_source: 'llm', created_at: '2026-05-16T00:00:00Z' }
+    get
+      .mockResolvedValueOnce(ai({ ai_status: 'writing' }))
+      .mockResolvedValueOnce(ai({ ai_status: 'writing' }))
+      .mockResolvedValue(ai({ ai_status: null, suggestion: suggestion as never }))
+    render(<EntryDetailPage />)
+    await act(async () => {})
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
+    fireEvent.change(screen.getByLabelText('Body'), { target: { value: 'My typed body' } })
+    await act(async () => { jest.advanceTimersByTime(3000) })
+    expect(screen.queryByText(WARN)).not.toBeInTheDocument()
+    expect(screen.queryByText(WRITING)).not.toBeInTheDocument()
   })
 })
