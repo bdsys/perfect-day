@@ -298,3 +298,134 @@ Laid out as in the mockup and the earlier sketch:
     photo's stored copy has no location.
   - Switch units and check an entry's badge.
   - On a test account: delete, log in, restore.
+
+## Research notes (2026-11-17)
+
+These are the facts the design rests on, so a builder or a resumed session doesn't have
+to rediscover them.
+
+### What exists today
+
+- **No account page.** The only account control in the web app is "Sign out" on the diary
+  list (`apps/web/src/app/diaries/page.tsx`, the `Nav` component).
+- **Account endpoints that already exist,** in `apps/api/app/routers/v1/auth.py`:
+  - `POST /logout-all`, which revokes every refresh token;
+  - `GET /me`, which returns `UserProfile`: id, email, display_name, subscription_tier,
+    is_admin, email_verified_at;
+  - `GET /me/plan`;
+  - `DELETE /account`, which:
+    - sets `deleted_at` and `hard_delete_after = now + 7 days`;
+    - revokes every refresh token;
+    - revokes the Google grant and deletes the token row;
+    - returns 204;
+  - `POST /account/restore`, behind `get_current_user_within_grace`.
+- **Login refuses deleted accounts outright.** It returns 401 `account_unavailable` when
+  `deleted_at` or `hard_delete_after` is set (`auth.py` login). `get_current_user` does the
+  same (`apps/api/app/core/auth.py`), so restore is only reachable while an old access
+  token lives. That's finding C-14 / TR-3 in `design/code-review-2026-11.md`.
+- **`get_current_user_within_grace` lets a null `hard_delete_after` through.** That's the
+  gap this design closes for admin-blocked accounts.
+- **Hard delete.** `process_hard_deletes` is a Celery beat task
+  (`apps/api/app/workers/beat_tasks.py`). `hard_delete_user`
+  (`apps/api/app/workers/hard_delete.py`) deletes the diaries, then the user-level rows,
+  then scrubs MinIO under `{user_id}/` and `tmp/{user_id}/`. So an avatar stored under
+  `{user_id}/avatar/` is removed with no extra code.
+- **Scans already skip an account that's being deleted**
+  (`apps/api/app/workers/tasks.py:114-117`).
+- **The app sends no email.** There's a `sendgrid_api_key` / `email_from` setting
+  (`apps/api/app/core/config.py:63-65`) and no sending code. That's why the emailed
+  restore link is backlog row 49.
+- **No diary sharing:** no invite or permission endpoints or screens. Nobody but the owner
+  sees a diary today, so nobody else sees a profile icon.
+- **Notifications aren't built (row 20),** which is why there are no notification
+  preferences on Profile.
+- **The admin CLI's soft delete** (`scripts/manage.py users delete`, without `--hard`) sets
+  `deleted_at` with no `hard_delete_after`, and soft-deletes the diaries and entries.
+
+### Photos
+
+- **Upload.** `POST /v1/photos` takes the raw request body (`apps/api/app/routers/v1/photos.py`).
+  - Size limit: `MAX_BYTES = 50 MB` (`apps/api/app/services/photos.py:22`).
+  - Type check: `detect_mime`.
+  - Location stripping: `strip_location`.
+  - Thumbnails and the HEIC display copy: `generate_thumbnail` and `make_display_jpeg`.
+  - Storage: `put_object_bytes`, `get_object_bytes`, `delete_object`, `stream_object`.
+- **Encryption.** Each photo has a data key wrapped for the user (`photos.dek_ciphertext`,
+  `unwrap_dek(photo.dek_ciphertext, photo.user_id)`). The bytes are AES-GCM, streamed back
+  through `iter_decrypt_stream`. Avatars reuse these.
+- **Libraries.** `Pillow>=10.4` and `pillow-heif>=0.18` are already dependencies
+  (`apps/api/pyproject.toml:51-52`), so iPhone HEIC uploads work.
+
+### Temperature
+
+- **Weather is stored in °C.** It's an enrichment of kind `weather` whose payload holds
+  `temperature_max_c` and `temperature_min_c` (`apps/api/app/workers/open_meteo.py:132-133`).
+- **The badge** (`apps/web/src/components/WeatherBadge.tsx`) rounds and shows "21°" with no
+  unit. It appears only on the single-entry page.
+- **The prompt** includes each enrichment as `[kind] {json.dumps(payload)}`
+  (`apps/api/app/workers/llm.py`, `build_prompt`, events and hybrid modes). The fact check
+  (`validate_citation`) builds its source text from the same `json.dumps` of the payloads.
+- **`json.dumps` escapes "°" as `°` by default.** Use `ensure_ascii=False` for the
+  converted weather line (my call, raised by the builder check).
+- **The fact check** (`_unsupported_words`, `llm.py:344`) only flags capitalised words. It
+  never checks numbers. The tracker row's claim that the conversion "keeps the word check
+  matching the numbers" was wrong. The real reason to hand the AI converted values is so
+  it copies the badge's number instead of doing the arithmetic itself.
+- **Production on 2026-11-17:** 31 entries. 5 have weather, 2 mention °C in their text,
+  and none mention °F.
+
+### Header
+
+- **13 signed-in pages each build their own `<nav className="nav">`:**
+  - `diaries`, `diaries/new`, `diaries/restore`;
+  - `diaries/[diaryId]` and its `settings`, `rules`, `rules/new`, `restore` and
+    `calendar-pick` pages;
+  - `entries/[entryId]`, `rules/[ruleId]`, `photos`, `plans`.
+- **What each bar holds.** Only the diary list's has more than a back link: "Perfect Day"
+  and "Sign out". The rest show the brand or a back link, such as "← Diary" pointing at
+  `/diaries/{id}`, or `/diaries/{id}/rules`.
+- **No shared layout component.** `apps/web/src/app/layout.tsx` only wraps `AuthProvider`.
+
+### Icons
+
+- **The source.** `lucide-react` ^1.17.0, already a dependency, ISC licence. All 16 names
+  exist in `node_modules/lucide-react/dist/esm/icons/`.
+- **The mockup.** The artifact's colours are pairs of light and dark tokens `--t1` to `--t8`
+  (bg and fg).
+  - The icon-to-tone mapping: cat 1, dog 4, bird 2, fish 7, rabbit 6, squirrel 1,
+    turtle 3, panda 8, snail 4, flower 6, sun 4, moon 5, rocket 2, rainbow 5, cake 6,
+    paw-print 3.
+  - Light values:
+    - t1 `#fde2d6` / `#9a3412`
+    - t2 `#dbeafe` / `#1e40af`
+    - t3 `#dcfce7` / `#166534`
+    - t4 `#fef3c7` / `#92400e`
+    - t5 `#ede9fe` / `#5b21b6`
+    - t6 `#fce7f3` / `#9d174d`
+    - t7 `#ccfbf1` / `#115e59`
+    - t8 `#e5e7eb` / `#374151`
+  - The initial uses t2.
+
+### Review
+
+- **The builder check (2026-11-17, Opus) raised three questions,** all resolved above:
+  1. Old °C text against the new badge: Andrew chose to accept it.
+  2. The deadline's time zone: shown as an exact local time.
+  3. Admin-blocked accounts: they stay blocked.
+- **It confirmed** the encryption helpers, the prefix scrub, the size and type limits, HEIC,
+  the icons, the 13 pages, the connect flow's `return_to`, and the badge's single location.
+
+## Status and next steps (2026-11-17)
+
+- **The design is approved** (Andrew: "Yes this looks good, I approve").
+- **Branch** `feat/profile-screen`. Only this document is on it so far.
+- **Next:**
+  1. Write the implementation plan with superpowers:writing-plans. Save it as
+     `docs/superpowers/plans/2026-11-17-profile-screen.md`.
+  2. Ask Andrew to choose the execution method. My recommendation is subagent-driven: the
+     work is large, it touches the API, the migration and 13 pages, and it has a security
+     surface.
+  3. Then `make test-all` (Jest included), the dev-stack check, the PR, CI, the merge, a
+     deploy (ask Andrew first), and Andrew's phone check.
+- **Ordering.** The one-tap Google Photos fix for iOS Chrome went first, on its own branch.
+  Andrew, 2026-11-17: "We'll do profile afterwards."
