@@ -3,7 +3,7 @@
 import { Suspense, useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import AppHeader from '@/components/AppHeader'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
-import { api, type Entry, type OwnerPlan } from '@/lib/api'
+import { api, type Entry, type OwnerPlan, type TemperatureUnit } from '@/lib/api'
 import { formatEventTime } from '@/lib/eventTime'
 import { PhotoThumbnail } from '@/components/PhotoThumbnail'
 import { PhotoLightbox } from '@/components/PhotoLightbox'
@@ -79,6 +79,10 @@ function EntryDetailPageInner() {
   const planRef = useRef<OwnerPlan | null>(null)
   if (entry?.plan) planRef.current = entry.plan
   const plan = planRef.current
+  // Same for the owner's temperature unit: action responses carry temperature_unit: null,
+  // so keep the last real one rather than falling back to °F.
+  const unitRef = useRef<TemperatureUnit>('F')
+  if (entry?.temperature_unit) unitRef.current = entry.temperature_unit
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
@@ -422,7 +426,7 @@ function EntryDetailPageInner() {
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.25rem', flexWrap: 'wrap' }}>
           <span className={`status-badge status-${entry.status}`}>{entry.status}</span>
           <span style={{ fontSize: '0.875rem', color: 'var(--text-muted)' }}>{formatDateRange(entry.entry_date, entry.entry_end_date)}</span>
-          <WeatherBadge enrichments={entry.enrichments ?? []} />
+          <WeatherBadge enrichments={entry.enrichments ?? []} unit={unitRef.current} />
         </div>
         {!editing && <EntryPlace entry={entry} onUpdated={setEntry} readOnly={readOnly} />}
         {!editing && entry.can_edit && (
