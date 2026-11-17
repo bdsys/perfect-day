@@ -109,6 +109,49 @@ describe('PhotoImportNotice', () => {
     await waitFor(() => expect(api.photoImports.cancel).toHaveBeenCalledWith('i1'))
   })
 
+  it('while watching for a new pick, polls every 3 s even with nothing in flight', async () => {
+    jest.useFakeTimers()
+    listForEntry.mockResolvedValue([])
+    render(<PhotoImportNotice entryId="e1" watching onFinished={jest.fn()} onDismiss={jest.fn()} />)
+    await act(async () => {})
+    expect(listForEntry).toHaveBeenCalledTimes(1)
+    await act(async () => { jest.advanceTimersByTime(3000) })
+    expect(listForEntry).toHaveBeenCalledTimes(2)
+  })
+
+  it('without watching and with nothing in flight, it does not poll', async () => {
+    jest.useFakeTimers()
+    listForEntry.mockResolvedValue([])
+    render(<PhotoImportNotice entryId="e1" onFinished={jest.fn()} onDismiss={jest.fn()} />)
+    await act(async () => {})
+    await act(async () => { jest.advanceTimersByTime(9000) })
+    expect(listForEntry).toHaveBeenCalledTimes(1)
+  })
+
+  it('a new import that is already done refreshes the photos once', async () => {
+    jest.useFakeTimers()
+    listForEntry
+      .mockResolvedValueOnce([imp({ id: 'old', added_count: 1 })])
+      .mockResolvedValue([imp({ id: 'old', added_count: 1 }), imp({ id: 'new', added_count: 2 })])
+    const onFinished = jest.fn()
+    render(<PhotoImportNotice entryId="e1" watching onFinished={onFinished} onDismiss={jest.fn()} />)
+    await act(async () => {})
+    expect(onFinished).not.toHaveBeenCalled() // what was there on the first load is not news
+    await act(async () => { jest.advanceTimersByTime(3000) })
+    expect(onFinished).toHaveBeenCalledTimes(1)
+    await act(async () => { jest.advanceTimersByTime(3000) })
+    expect(onFinished).toHaveBeenCalledTimes(1)
+  })
+
+  it('coming back to the tab checks again', async () => {
+    listForEntry.mockResolvedValue([])
+    render(<PhotoImportNotice entryId="e1" onFinished={jest.fn()} onDismiss={jest.fn()} />)
+    await waitFor(() => expect(listForEntry).toHaveBeenCalledTimes(1))
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' })
+    act(() => { document.dispatchEvent(new Event('visibilitychange')) })
+    await waitFor(() => expect(listForEntry).toHaveBeenCalledTimes(2))
+  })
+
   it('polling stops once nothing is in flight, and onFinished fires once', async () => {
     jest.useFakeTimers()
     const onFinished = jest.fn()

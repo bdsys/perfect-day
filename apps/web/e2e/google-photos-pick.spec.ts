@@ -1,9 +1,10 @@
 /**
  * E2E: add photos from Google Photos (item 14). All API calls are mocked.
  *
- * The new tab is stubbed with `page.addInitScript` (window.open returns a fake
- * tab that records where it was sent) rather than waiting for a real popup,
- * so the test can check the exact URL without a second page.
+ * The entry page opens our own /google-photos/open page in a new tab, and that
+ * tab starts the picker session. window.open is stubbed with `page.addInitScript`
+ * to record what was opened; the test then plays the other tab's part by making
+ * the import appear. A second test drives /google-photos/open itself.
  */
 
 import { test, expect, type Page } from '@playwright/test'
@@ -48,12 +49,11 @@ async function mockCommon(page: Page) {
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
-    const w = window as unknown as { __tab?: { location: { href: string }; close: () => void }; __opened: number }
-    w.__opened = 0
-    window.open = () => {
-      w.__opened += 1
-      w.__tab = { location: { href: '' }, close() {} }
-      return w.__tab as unknown as Window
+    const w = window as unknown as { __opened: unknown[][] }
+    w.__opened = []
+    window.open = (...args: unknown[]) => {
+      w.__opened.push(args)
+      return null // 'noopener' always gives null
     }
   })
 })
@@ -73,10 +73,6 @@ test('pick, wait, see the notice and photos, dismiss, and it stays gone after re
     r.fulfill(json(entry(pickDone ? ['p1', 'p2'] : []))),
   )
   await page.route(`${API}/v1/entries/${ENTRY_ID}/photo-imports`, (r) => {
-    if (r.request().method() === 'POST') {
-      started = true
-      return r.fulfill(json({ id: IMPORT_ID, picker_uri: 'https://photos.google.com/picker/abc', status: 'waiting' }, 201))
-    }
     // The page polls this list. After the start it reports waiting, then copying, then done.
     if (started) {
       listGets += 1
@@ -99,9 +95,13 @@ test('pick, wait, see the notice and photos, dismiss, and it stays gone after re
   await page.getByRole('button', { name: 'Add photos' }).click()
   await page.getByRole('button', { name: 'Search Google Photos for 16 May 2026' }).click()
 
+  await expect(page.getByText('Opening Google Photos in a new tab…')).toBeVisible()
+  expect(await page.evaluate(() => (window as unknown as { __opened: unknown[][] }).__opened))
+    .toEqual([[`/google-photos/open?entry=${ENTRY_ID}`, '_blank', 'noopener']])
+
+  // The new tab creates the import; the entry page, watching, finds it.
+  started = true
   await expect(page.getByText('Waiting for you to finish in Google Photos…')).toBeVisible()
-  expect(await page.evaluate(() => (window as unknown as { __tab: { location: { href: string } } }).__tab.location.href))
-    .toBe('https://photos.google.com/picker/abc/autoclose')
 
   // Close the panel mid-wait: the page still tracks the import and shows the outcome.
   await page.getByRole('button', { name: 'Add photos' }).click()
@@ -126,4 +126,35 @@ test('wrong_account on return shows the account message', async ({ page }) => {
 
   await page.goto(`/entries/${ENTRY_ID}?google=wrong_account&expected=a%40b.com`)
   await expect(page.getByText('Use the Google account you connected for Calendar (a@b.com).')).toBeVisible()
+})
+
+test("the new tab starts the session and replaces itself with Google's picker", async ({ page }) => {
+  await mockCommon(page)
+  let posts = 0
+  await page.route(`${API}/v1/entries/${ENTRY_ID}/photo-imports`, (r) => {
+    if (r.request().method() !== 'POST') return r.fulfill(json([]))
+    posts += 1
+    return r.fulfill(json({ id: IMPORT_ID, picker_uri: 'https://photos.google.com/picker/abc', status: 'waiting' }, 201))
+  })
+  await page.route('https://photos.google.com/**', (r) =>
+    r.fulfill({ status: 200, contentType: 'text/html', body: '<p>Google Photos picker</p>' }),
+  )
+
+  await page.goto(`/google-photos/open?entry=${ENTRY_ID}`)
+  await page.waitForURL('https://photos.google.com/picker/abc/autoclose')
+  await expect(page.getByText('Google Photos picker')).toBeVisible()
+  expect(posts).toBe(1)
+  // Replaced, not pushed: Back can't return to the opener page, and the picker may close the tab.
+  expect(await page.evaluate(() => history.length)).toBe(1)
+})
+
+test('the new tab explains when Google Photos is not connected', async ({ page }) => {
+  await mockCommon(page)
+  await page.route(`${API}/v1/entries/${ENTRY_ID}/photo-imports`, (r) =>
+    r.fulfill(json({ detail: 'google_photos_not_connected' }, 409)),
+  )
+  await page.goto(`/google-photos/open?entry=${ENTRY_ID}`)
+  await expect(page.getByRole('alert')).toHaveText(
+    "Google Photos isn't connected yet. Close this tab and use Connect Google Photos on the entry.",
+  )
 })

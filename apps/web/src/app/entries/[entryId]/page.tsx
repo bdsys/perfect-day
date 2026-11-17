@@ -112,6 +112,8 @@ function EntryDetailPageInner() {
   const [answeringSuggestion, setAnsweringSuggestion] = useState(false)
 
   const [noticeKey, setNoticeKey] = useState(0)
+  // A Google Photos pick was just started in a new tab: watch for the import it creates.
+  const [pickerOpening, setPickerOpening] = useState(false)
   const [importInFlight, setImportInFlight] = useState(false)
   const [importCopying, setImportCopying] = useState(false)
   const googleMsg = googleStatusMessage({
@@ -432,7 +434,7 @@ function EntryDetailPageInner() {
             entry={entry}
             onChanged={setEntry}
             room={readOnly ? 0 : photoRoom}
-            googlePhotos={<GooglePhotosPick entry={entry} inFlight={importInFlight} copying={importCopying} disabled={readOnly || photoRoom === 0} onStarted={() => setNoticeKey((k) => k + 1)} />}
+            googlePhotos={<GooglePhotosPick entry={entry} inFlight={importInFlight} copying={importCopying} disabled={readOnly || photoRoom === 0} onStarted={() => setNoticeKey((k) => k + 1)} onOpeningChange={setPickerOpening} />}
           />
         )}
 
@@ -610,6 +612,7 @@ function EntryDetailPageInner() {
             <PhotoImportNotice
               entryId={entry.id}
               refreshKey={noticeKey}
+              watching={pickerOpening}
               onFinished={refreshAfterImport}
               onInFlightChange={(inFlight, copying) => {
                 setImportInFlight(inFlight)

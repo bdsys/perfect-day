@@ -13,6 +13,8 @@ interface Props {
   onFinished?: () => void;
   /** inFlight: any import is waiting or copying. copying: one of them has moved on to copying. */
   onInFlightChange?: (inFlight: boolean, copying: boolean) => void;
+  /** A pick was just started in another tab: poll even with nothing in flight yet. */
+  watching?: boolean;
 }
 
 const POLL_MS = 3000;
@@ -47,7 +49,7 @@ export function importMessage(imp: PhotoImport): string | null {
   }
 }
 
-export function PhotoImportNotice({ entryId, refreshKey = 0, onDismiss, onFinished, onInFlightChange }: Props) {
+export function PhotoImportNotice({ entryId, refreshKey = 0, onDismiss, onFinished, onInFlightChange, watching = false }: Props) {
   const [imports, setImports] = useState<PhotoImport[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [reconnecting, setReconnecting] = useState(false);
@@ -60,6 +62,9 @@ export function PhotoImportNotice({ entryId, refreshKey = 0, onDismiss, onFinish
   const onInFlightRef = useRef(onInFlightChange);
   onInFlightRef.current = onInFlightChange;
   const inFlightIds = useRef<Set<string>>(new Set());
+  // Every import id seen so far (null until the first load). An id that first appears
+  // already finished was picked in another tab while this one wasn't looking.
+  const seenIds = useRef<Set<string> | null>(null);
   const aliveRef = useRef(true);
   useEffect(() => {
     aliveRef.current = true;
@@ -74,8 +79,11 @@ export function PhotoImportNotice({ entryId, refreshKey = 0, onDismiss, onFinish
       if (!aliveRef.current) return;
       failuresRef.current = 0;
       const now = new Set(list.filter(isInFlight).map((i) => i.id));
-      const finished = [...inFlightIds.current].some((id) => !now.has(id));
+      const appearedDone =
+        seenIds.current !== null && list.some((i) => !seenIds.current!.has(i.id) && !isInFlight(i));
+      const finished = appearedDone || [...inFlightIds.current].some((id) => !now.has(id));
       inFlightIds.current = now;
+      seenIds.current = new Set([...(seenIds.current ?? []), ...list.map((i) => i.id)]);
       setImports(list);
       onInFlightRef.current?.(now.size > 0, list.some((i) => i.status === "copying"));
       if (finished) onFinishedRef.current?.();
@@ -104,12 +112,21 @@ export function PhotoImportNotice({ entryId, refreshKey = 0, onDismiss, onFinish
     void load();
   }, [load, refreshKey]);
 
+  // Coming back to this tab (iOS pauses background tabs while Google Photos is in front).
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void load();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [load]);
+
   const anyInFlight = imports.some(isInFlight);
   useEffect(() => {
-    if (!anyInFlight || gaveUp) return;
+    if ((!anyInFlight && !watching) || gaveUp) return;
     const id = setInterval(() => void load(), POLL_MS);
     return () => clearInterval(id);
-  }, [anyInFlight, gaveUp, load]);
+  }, [anyInFlight, watching, gaveUp, load]);
 
   async function cancel(id: string) {
     setError(null);
