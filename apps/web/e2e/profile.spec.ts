@@ -108,8 +108,11 @@ test.describe('Profile screen', () => {
     await page.fill('#password', password)
     await page.click('button[type=submit]')
 
-    await expect(page.getByText(/Your account will be deleted on/)).toBeVisible({ timeout: 10_000 })
-    await page.getByRole('button', { name: 'Restore my account' }).click()
+    const restoreButton = page.getByRole('button', { name: 'Restore my account' })
+    await expect(restoreButton).toBeVisible({ timeout: 10_000 })
+    await restoreButton.click()
+    // Wait for the restore to finish before navigating; the click does not await it.
+    await expect(restoreButton).toBeHidden({ timeout: 10_000 })
 
     await page.goto('/diaries')
     await expect(page.getByText('Restore Me Diary')).toBeVisible({ timeout: 10_000 })
