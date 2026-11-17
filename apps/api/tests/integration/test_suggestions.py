@@ -11,7 +11,7 @@ import json
 import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 from httpx import AsyncClient
 from sqlalchemy import select, update
@@ -378,7 +378,7 @@ class TestCallersSayWhy:
             r = await client.post(f"/v1/entries/{entry['id']}/regenerate", headers=auth)
 
         assert r.status_code == 200
-        delay.assert_called_once_with(entry["id"], trigger="regenerate")
+        delay.assert_called_once_with(entry["id"], trigger="regenerate", job_id=ANY)
 
     async def test_regenerate_works_on_a_published_entry(self, client):
         auth, diary = await _setup(client, "sg-pub@example.com")
@@ -389,7 +389,7 @@ class TestCallersSayWhy:
             r = await client.post(f"/v1/entries/{entry['id']}/regenerate", headers=auth)
 
         assert r.status_code == 200
-        delay.assert_called_once_with(entry["id"], trigger="regenerate")
+        delay.assert_called_once_with(entry["id"], trigger="regenerate", job_id=ANY)
 
     async def test_a_task_queued_before_this_change_runs_as_a_background_redraft(
         self, db_session, db_url

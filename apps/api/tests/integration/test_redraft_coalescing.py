@@ -5,7 +5,7 @@ from __future__ import annotations
 import inspect
 import uuid
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
@@ -43,7 +43,7 @@ class TestQueueRedraft:
             await queue_redraft(entry_id)
 
         task.apply_async.assert_called_once_with(
-            (str(entry_id),), {"coalesced": True}, countdown=600
+            (str(entry_id),), {"coalesced": True, "job_id": ANY}, countdown=600
         )
         task.delay.assert_not_called()
 
@@ -126,7 +126,7 @@ class TestQueueRedraft:
         ):
             await queue_redraft(entry_id)
 
-        task.delay.assert_called_once_with(str(entry_id))
+        task.delay.assert_called_once_with(str(entry_id), job_id=ANY)
         task.apply_async.assert_not_called()
 
     async def test_old_message_without_coalesced_runs(self, entry_id):

@@ -22,6 +22,7 @@ from app.models import (
     User,
 )
 from app.routers.v1.diaries import _get_diary_or_404
+from app.services.ai_draft_jobs import AiStatus, ai_statuses, diary_ai_statuses
 from app.services.ai_drafts import ai_draft_usage
 from app.services.flagged_words import still_present
 from app.services.plan_view import OwnerPlanOut, owner_plan_out
@@ -173,6 +174,9 @@ class EntryOut(BaseModel):
     tz_override: str | None = None
     can_edit: bool = False  # the caller may edit this entry (not a viewer)
     plan: OwnerPlanOut | None = None  # the diary owner's plan; set on GET /entries/{id} only
+    # An AI draft is queued or being written for this entry. Set by the list, the single
+    # GET and regenerate; None everywhere else.
+    ai_status: AiStatus | None = None
 
     model_config = {"from_attributes": True}
 
@@ -396,6 +400,29 @@ async def list_deleted_entries(
     ]
 
 
+class AiStatusMapOut(BaseModel):
+    entries: dict[str, AiStatus]
+
+
+@router.get("/diaries/{diary_id}/entries/ai-status", response_model=AiStatusMapOut)
+async def diary_ai_status(
+    diary_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db, scope="function"),
+) -> AiStatusMapOut:
+    """Entries of this diary with an AI draft queued or being written.
+
+    Viewers get none: they see only published entries, and a published entry's
+    AI result is always a suggestion they cannot see, so the indicator would end
+    with no visible change.
+    """
+    _, role = await _get_diary_or_404(diary_id, user, db)
+    if role == "viewer":
+        return AiStatusMapOut(entries={})
+    statuses = await diary_ai_statuses(db, diary_id, published_only=False)
+    return AiStatusMapOut(entries={str(k): v for k, v in statuses.items()})
+
+
 @router.get("/diaries/{diary_id}/entries", response_model=list[EntryOut])
 async def list_entries(
     diary_id: uuid.UUID,
@@ -449,10 +476,14 @@ async def list_entries(
     q = q.order_by(*ENTRY_TIMELINE_ORDER).limit(limit)
 
     result = await db.execute(q)
-    return [
+    outs = [
         _entry_out_from_orm(e, can_edit=role != "viewer", exact_places=role is None)
         for e in result.scalars()
     ]
+    if role == "viewer":
+        return outs  # no AI indicator for viewers, as in diary_ai_status
+    statuses = await ai_statuses(db, [o.id for o in outs])
+    return [o.model_copy(update={"ai_status": statuses.get(o.id)}) for o in outs]
 
 
 @router.post(
@@ -505,6 +536,8 @@ async def get_entry(
     out = _entry_out_from_orm(entry, can_edit=role != "viewer", exact_places=role is None)
     # The owner's numbers go to the owner and editors only, never to viewers.
     out.plan = None if role == "viewer" else await owner_plan_out(db, diary)
+    if role != "viewer":  # no AI indicator for viewers, as in diary_ai_status
+        out.ai_status = (await ai_statuses(db, [entry.id])).get(entry.id)
     return out
 
 
@@ -713,8 +746,10 @@ async def regenerate_entry(
                 needed=usage.used + 1,
                 resets_on=usage.period.resets_on,
             )
-    from app.workers.tasks import generate_entry_draft
+    from app.workers.tasks import enqueue_entry_draft
 
     # Nothing about the entry changes here, so there is no commit to wait for.
-    generate_entry_draft.delay(str(entry.id), trigger="regenerate")
-    return _entry_out_from_orm(entry, can_edit=True, exact_places=role is None)
+    await enqueue_entry_draft(entry.id, trigger="regenerate")
+    out = _entry_out_from_orm(entry, can_edit=True, exact_places=role is None)
+    out.ai_status = (await ai_statuses(db, [entry.id])).get(entry.id)
+    return out

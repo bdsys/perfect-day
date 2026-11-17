@@ -19,7 +19,7 @@ function entry(over: Partial<Entry> = {}): Entry {
     body_markdown: 'B', body_source: 'user', flagged_tokens: null, status: 'draft',
     created_by: 'manual', creation_source: 'manual', published_at: null, deleted_at: null,
     created_at: '', updated_at: '', events: [], rule_matches: [], last_generation: null,
-    photos: [], enrichments: [], suggestion: null, tz_override: null, can_edit: true,
+    photos: [], enrichments: [], suggestion: null, ai_status: null, tz_override: null, can_edit: true,
     location: { name: 'Mukilteo, Washington', lat: null, lon: null, source: 'parent' },
     ...over,
   }

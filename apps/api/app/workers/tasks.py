@@ -721,18 +721,28 @@ async def _apply_rule_backfill(rule_id_str: str, days: int) -> None:
     default_retry_delay=5,
 )
 def generate_entry_draft(
-    self, entry_id: str, trigger: str = "background", coalesced: bool = False
+    self,
+    entry_id: str,
+    trigger: str = "background",
+    coalesced: bool = False,
+    job_id: str | None = None,
 ) -> None:
     """Draft an entry. *trigger* is "regenerate" when a person asked for it.
 
     *coalesced* marks a redraft queued by ``queue_redraft``; only it clears the
     entry's pending-redraft key. Tasks queued before 25.3 carry no trigger and
     run as background redrafts; tasks queued before 18.1-h carry no *coalesced*.
+    *job_id* is the entry's "AI is working" row (row 38); tasks queued before it
+    carry none and leave no trace.
     """
     # The task id keys the AI-draft reservation, so a redelivery never spends twice.
     run_sync(
         _generate_entry_draft(
-            entry_id, trigger, reservation_key=self.request.id, coalesced=coalesced
+            entry_id,
+            trigger,
+            reservation_key=self.request.id,
+            coalesced=coalesced,
+            job_id=job_id,
         )
     )
 
@@ -745,12 +755,61 @@ def _redraft_key(entry_id: uuid.UUID | str) -> str:
     return f"redraft_pending:{entry_id}"
 
 
+async def enqueue_entry_draft(
+    entry_id: uuid.UUID | str,
+    *,
+    trigger: Literal["background", "regenerate"] = "background",
+    coalesced: bool = False,
+) -> None:
+    """Queue a draft of *entry_id*, and record it so the entry shows "AI is working" (row 38).
+
+    The only place a draft is queued. The job row is committed before the send,
+    so the worker can find it. The indicator is best-effort: if the row cannot
+    be written the draft is still queued, without one. If the send fails the row
+    is removed and the error raised, as before.
+    """
+    from app.services import ai_draft_jobs
+    from app.workers.utils import db_session
+
+    job_id: uuid.UUID | None = None
+    try:
+        async with db_session() as db:
+            job_id = await ai_draft_jobs.add_job(
+                db,
+                uuid.UUID(str(entry_id)),
+                delay_seconds=REDRAFT_WINDOW_SECONDS if coalesced else 0,
+            )
+    except Exception:
+        job_id = None
+        log.warning("ai_draft_job_add_failed", entry_id=str(entry_id), exc_info=True)
+    job = str(job_id) if job_id is not None else None
+    try:
+        if coalesced:
+            generate_entry_draft.apply_async(
+                (str(entry_id),),
+                {"coalesced": True, "job_id": job},
+                countdown=REDRAFT_WINDOW_SECONDS,
+            )
+        elif trigger == "regenerate":
+            generate_entry_draft.delay(str(entry_id), trigger="regenerate", job_id=job)
+        else:
+            generate_entry_draft.delay(str(entry_id), job_id=job)
+    except Exception:
+        if job_id is not None:
+            try:
+                async with db_session() as db:
+                    await ai_draft_jobs.finish_job(db, job_id)
+            except Exception:
+                log.warning("ai_draft_job_finish_failed", entry_id=str(entry_id), exc_info=True)
+        raise
+
+
 async def queue_redraft(entry_id: uuid.UUID) -> None:
     """Queue an automatic redraft of an existing entry, at most one per 10 minutes.
 
     A burst of changes to one entry (events joining it, cancelled or moved)
     queues a single redraft that runs after the burst, and so sees all of it.
-    First drafts of new entries are not delayed: they use ``.delay`` directly.
+    First drafts of new entries are not delayed: they go straight to ``enqueue_entry_draft``.
     """
     from app.core.dependencies import get_redis
 
@@ -761,13 +820,11 @@ async def queue_redraft(entry_id: uuid.UUID) -> None:
     except Exception:
         # Coalescing is an optimisation; without Redis, redraft straight away.
         log.warning("redraft_coalescing_unavailable", entry_id=str(entry_id), exc_info=True)
-        generate_entry_draft.delay(str(entry_id))
+        await enqueue_entry_draft(entry_id)
         return
     if first:
         try:
-            generate_entry_draft.apply_async(
-                (str(entry_id),), {"coalesced": True}, countdown=REDRAFT_WINDOW_SECONDS
-            )
+            await enqueue_entry_draft(entry_id, coalesced=True)
         except Exception:
             # The broker is down, so a fallback .delay would fail too. Release the
             # key, or every redraft for 15 minutes would be dropped as "coalesced".
@@ -786,7 +843,9 @@ async def _generate_entry_draft(
     *,
     reservation_key: str | None = None,
     coalesced: bool = False,
+    job_id: str | None = None,
 ) -> None:
+    from app.services import ai_draft_jobs
     from app.services.entry_location import update_place_and_weather
     from app.workers.llm import generate_draft_for_entry
     from app.workers.utils import db_session
@@ -805,17 +864,32 @@ async def _generate_entry_draft(
         "regenerate" if trigger == "regenerate" else "background"
     )
     entry_uuid = uuid.UUID(entry_id_str)
+    job_uuid = uuid.UUID(job_id) if job_id else None
     try:
-        # Work out where the entry happened first, so the weather is for that place.
-        async with db_session() as db:
-            await update_place_and_weather(entry_uuid, db)
-    except Exception as exc:  # never block draft on weather failure
-        log.warning(
-            "enrichment_weather_skipped_due_to_error",
-            entry_id=entry_id_str,
-            error=str(exc),
-        )
-    await generate_draft_for_entry(entry_uuid, trigger=why, reservation_key=reservation_key)
+        if job_uuid is not None:
+            try:
+                async with db_session() as db:
+                    await ai_draft_jobs.mark_started(db, job_uuid, entry_uuid)
+            except Exception:
+                log.warning("ai_draft_job_mark_failed", entry_id=entry_id_str, exc_info=True)
+        try:
+            # Work out where the entry happened first, so the weather is for that place.
+            async with db_session() as db:
+                await update_place_and_weather(entry_uuid, db)
+        except Exception as exc:  # never block draft on weather failure
+            log.warning(
+                "enrichment_weather_skipped_due_to_error",
+                entry_id=entry_id_str,
+                error=str(exc),
+            )
+        await generate_draft_for_entry(entry_uuid, trigger=why, reservation_key=reservation_key)
+    finally:
+        if job_uuid is not None:
+            try:
+                async with db_session() as db:
+                    await ai_draft_jobs.finish_job(db, job_uuid)
+            except Exception:
+                log.warning("ai_draft_job_finish_failed", entry_id=entry_id_str, exc_info=True)
 
 
 # ---------------------------------------------------------------------------

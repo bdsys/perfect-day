@@ -472,6 +472,25 @@ class AiDraftSpend(Base):
     __table_args__ = (Index("ix_ai_draft_spends_user_month", "user_id", "month"),)
 
 
+class AiDraftJob(Base):
+    """An AI draft queued or running for an entry; drives the "AI is working" indicator."""
+
+    __tablename__ = "ai_draft_jobs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    entry_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("entries.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    queued_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    run_after: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class PhotoImport(TimestampMixin, Base):
     """One Google Photos Picker import into an entry."""
 

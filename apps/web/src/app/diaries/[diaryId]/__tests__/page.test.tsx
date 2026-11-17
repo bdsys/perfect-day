@@ -19,15 +19,17 @@ jest.mock('@/lib/api', () => {
         listScanRuns: jest.fn(),
         triggerScan: jest.fn(),
       },
-      entries: { list: jest.fn() },
+      entries: { list: jest.fn(), get: jest.fn(), aiStatus: jest.fn() },
       integrations: { list: jest.fn(), getGoogleAuthUrl: jest.fn() },
     },
   }
 })
 
-jest.mock('@/lib/auth-context', () => ({
-  useAuth: () => ({ user: { id: 'u1', email: 'a@b.com' }, loading: false }),
-}))
+// One stable value, like the real provider: a new object per render would re-run the page's load effect.
+jest.mock('@/lib/auth-context', () => {
+  const value = { user: { id: 'u1', email: 'a@b.com' }, loading: false }
+  return { useAuth: () => value }
+})
 
 jest.mock('next/navigation', () => ({
   useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
@@ -406,5 +408,144 @@ describe('diary page: New entry from Google Calendar needs a connected calendar'
     const button = await screen.findByRole('button', { name: 'New entry from Google Calendar' })
     await waitFor(() => expect(api.diaries.getScanConfig).toHaveBeenCalled())
     expect(button).not.toBeDisabled()
+  })
+})
+
+describe('diary page: AI status', () => {
+  function entry(id: string, over: Record<string, unknown> = {}) {
+    return {
+      id, diary_id: 'diary-1', entry_date: '2026-11-10', entry_end_date: null, title: null,
+      body_markdown: null, status: 'draft', events: [], ai_status: null, ...over,
+    }
+  }
+
+  beforeEach(() => jest.useFakeTimers())
+  afterEach(() => jest.useRealTimers())
+
+  async function tick(ms = 3000) {
+    await act(async () => { await jest.advanceTimersByTimeAsync(ms) })
+  }
+
+  it('shows the badge on pending entries', async () => {
+    ;(api.entries.list as jest.Mock).mockResolvedValue([entry('e1', { ai_status: 'queued' })])
+    ;(api.entries.aiStatus as jest.Mock).mockResolvedValue({ e1: 'queued' })
+    render(<DiaryDetailPage />)
+    expect(await screen.findByText('Queued')).toBeInTheDocument()
+  })
+
+  it('polls while pending and refetches a finished entry', async () => {
+    ;(api.entries.list as jest.Mock).mockResolvedValue([entry('e1', { ai_status: 'queued' })])
+    ;(api.entries.aiStatus as jest.Mock)
+      .mockResolvedValueOnce({ e1: 'writing' })
+      .mockResolvedValue({})
+    ;(api.entries.get as jest.Mock).mockResolvedValue(entry('e1', { title: 'Beach day' }))
+    render(<DiaryDetailPage />)
+    expect(await screen.findByText('AI is writing…')).toBeInTheDocument()
+    await tick()
+    await tick()
+    expect(await screen.findByText('Beach day')).toBeInTheDocument()
+    expect(screen.queryByTestId('ai-status')).toBeNull()
+    expect(api.entries.get).toHaveBeenCalledTimes(1)
+    expect(api.entries.get).toHaveBeenCalledWith('e1')
+  })
+
+  it('does not poll when nothing is pending', async () => {
+    ;(api.entries.list as jest.Mock).mockResolvedValue([entry('e1')])
+    render(<DiaryDetailPage />)
+    await screen.findByText('(no title yet)')
+    await tick()
+    await tick()
+    expect(api.entries.aiStatus).not.toHaveBeenCalled()
+  })
+
+  it('stops polling once nothing is pending any more', async () => {
+    ;(api.entries.list as jest.Mock).mockResolvedValue([entry('e1', { ai_status: 'queued' })])
+    ;(api.entries.aiStatus as jest.Mock).mockResolvedValue({})
+    ;(api.entries.get as jest.Mock).mockResolvedValue(entry('e1', { title: 'Done' }))
+    render(<DiaryDetailPage />)
+    expect(await screen.findByText('Done')).toBeInTheDocument()
+    await tick()
+    await tick()
+    expect(api.entries.aiStatus).toHaveBeenCalledTimes(1)
+  })
+
+  it('drops an entry that was deleted elsewhere', async () => {
+    ;(api.entries.list as jest.Mock).mockResolvedValue([
+      entry('e1', { title: 'Gone', ai_status: 'queued' }),
+      entry('e2', { title: 'Old', ai_status: 'queued' }),
+    ])
+    ;(api.entries.aiStatus as jest.Mock).mockResolvedValue({})
+    ;(api.entries.get as jest.Mock).mockImplementation(async (id: string) => {
+      if (id === 'e1') throw new ApiError(404, 'Not found')
+      return entry('e2', { title: 'Fresh' })
+    })
+    render(<DiaryDetailPage />)
+    expect(await screen.findByText('Fresh')).toBeInTheDocument()
+    expect(screen.queryByText('Gone')).toBeNull()
+    expect(screen.queryByTestId('ai-status')).toBeNull()
+    await tick()
+    await tick()
+    expect(api.entries.aiStatus).toHaveBeenCalledTimes(1)
+  })
+
+  it('one failed re-fetch does not freeze the others', async () => {
+    ;(api.entries.list as jest.Mock).mockResolvedValue([
+      entry('e1', { title: 'One', ai_status: 'queued' }),
+      entry('e2', { title: 'Two', ai_status: 'queued' }),
+    ])
+    ;(api.entries.aiStatus as jest.Mock).mockResolvedValue({})
+    ;(api.entries.get as jest.Mock).mockImplementation(async (id: string) => {
+      if (id === 'e1') throw new ApiError(500, 'boom')
+      return entry('e2', { title: 'Two done' })
+    })
+    render(<DiaryDetailPage />)
+    expect(await screen.findByText('Two done')).toBeInTheDocument()
+    expect(screen.getAllByTestId('ai-status')).toHaveLength(1)
+    expect(screen.getByText('One')).toBeInTheDocument()
+    const before = (api.entries.get as jest.Mock).mock.calls.filter(([id]) => id === 'e1').length
+    await tick()
+    const after = (api.entries.get as jest.Mock).mock.calls.filter(([id]) => id === 'e1').length
+    expect(after).toBeGreaterThan(before)
+  })
+
+  it('stops polling after repeated failures', async () => {
+    ;(api.entries.list as jest.Mock).mockResolvedValue([entry('e1', { ai_status: 'queued' })])
+    ;(api.entries.aiStatus as jest.Mock).mockRejectedValue(new Error('down'))
+    render(<DiaryDetailPage />)
+    await screen.findByText('Queued')
+    for (let i = 0; i < 5 + 2; i++) await tick()
+    expect(api.entries.aiStatus).toHaveBeenCalledTimes(5)
+  })
+
+  it('after polling gives up, pending badges stop pretending', async () => {
+    ;(api.entries.list as jest.Mock).mockResolvedValue([
+      entry('e1', { ai_status: 'queued' }),
+      entry('e2', { ai_status: 'writing' }),
+    ])
+    ;(api.entries.aiStatus as jest.Mock).mockRejectedValue(new Error('down'))
+    render(<DiaryDetailPage />)
+    expect(await screen.findByText('Queued')).toBeInTheDocument()
+    for (let i = 0; i < 5 + 2; i++) await tick()
+    const badges = screen.getAllByTestId('ai-status')
+    expect(badges).toHaveLength(2)
+    badges.forEach((b) => {
+      expect(b).toHaveTextContent(/^Refresh to check$/)
+      expect(b.querySelector('.spinner')).toBeNull()
+    })
+  })
+
+  it('updates an entry loaded by load more', async () => {
+    const first = Array.from({ length: 20 }, (_, i) => entry(`a${i}`, { title: `T${i}` }))
+    ;(api.entries.list as jest.Mock).mockImplementation(async (_d: string, params: { cursor?: string }) =>
+      params.cursor ? [entry('old', { ai_status: 'writing' })] : first,
+    )
+    ;(api.entries.aiStatus as jest.Mock).mockResolvedValueOnce({ old: 'queued' }).mockResolvedValue({})
+    ;(api.entries.get as jest.Mock).mockResolvedValue(entry('old', { title: 'Old one' }))
+    render(<DiaryDetailPage />)
+    fireEvent.click(await screen.findByRole('button', { name: /load|older|more/i }))
+    expect(await screen.findByText('Queued')).toBeInTheDocument()
+    await tick()
+    expect(await screen.findByText('Old one')).toBeInTheDocument()
+    expect(api.entries.get).toHaveBeenCalledWith('old')
   })
 })

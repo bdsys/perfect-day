@@ -1,6 +1,6 @@
 'use client'
 
-import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
+import { Suspense, useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import Link from 'next/link'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import { api, type Entry, type OwnerPlan } from '@/lib/api'
@@ -22,6 +22,27 @@ import PlanBadge from '@/components/PlanBadge'
 import LimitNote from '@/components/LimitNote'
 import { aiEntryNote, aiLimitNote, formatResetDate, limitMessage, readOnlyBanner } from '@/lib/plan'
 import { EVENT_REMOVED_NOTE, showEventRemovedNote } from '@/lib/entryNotes'
+
+const MAX_POLL_FAILURES = 5
+const AI_STATUS_POLL_MS = 3000
+
+const AI_NOTICES = {
+  writing: 'AI is writing this entry. Wait a moment for the draft, or edit anyway.',
+  queued: 'AI will write this entry shortly. Wait for the draft, or edit anyway.',
+} as const
+// For someone who cannot edit the entry: there is no Edit to fall back on.
+const AI_NOTICES_NO_EDIT = {
+  writing: 'AI is writing this entry.',
+  queued: 'AI will write this entry shortly.',
+} as const
+// Polling gave up, so the status may be stale.
+const AI_NOTICE_STALLED = "Couldn't check on the AI draft. Refresh the page to see it."
+// The AI notice and the mid-edit warning share one callout: an accent border and body-size text.
+const AI_CALLOUT_STYLE: CSSProperties = {
+  display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '1rem',
+  padding: '0.75rem 1rem', fontSize: '0.95rem',
+  border: '1px solid var(--accent)', borderLeftWidth: 4, borderRadius: 6,
+}
 
 function planDetails(plan: OwnerPlan & { ai_drafts_limit: number }) {
   return [
@@ -78,6 +99,15 @@ function EntryDetailPageInner() {
   const [regenSlow, setRegenSlow] = useState(false)
   const [regenErrorMessage, setRegenErrorMessage] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const [aiFailures, setAiFailures] = useState(0)
+  const aiInFlightRef = useRef(false)
+  // What the entry held when Edit was clicked, and the latest server copy seen mid-edit.
+  const [editBase, setEditBase] = useState<{ title: string; body: string } | null>(null)
+  const [serverEntry, setServerEntry] = useState<Entry | null>(null)
+  const editingRef = useRef(false)
+  editingRef.current = editing
+  const entryRef = useRef<Entry | null>(null)
+  entryRef.current = entry
   const [answeringSuggestion, setAnsweringSuggestion] = useState(false)
 
   const [noticeKey, setNoticeKey] = useState(0)
@@ -125,8 +155,21 @@ function EntryDetailPageInner() {
     setEditEntryDate(entry.entry_date)
     setEditEntryEndDate(entry.entry_end_date ?? '')
     setEditDateError('')
+    setEditBase({ title: entry.title ?? '', body: entry.body_markdown ?? '' })
+    setServerEntry(null)
     setEditing(true)
   }
+
+  function handleCancelEdit() {
+    // Show whatever the AI wrote while the form was open.
+    if (serverEntry) setEntry(serverEntry)
+    setServerEntry(null)
+    setEditing(false)
+  }
+
+  const aiLandedMidEdit =
+    editing && !!serverEntry && !serverEntry.ai_status && !!editBase &&
+    ((serverEntry.body_markdown ?? '') !== editBase.body || (serverEntry.title ?? '') !== editBase.title)
 
   async function handleSave() {
     if (!entry) return
@@ -195,7 +238,9 @@ function EntryDetailPageInner() {
       setRegenResult(null)
       setRegenSlow(false)
       setRegenErrorMessage(null)
-      await api.entries.regenerate(entry.id)
+      const queued = await api.entries.regenerate(entry.id)
+      // The response says whether the draft is queued; the timeout below reads it.
+      setEntry((current) => (current ? { ...current, ai_status: queued.ai_status ?? null } : current))
       setPollingRegen(true)
       setError('')
     } catch (e: unknown) {
@@ -231,6 +276,13 @@ function EntryDetailPageInner() {
           // No last_generation: fall back to old success behavior
           setRegenResult('success')
         }
+      } else {
+        // Keep the AI status fresh, so the timeout knows whether a draft is still coming.
+        setEntry((current) =>
+          current && current.ai_status !== updated.ai_status
+            ? { ...current, ai_status: updated.ai_status ?? null }
+            : current,
+        )
       }
     } catch {
     }
@@ -238,13 +290,44 @@ function EntryDetailPageInner() {
 
   usePolling(pollRegen, 2000, pollingRegen)
 
+  // A queued or running AI draft: poll until it finishes.
+  const aiPending = !!entry?.ai_status && !pollingRegen
+  const pollAi = useCallback(async () => {
+    if (!entry || aiInFlightRef.current) return
+    aiInFlightRef.current = true
+    try {
+      const updated = await api.entries.get(entry.id)
+      // Mid-edit, take only the AI fields so nothing typed is touched.
+      if (editingRef.current) setServerEntry(updated)
+      setEntry((current) =>
+        editingRef.current && current
+          ? { ...current, ai_status: updated.ai_status, suggestion: updated.suggestion, last_generation: updated.last_generation }
+          : updated,
+      )
+      setAiFailures(0)
+    } catch {
+      setAiFailures((n) => n + 1)
+    } finally {
+      aiInFlightRef.current = false
+    }
+  }, [entry])
+
+  usePolling(pollAi, AI_STATUS_POLL_MS, aiPending && aiFailures < MAX_POLL_FAILURES)
+
   useEffect(() => {
     if (!pollingRegen) return
     const slowTimer = setTimeout(() => setRegenSlow(true), 9 * 1000)
     const failTimer = setTimeout(() => {
       setPollingRegen(false)
       setRegenSlow(false)
-      setRegenResult('failed')
+      if (entryRef.current?.ai_status) {
+        // Still queued or being written: end the panel and let the AI notice
+        // and its polling show the draft when it lands.
+        setRegenResult(null)
+        setRegenStartTime(null)
+      } else {
+        setRegenResult('failed')
+      }
     }, 60 * 1000)
     return () => {
       clearTimeout(slowTimer)
@@ -301,6 +384,7 @@ function EntryDetailPageInner() {
 
   const diaryHref = `/diaries/${entry.diary_id}`
   const readOnly = plan?.read_only ?? false
+  const aiStalled = aiFailures >= MAX_POLL_FAILURES
   const aiOut = plan?.ai_drafts_left === 0
   const photoRoom = plan == null || plan.photos_per_entry == null
     ? null
@@ -394,11 +478,16 @@ function EntryDetailPageInner() {
             {editDateError && (
               <p className="error-message" style={{ marginBottom: '0.5rem' }}>{editDateError}</p>
             )}
+            {aiLandedMidEdit && (
+              <p role="status" style={AI_CALLOUT_STYLE}>
+                The AI draft arrived while you were editing. Save to keep your text instead, or Cancel to read the AI draft.
+              </p>
+            )}
             <div style={{ display: 'flex', gap: '0.5rem' }}>
               <button className="btn btn-primary" onClick={handleSave} disabled={saving || !editEntryDate}>
                 {saving ? 'Saving…' : 'Save'}
               </button>
-              <button className="btn btn-secondary" onClick={() => setEditing(false)} disabled={saving}>
+              <button className="btn btn-secondary" onClick={handleCancelEdit} disabled={saving}>
                 Cancel
               </button>
             </div>
@@ -468,6 +557,21 @@ function EntryDetailPageInner() {
                 >
                   ×
                 </button>
+              </div>
+            )}
+
+            {entry.ai_status && !pollingRegen && (
+              <div role="status" data-testid="ai-notice" style={AI_CALLOUT_STYLE}>
+                {aiStalled ? null : entry.ai_status === 'writing' ? (
+                  <span className="spinner" aria-hidden="true" style={{ width: 16, height: 16 }} />
+                ) : (
+                  <span aria-hidden="true">⏱</span>
+                )}
+                <span>
+                  {aiStalled
+                    ? AI_NOTICE_STALLED
+                    : (entry.can_edit && !readOnly ? AI_NOTICES : AI_NOTICES_NO_EDIT)[entry.ai_status]}
+                </span>
               </div>
             )}
 
