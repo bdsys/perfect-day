@@ -1,7 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { api, ApiError, type Entry } from "../lib/api";
-import { limitMessage } from "../lib/plan";
+import { api, type Entry } from "../lib/api";
 import { navigateTo } from "../lib/navigate";
 import { useResetOnBfcacheRestore } from "../lib/useResetOnBfcacheRestore";
 
@@ -27,19 +26,27 @@ interface Props {
   onStarted: () => void;
   /** True when the entry can take no more photos. */
   disabled?: boolean;
+  /** True from the tap until the page sees the import, or a minute passes. The page watches meanwhile. */
+  onOpeningChange?: (opening: boolean) => void;
 }
+
+/** How long to wait for the new tab to create its import before offering the button again. */
+const OPENING_TIMEOUT_MS = 60_000;
+
+/** Our own page that starts the picker session in the new tab, then replaces itself with Google's picker. */
+export const pickerOpenPath = (entryId: string) => `/google-photos/open?entry=${encodeURIComponent(entryId)}`;
 
 type Phase = "loading" | "error" | "not_connected" | "ready";
 
-export function GooglePhotosPick({ entry, inFlight, copying = false, onStarted, disabled = false }: Props) {
+export function GooglePhotosPick({ entry, inFlight, copying = false, onStarted, disabled = false, onOpeningChange }: Props) {
   const [phase, setPhase] = useState<Phase>("loading");
-  const [starting, setStarting] = useState(false);
-  const startingRef = useRef(false);
+  const [opening, setOpening] = useState(false);
+  const openingRef = useRef(false);
+  const onOpeningChangeRef = useRef(onOpeningChange);
+  onOpeningChangeRef.current = onOpeningChange;
   const [connecting, setConnecting] = useState(false);
   const connectingRef = useRef(false);
-  const [fallbackUrl, setFallbackUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [offerConnect, setOfferConnect] = useState(false);
 
   const [checkKey, setCheckKey] = useState(0);
 
@@ -85,43 +92,36 @@ export function GooglePhotosPick({ entry, inFlight, copying = false, onStarted, 
     }
   }
 
+  function setOpeningState(value: boolean) {
+    openingRef.current = value;
+    setOpening(value);
+    onOpeningChangeRef.current?.(value);
+  }
+
+  // The page found the import the new tab created: stop "opening" and show its progress.
+  useEffect(() => {
+    if (inFlight && openingRef.current) setOpeningState(false);
+  }, [inFlight]);
+
+  // No import after a minute: the tab may have been blocked, closed, or shown an error.
+  useEffect(() => {
+    if (!opening) return;
+    const id = setTimeout(() => {
+      setOpeningState(false);
+      setError("Didn't see Google Photos open? Try again.");
+    }, OPENING_TIMEOUT_MS);
+    return () => clearTimeout(id);
+  }, [opening]);
+
   function start() {
-    if (startingRef.current) return;
-    startingRef.current = true;
-    setStarting(true);
+    if (openingRef.current) return;
     setError(null);
-    setOfferConnect(false);
-    setFallbackUrl(null);
-    // Must be synchronous inside the click, or the browser blocks the new tab.
-    const tab = window.open("", "_blank");
-    // The picker is Google's page: it must not be able to reach back into ours.
-    if (tab) tab.opener = null;
-    void (async () => {
-      try {
-        const imp = await api.photoImports.create(entry.id);
-        const url = `${imp.picker_uri}/autoclose`;
-        if (tab) tab.location.href = url;
-        else setFallbackUrl(url);
-        onStarted();
-      } catch (e) {
-        tab?.close();
-        if (e instanceof ApiError && e.status === 409) {
-          setOfferConnect(true);
-          setError("Google Photos isn't connected yet.");
-        } else if (e instanceof ApiError && e.status === 503 && e.code === 'google_photos_not_enabled') {
-          setError(
-            "Google Photos isn't set up for this app yet. The app's owner needs to turn on the Photos Picker API in Google Cloud.",
-          )
-        } else if (e instanceof ApiError && e.status === 503) {
-          setError("Google Photos isn't responding. Try again in a minute.");
-        } else {
-          setError(limitMessage(e) ?? "Couldn't start Google Photos.");
-        }
-      } finally {
-        startingRef.current = false;
-        setStarting(false);
-      }
-    })();
+    // Inside the tap, a real address: every browser opens it. The new tab starts the session
+    // and moves itself to Google (iOS Chrome ignored a blank tab sent there afterwards).
+    // noopener: Google's page can't reach back into ours.
+    window.open(pickerOpenPath(entry.id), "_blank", "noopener");
+    setOpeningState(true);
+    onStarted();
   }
 
   if (phase === "loading") return null;
@@ -152,26 +152,27 @@ export function GooglePhotosPick({ entry, inFlight, copying = false, onStarted, 
     return (
       <div>
         <p>{copying ? "Copying your photos from Google Photos…" : "Google Photos is open. Finish your pick there."}</p>
-        {fallbackUrl && (
-          <p>
-            <a href={fallbackUrl} target="_blank" rel="noopener noreferrer">Open Google Photos</a>
-          </p>
-        )}
+      </div>
+    );
+  }
+
+  if (opening) {
+    return (
+      <div>
+        <p>Opening Google Photos in a new tab…</p>
+        <p>
+          <a href={pickerOpenPath(entry.id)} target="_blank" rel="noopener noreferrer">Open Google Photos</a>
+        </p>
       </div>
     );
   }
 
   return (
     <div>
-      <button type="button" className="btn btn-secondary" onClick={start} disabled={starting || disabled}>
+      <button type="button" className="btn btn-secondary" onClick={start} disabled={disabled}>
         Search Google Photos for {formatEntryDate(entry.entry_date)}
       </button>
       {error && <p role="alert" className="error-message">{error}</p>}
-      {offerConnect && (
-        <button type="button" className="btn btn-secondary" onClick={() => void connect()} disabled={connecting}>
-          Connect Google Photos
-        </button>
-      )}
     </div>
   );
 }

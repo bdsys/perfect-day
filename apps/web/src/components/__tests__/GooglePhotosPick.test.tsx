@@ -1,6 +1,6 @@
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { GooglePhotosPick } from '../GooglePhotosPick'
-import { api, ApiError, type Entry } from '../../lib/api'
+import { api, type Entry } from '../../lib/api'
 import { navigateTo } from '../../lib/navigate'
 
 jest.mock('../../lib/navigate', () => ({ navigateTo: jest.fn() }))
@@ -33,20 +33,6 @@ describe('GooglePhotosPick', () => {
     expect(await screen.findByRole('button', { name: 'Search Google Photos for 16 May 2026' })).toBeInTheDocument()
   })
 
-  it('a Google setup problem is not reported as not connected', async () => {
-    list.mockResolvedValue(connected)
-    create.mockRejectedValue(new ApiError(503, 'google_photos_not_enabled', 'google_photos_not_enabled'))
-    const tab = { location: { href: '' }, close: jest.fn() }
-    jest.spyOn(window, 'open').mockReturnValue(tab as unknown as Window)
-    render(<GooglePhotosPick entry={entry} inFlight={false} onStarted={jest.fn()} />)
-    fireEvent.click(await screen.findByRole('button', { name: /Search Google Photos/ }))
-    expect(await screen.findByRole('alert')).toHaveTextContent(
-      "Google Photos isn't set up for this app yet. The app's owner needs to turn on the Photos Picker API in Google Cloud.",
-    )
-    expect(screen.queryByRole('button', { name: /Connect Google Photos/ })).not.toBeInTheDocument()
-    expect(tab.close).toHaveBeenCalled()
-  })
-
   it('not connected starts Google connect with the entry as return path', async () => {
     list.mockResolvedValue([{ ...connected[0], photos: false }])
     authUrl.mockResolvedValue({ url: 'https://accounts.google.com/x' })
@@ -67,40 +53,71 @@ describe('GooglePhotosPick', () => {
     expect(btn).toBeDisabled()
   })
 
-  it('opens the tab inside the click before any await', async () => {
+  it('opens our Google Photos page in a new tab inside the click, with no way back', async () => {
     list.mockResolvedValue(connected)
-    create.mockReturnValue(new Promise(() => {})) // never resolves
-    const tab = { location: { href: '' }, close: jest.fn() }
-    const open = jest.spyOn(window, 'open').mockReturnValue(tab as unknown as Window)
+    const open = jest.spyOn(window, 'open').mockReturnValue(null)
     render(<GooglePhotosPick entry={entry} inFlight={false} onStarted={jest.fn()} />)
     fireEvent.click(await screen.findByRole('button', { name: /Search Google Photos/ }))
-    expect(open).toHaveBeenCalledWith('', '_blank') // synchronously, no await between click and open
+    // Synchronously in the click: a real address, so every browser opens it (iOS Chrome
+    // ignored a blank tab that was sent to Google afterwards). The tab starts the session.
+    expect(open).toHaveBeenCalledWith('/google-photos/open?entry=e1', '_blank', 'noopener')
+    expect(create).not.toHaveBeenCalled()
     open.mockRestore()
   })
 
-  it('sends the opened tab to the picker and hands the import to the page', async () => {
+  it('tells the page it started, and says Google Photos is opening with a backup link', async () => {
     list.mockResolvedValue(connected)
-    create.mockResolvedValue({ id: 'i1', picker_uri: 'https://photos.google.com/picker/abc', status: 'waiting' })
-    const tab = { location: { href: '' }, close: jest.fn() }
-    jest.spyOn(window, 'open').mockReturnValue(tab as unknown as Window)
+    jest.spyOn(window, 'open').mockReturnValue(null)
     const onStarted = jest.fn()
-    render(<GooglePhotosPick entry={entry} inFlight={false} onStarted={onStarted} />)
+    const onOpeningChange = jest.fn()
+    render(<GooglePhotosPick entry={entry} inFlight={false} onStarted={onStarted} onOpeningChange={onOpeningChange} />)
     fireEvent.click(await screen.findByRole('button', { name: /Search Google Photos/ }))
-    await waitFor(() => expect(onStarted).toHaveBeenCalledTimes(1))
-    expect(tab.location.href).toBe('https://photos.google.com/picker/abc/autoclose')
+    expect(onStarted).toHaveBeenCalledTimes(1)
+    expect(onOpeningChange).toHaveBeenLastCalledWith(true)
+    expect(screen.getByText('Opening Google Photos in a new tab…')).toBeInTheDocument()
+    const link = screen.getByRole('link', { name: 'Open Google Photos' })
+    expect(link).toHaveAttribute('href', '/google-photos/open?entry=e1')
+    expect(link).toHaveAttribute('target', '_blank')
+    expect(link.getAttribute('rel')).toContain('noopener')
+    expect(screen.queryByRole('button', { name: /Search Google Photos/ })).not.toBeInTheDocument()
   })
 
-  it('two quick taps give one tab and one import', async () => {
+  it('two quick taps open one tab', async () => {
     list.mockResolvedValue(connected)
-    create.mockReturnValue(new Promise(() => {}))
-    const open = jest.spyOn(window, 'open').mockReturnValue({ location: { href: '' }, close: jest.fn() } as unknown as Window)
+    const open = jest.spyOn(window, 'open').mockReturnValue(null)
     render(<GooglePhotosPick entry={entry} inFlight={false} onStarted={jest.fn()} />)
     const btn = await screen.findByRole('button', { name: /Search Google Photos/ })
     fireEvent.click(btn)
     fireEvent.click(btn)
     expect(open).toHaveBeenCalledTimes(1)
-    expect(create).toHaveBeenCalledTimes(1)
-    expect(btn).toBeDisabled()
+  })
+
+  it('once the page sees the import, it shows progress instead', async () => {
+    list.mockResolvedValue(connected)
+    jest.spyOn(window, 'open').mockReturnValue(null)
+    const onOpeningChange = jest.fn()
+    const { rerender } = render(<GooglePhotosPick entry={entry} inFlight={false} onStarted={jest.fn()} onOpeningChange={onOpeningChange} />)
+    fireEvent.click(await screen.findByRole('button', { name: /Search Google Photos/ }))
+    rerender(<GooglePhotosPick entry={entry} inFlight onStarted={jest.fn()} onOpeningChange={onOpeningChange} />)
+    expect(await screen.findByText('Google Photos is open. Finish your pick there.')).toBeInTheDocument()
+    expect(onOpeningChange).toHaveBeenLastCalledWith(false)
+  })
+
+  it('after a minute with no import it offers the button again', async () => {
+    list.mockResolvedValue(connected)
+    jest.spyOn(window, 'open').mockReturnValue(null)
+    const onOpeningChange = jest.fn()
+    render(<GooglePhotosPick entry={entry} inFlight={false} onStarted={jest.fn()} onOpeningChange={onOpeningChange} />)
+    const btn = await screen.findByRole('button', { name: /Search Google Photos/ })
+    jest.useFakeTimers()
+    fireEvent.click(btn)
+    act(() => { jest.advanceTimersByTime(59_000) })
+    expect(screen.getByText('Opening Google Photos in a new tab…')).toBeInTheDocument()
+    act(() => { jest.advanceTimersByTime(1_000) })
+    expect(screen.getByRole('button', { name: /Search Google Photos/ })).toBeEnabled()
+    expect(screen.getByText("Didn't see Google Photos open? Try again.")).toBeInTheDocument()
+    expect(onOpeningChange).toHaveBeenLastCalledWith(false)
+    jest.useRealTimers()
   })
 
   it('while an import is in flight it shows progress, not Search', async () => {
@@ -108,31 +125,6 @@ describe('GooglePhotosPick', () => {
     render(<GooglePhotosPick entry={entry} inFlight onStarted={jest.fn()} />)
     expect(await screen.findByText('Google Photos is open. Finish your pick there.')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Search Google Photos/ })).not.toBeInTheDocument()
-  })
-
-  it('blocked tab shows a link to open Google Photos', async () => {
-    list.mockResolvedValue(connected)
-    create.mockResolvedValue({ id: 'i1', picker_uri: 'https://photos.google.com/picker/abc', status: 'waiting' })
-    jest.spyOn(window, 'open').mockReturnValue(null)
-    const onStarted = jest.fn()
-    const { rerender } = render(<GooglePhotosPick entry={entry} inFlight={false} onStarted={onStarted} />)
-    fireEvent.click(await screen.findByRole('button', { name: /Search Google Photos/ }))
-    await waitFor(() => expect(onStarted).toHaveBeenCalled())
-    rerender(<GooglePhotosPick entry={entry} inFlight onStarted={onStarted} />) // the page now sees the import
-    const link = await screen.findByRole('link', { name: 'Open Google Photos' })
-    expect(link).toHaveAttribute('href', 'https://photos.google.com/picker/abc/autoclose')
-    expect(link).toHaveAttribute('target', '_blank')
-  })
-
-  it('a failed start closes the blank tab and explains', async () => {
-    list.mockResolvedValue(connected)
-    create.mockRejectedValue(new ApiError(503, 'queue_unavailable', 'queue_unavailable'))
-    const tab = { location: { href: '' }, close: jest.fn() }
-    jest.spyOn(window, 'open').mockReturnValue(tab as unknown as Window)
-    render(<GooglePhotosPick entry={entry} inFlight={false} onStarted={jest.fn()} />)
-    fireEvent.click(await screen.findByRole('button', { name: /Search Google Photos/ }))
-    expect(await screen.findByText("Google Photos isn't responding. Try again in a minute.")).toBeInTheDocument()
-    expect(tab.close).toHaveBeenCalled()
   })
 
   it('a failed connection check says so and offers Try again, not Connect', async () => {
@@ -143,25 +135,6 @@ describe('GooglePhotosPick', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
     expect(await screen.findByRole('button', { name: /Search Google Photos/ })).toBeInTheDocument()
     expect(list).toHaveBeenCalledTimes(2)
-  })
-
-  it('the picker tab loses its opener before it navigates', async () => {
-    list.mockResolvedValue(connected)
-    create.mockResolvedValue({ id: 'i1', picker_uri: 'https://p', status: 'waiting' })
-    const order: string[] = []
-    const tab: { close: jest.Mock; opener: unknown; location: { href: string } } = {
-      close: jest.fn(),
-      opener: {},
-      location: {
-        set href(_v: string) { order.push(`location:${String(tab.opener)}`) },
-      } as { href: string },
-    }
-    jest.spyOn(window, 'open').mockReturnValue(tab as unknown as Window)
-    render(<GooglePhotosPick entry={entry} inFlight={false} onStarted={jest.fn()} />)
-    fireEvent.click(await screen.findByRole('button', { name: /Search Google Photos/ }))
-    await waitFor(() => expect(order.length).toBe(1))
-    expect(tab.opener).toBeNull()
-    expect(order[0]).toBe('location:null')
   })
 
   it('shows the waiting line only while waiting, and its own line while copying', async () => {
