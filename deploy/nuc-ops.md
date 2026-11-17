@@ -396,6 +396,19 @@ It goes back exactly one deploy: it checks out the commit in `previous-deployed-
 
 **Rolling back across the hostname change (P-9) does not work:** the code before it only knew the old hostnames. For that deploy the plan is to fix forward.
 
+**Rolling back past the AI-working indicator (row 38, migration 0019) drops queued drafts:** the older worker rejects the new `job_id` argument, and the message is lost. No downgrade is needed, because 0019 only adds a table. If you can wait, let the queue drain first: this count should reach 0 (coalesced redrafts drain within about 10 minutes).
+
+```bash
+echo 'SELECT count(*) FROM ai_draft_jobs;' | docker exec -i perfect-day-postgres-1 sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+```
+
+After rolling back, the older code never touches the table, so what is left in it lists the drafts that were lost. Regenerate those entries, then empty the table:
+
+```bash
+echo 'SELECT DISTINCT entry_id FROM ai_draft_jobs;' | docker exec -i perfect-day-postgres-1 sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+echo 'DELETE FROM ai_draft_jobs;' | docker exec -i perfect-day-postgres-1 sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+```
+
 If rollback also fails, fall back to [B3.5 — Full reinstall](#b35--full-reinstall-when-incremental-cleanup-is-not-working) and restore the latest backup.
 
 ---
