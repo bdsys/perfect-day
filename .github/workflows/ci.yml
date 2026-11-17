@@ -153,6 +153,10 @@ jobs:
         working-directory: apps/web
         run: npx tsc --noEmit
 
+      - name: Unit tests (Jest)
+        working-directory: apps/web
+        run: npx jest --ci
+
       - name: Build
         working-directory: apps/web
         env:
