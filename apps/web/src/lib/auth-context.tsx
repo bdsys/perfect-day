@@ -1,6 +1,7 @@
 'use client'
 
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
+import RestoreAccountScreen from '@/components/RestoreAccountScreen'
 import { api, refreshAccessToken, setAccessToken, setPendingDeletionHandler, type UserProfile } from '@/lib/api'
 
 interface AuthState {
@@ -158,7 +159,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         restore,
       }}
     >
-      {children}
+      {pendingDeletion ? <RestoreAccountScreen /> : children}
     </AuthContext.Provider>
   )
 }

@@ -12,6 +12,17 @@ jest.mock("@/lib/api", () => ({
   setPendingDeletionHandler: jest.fn(),
 }));
 
+// The real screen replaces children while pending; stand in for it and keep ctx current.
+const mockCapture: { fn: (c: unknown) => void } = { fn: () => {} };
+jest.mock("@/components/RestoreAccountScreen", () => ({
+  __esModule: true,
+  default: function MockScreen() {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    mockCapture.fn(require("../auth-context").useAuth());
+    return null;
+  },
+}));
+
 const me = api.auth.me as jest.Mock;
 const avatar = api.auth.avatar as jest.Mock;
 const restoreAccount = api.auth.restoreAccount as jest.Mock;
@@ -30,6 +41,9 @@ const profile = (over: Record<string, unknown> = {}) => ({
 });
 
 let ctx: ReturnType<typeof useAuth>;
+mockCapture.fn = (c) => {
+  ctx = c as ReturnType<typeof useAuth>;
+};
 function Probe() {
   ctx = useAuth();
   return null;
