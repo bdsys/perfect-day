@@ -158,7 +158,7 @@ Cross-diary photo check: the `photos` row and MinIO objects are deleted only whe
 - Dedicated app service account. No public buckets.
 - Non-guessable object keys: `{user_id}/{uuid}.enc`.
 - No client-side read access. All reads proxied through the API.
-- Planned, not built: uploads go to `perfectday-media.andrewlass.com` via signed PUT URLs, with the edge proxy restricting it to PUT only. Today the API reads uploads itself (see `03-api-surface.md`, S-7), and Caddy has no media route; P-10 decides.
+- Uploads go through the API, which reads the body itself (`03-api-surface.md`, S-7); there are no signed PUT URLs. `perfectday-media.andrewlass.com` has a DNS record but no route. (The earlier plan, signed PUTs to a PUT-only media host, was dropped with S-7.)
 
 ## Backup
 

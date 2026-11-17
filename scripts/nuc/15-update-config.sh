@@ -66,8 +66,13 @@ STAMP="${STAMP}" CF_TOKEN="${CF_TOKEN}" CF_ZONE="${CF_ZONE}" DDNS_PROMPT="${DDNS
 python3 -I - "${APP_ENV}" "${DDNS_CONFIG}" "${GOOGLE_CLIENT}" <<'PY'
 import json, os, re, shutil, sys
 
-# A Cloudflare API token is 40 characters today; accept 32+ of its alphabet.
+# A Cloudflare API token: 40 characters (older), or cfut_/cfat_ + 40 + checksum (since
+# 2026: https://developers.cloudflare.com/fundamentals/api/get-started/token-formats/).
+# cfk_ is the Global API Key, which the updater cannot use as a token.
 TOKEN_RE = re.compile(r"[A-Za-z0-9_-]{32,}")
+GLOBAL_KEY_MSG = ("ERROR: that is the Global API Key (it starts with cfk_), not an API token. "
+                  "Create a token instead: My Profile -> API Tokens -> Create Token -> "
+                  "'Edit zone DNS' for andrewlass.com (it starts with cfut_). Nothing changed.")
 ZONE_RE = re.compile(r"[0-9a-f]{32}")
 
 app_env, ddns_config, google_client = sys.argv[1:4]
@@ -78,6 +83,8 @@ redirect = f"https://{api}/v1/integrations/google/callback"
 typed = os.environ.get("DDNS_PROMPT") == "1"
 if typed:
     token, zone = os.environ["CF_TOKEN"].strip(), os.environ["CF_ZONE"].strip()
+    if token.startswith("cfk_"):
+        sys.exit(GLOBAL_KEY_MSG)
     if not TOKEN_RE.fullmatch(token):
         sys.exit("ERROR: that is not a Cloudflare API token (expected 40 letters, digits, - or _). Nothing changed.")
     if not ZONE_RE.fullmatch(zone):
@@ -172,6 +179,8 @@ if not typed and os.path.exists(ddns_config):
         # Exit non-zero so nobody restarts an updater that cannot work.
         sys.exit(f"ERROR: {ddns_config}: no API token or zone ID found; left unchanged. "
                  "app.env WAS updated. Enter them with --ddns-credentials.")
+    if token.startswith("cfk_"):
+        sys.exit(f"{ddns_config}: " + GLOBAL_KEY_MSG.replace("Nothing changed.", "app.env WAS updated; the DDNS file was left unchanged. Enter a token with --ddns-credentials."))
     if not TOKEN_RE.fullmatch(token) or not ZONE_RE.fullmatch(zone):
         sys.exit(f"ERROR: {ddns_config}: the stored token or zone ID is not a Cloudflare "
                  "value (a placeholder?); left unchanged. app.env WAS updated. "
