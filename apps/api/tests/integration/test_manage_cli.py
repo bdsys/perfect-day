@@ -59,3 +59,20 @@ def test_set_tier_rejects_old_tier_name(manage, sync_engine) -> None:
     assert result.exit_code != 0
     assert "Invalid value" in result.output
     assert _tier(sync_engine, "cli-old@example.com") == "free"
+
+
+def test_database_url_comes_from_the_environment_first(manage, monkeypatch) -> None:
+    # On the NUC, admin.sh runs inside the API container, where the URL is in the
+    # environment (from app.env) and there is no apps/api/.env next to manage.py.
+    monkeypatch.setenv("DATABASE_URL_SYNC", "postgresql://u:p@postgres:5432/perfectday")
+    assert manage._load_database_url() == "postgresql://u:p@postgres:5432/perfectday"
+
+
+def test_database_url_falls_back_to_the_env_file(manage, monkeypatch, tmp_path) -> None:
+    monkeypatch.delenv("DATABASE_URL_SYNC", raising=False)
+    (tmp_path / "apps" / "api").mkdir(parents=True)
+    (tmp_path / "apps" / "api" / ".env").write_text(
+        'OTHER=1\nDATABASE_URL_SYNC="postgresql://u:p@localhost:5432/dev"\n'
+    )
+    monkeypatch.setattr(manage, "REPO_ROOT", tmp_path)
+    assert manage._load_database_url() == "postgresql://u:p@localhost:5432/dev"

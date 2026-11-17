@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # scripts/nuc/15-update-config.sh — Update an existing NUC's config in place.
 #
-# Usage: sudo ./scripts/nuc/15-update-config.sh [--google-client <client.json>]
+# Usage: sudo ./scripts/nuc/15-update-config.sh [--google-client <client.json>] [--ddns-credentials]
 #
 # Sets the public hostnames in /etc/perfect-day/app.env, and, with --google-client,
 # the Google OAuth client from the JSON file Google Cloud lets you download for a
 # Web client (it must be the "Perfect Day NUC" client: its redirect URI is checked).
 # Also rewrites /etc/perfect-day/cloudflare-ddns.config.json with the current names
-# and proxied: true, keeping its API token and zone ID.
+# and proxied: true, keeping its API token and zone ID. With --ddns-credentials it
+# asks for the Cloudflare API token (hidden) and zone ID instead, and creates the
+# file if it is missing.
 #
 # Never re-run 10-secrets.sh on a running NUC instead: it regenerates MASTER_SECRET,
 # and the photos and Google tokens already stored are encrypted with it.
@@ -29,14 +31,17 @@ if [ "$(id -u)" -ne 0 ] && [ "${PD_ALLOW_NONROOT:-}" != "1" ]; then
 fi
 
 GOOGLE_CLIENT=""
+DDNS_PROMPT=""
+USAGE="Usage: $0 [--google-client <client.json>] [--ddns-credentials]"
 while [ $# -gt 0 ]; do
     case "$1" in
+        --ddns-credentials) DDNS_PROMPT=1; shift ;;
         --google-client)
             if [ $# -lt 2 ] || [ -z "$2" ]; then
-                echo "Usage: $0 [--google-client <client.json>]" >&2; exit 2
+                echo "${USAGE}" >&2; exit 2
             fi
             GOOGLE_CLIENT="$2"; shift 2 ;;
-        *) echo "Usage: $0 [--google-client <client.json>]" >&2; exit 2 ;;
+        *) echo "${USAGE}" >&2; exit 2 ;;
     esac
 done
 
@@ -47,14 +52,36 @@ fi
 
 STAMP="$(date +%Y%m%d-%H%M%S)"
 
+CF_TOKEN=""
+CF_ZONE=""
+if [ -n "${DDNS_PROMPT}" ]; then
+    # Cloudflare dashboard: My Profile -> API Tokens (Zone.DNS:Edit on andrewlass.com),
+    # and the zone ID from the andrewlass.com Overview page.
+    read -r -s -p "Cloudflare API token (hidden): " CF_TOKEN; echo >&2
+    read -r -p "Cloudflare zone ID for andrewlass.com: " CF_ZONE
+fi
+
 WEB_HOST="${WEB_HOST}" API_HOST="${API_HOST}" DDNS_SUBDOMAINS="${DDNS_SUBDOMAINS}" \
-STAMP="${STAMP}" python3 -I - "${APP_ENV}" "${DDNS_CONFIG}" "${GOOGLE_CLIENT}" <<'PY'
+STAMP="${STAMP}" CF_TOKEN="${CF_TOKEN}" CF_ZONE="${CF_ZONE}" DDNS_PROMPT="${DDNS_PROMPT}" \
+python3 -I - "${APP_ENV}" "${DDNS_CONFIG}" "${GOOGLE_CLIENT}" <<'PY'
 import json, os, re, shutil, sys
+
+# A Cloudflare API token is 40 characters today; accept 32+ of its alphabet.
+TOKEN_RE = re.compile(r"[A-Za-z0-9_-]{32,}")
+ZONE_RE = re.compile(r"[0-9a-f]{32}")
 
 app_env, ddns_config, google_client = sys.argv[1:4]
 web, api = os.environ["WEB_HOST"], os.environ["API_HOST"]
 stamp = os.environ["STAMP"]
 redirect = f"https://{api}/v1/integrations/google/callback"
+
+typed = os.environ.get("DDNS_PROMPT") == "1"
+if typed:
+    token, zone = os.environ["CF_TOKEN"].strip(), os.environ["CF_ZONE"].strip()
+    if not TOKEN_RE.fullmatch(token):
+        sys.exit("ERROR: that is not a Cloudflare API token (expected 40 letters, digits, - or _). Nothing changed.")
+    if not ZONE_RE.fullmatch(zone):
+        sys.exit("ERROR: that is not a Cloudflare zone ID (expected 32 hex characters). Nothing changed.")
 
 values = {
     "CORS_ORIGINS": json.dumps([f"https://{web}"]),
@@ -118,10 +145,24 @@ write_like(app_env, "\n".join(lines) + "\n")
 print(f"  {app_env}: set {', '.join(values)}")
 print(f"  previous version kept at {saved}")
 
-# DDNS config. The NUC's copy was written by an old heredoc and can hold a stray
-# newline inside the token, which made the updater refuse to start; read the two
-# values leniently and write clean JSON.
-if os.path.exists(ddns_config):
+# DDNS config. The NUC's copy was written by an old heredoc and held a stray newline
+# and a placeholder ("x") where the token and zone ID belong, which kept the updater
+# from ever starting. Read the two values leniently, but only keep real ones.
+def ddns_document(token, zone):
+    return {
+        "cloudflare": [{
+            "authentication": {"api_token": token},
+            "zone_id": zone,
+            "subdomains": json.loads(os.environ["DDNS_SUBDOMAINS"]),
+            "proxied": True,
+        }],
+        "a": True,
+        "aaaa": False,
+        "purgeUnknownRecords": False,
+        "ttl": 300,
+    }
+
+if not typed and os.path.exists(ddns_config):
     raw = open(ddns_config).read()
     def grab(name):
         m = re.search(r'"%s"\s*:\s*"([^"]*)"' % name, raw)
@@ -130,26 +171,30 @@ if os.path.exists(ddns_config):
     if not token or not zone:
         # Exit non-zero so nobody restarts an updater that cannot work.
         sys.exit(f"ERROR: {ddns_config}: no API token or zone ID found; left unchanged. "
-                 "app.env WAS updated. Fix the DDNS file by hand (deploy/cloudflare.md § 2.2).")
-    else:
-        config = {
-            "cloudflare": [{
-                "authentication": {"api_token": token},
-                "zone_id": zone,
-                "subdomains": json.loads(os.environ["DDNS_SUBDOMAINS"]),
-                "proxied": True,
-            }],
-            "a": True,
-            "aaaa": False,
-            "purgeUnknownRecords": False,
-            "ttl": 300,
-        }
+                 "app.env WAS updated. Enter them with --ddns-credentials.")
+    if not TOKEN_RE.fullmatch(token) or not ZONE_RE.fullmatch(zone):
+        sys.exit(f"ERROR: {ddns_config}: the stored token or zone ID is not a Cloudflare "
+                 "value (a placeholder?); left unchanged. app.env WAS updated. "
+                 "Enter them with --ddns-credentials.")
+
+if typed or os.path.exists(ddns_config):
+    config = ddns_document(token, zone)
+    if os.path.exists(ddns_config):
         saved = backup(ddns_config)
         write_like(ddns_config, json.dumps(config, indent=2) + "\n")
-        print(f"  {ddns_config}: names {', '.join(config['cloudflare'][0]['subdomains'])}, proxied: true")
         print(f"  previous version kept at {saved}")
+    else:
+        fd = os.open(ddns_config, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w") as fh:
+            fh.write(json.dumps(config, indent=2) + "\n")
+        try:
+            import grp
+            os.chown(ddns_config, 0, grp.getgrnam("docker").gr_gid)
+        except (KeyError, PermissionError):
+            pass
+    print(f"  {ddns_config}: names {', '.join(config['cloudflare'][0]['subdomains'])}, proxied: true")
 else:
-    print(f"  {ddns_config}: not present; DDNS not configured")
+    print(f"  {ddns_config}: not present; DDNS not configured (add it with --ddns-credentials)")
 PY
 
 echo "Done. Apply with: sudo ./scripts/nuc/40-update.sh"

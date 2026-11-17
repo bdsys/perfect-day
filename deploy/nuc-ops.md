@@ -337,7 +337,8 @@ sudo ./scripts/nuc/40-update.sh      # the web build bakes in the API URL and cl
 The script:
 1. Sets `CORS_ORIGINS`, `GOOGLE_REDIRECT_URI` and `NEXT_PUBLIC_API_URL` to the current hostnames.
 2. With `--google-client`, sets `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` and `NEXT_PUBLIC_GOOGLE_CLIENT_ID` from the file. It refuses a file whose redirect URI or JavaScript origin is not the NUC's, and changes nothing.
-3. Rewrites `cloudflare-ddns.config.json` with the three current names and `proxied: true`, keeping the API token and zone ID (and dropping stray control characters, which stopped the updater on 2026-09).
+3. Rewrites `cloudflare-ddns.config.json` with the three current names and `proxied: true`, keeping the API token and zone ID (and dropping stray control characters). It refuses to keep a value that is not a real Cloudflare token (40 characters) or zone ID (32 hex characters). On 2026-11-16 the NUC's file held only placeholders (`x`), so the updater had never run.
+   - **To enter the token and zone ID**, run it interactively: `sudo ./scripts/nuc/15-update-config.sh --ddns-credentials`. It asks for the token (hidden) and the zone ID, checks both, and creates the file if it is missing. The token is the `Zone.DNS:Edit` token for `andrewlass.com` ([`deploy/cloudflare.md`](cloudflare.md) § 2.1); the zone ID is on the zone's Overview page.
 4. Copies each file it changes to `<file>.bak-<timestamp>` first, and never prints a secret.
 
 Tests: `bash scripts/nuc/tests/update-config.test.sh` (not in CI).
