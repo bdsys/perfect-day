@@ -458,6 +458,17 @@ describe('diary page: AI status', () => {
     expect(api.entries.aiStatus).not.toHaveBeenCalled()
   })
 
+  it('stops polling once nothing is pending any more', async () => {
+    ;(api.entries.list as jest.Mock).mockResolvedValue([entry('e1', { ai_status: 'queued' })])
+    ;(api.entries.aiStatus as jest.Mock).mockResolvedValue({})
+    ;(api.entries.get as jest.Mock).mockResolvedValue(entry('e1', { title: 'Done' }))
+    render(<DiaryDetailPage />)
+    expect(await screen.findByText('Done')).toBeInTheDocument()
+    await tick()
+    await tick()
+    expect(api.entries.aiStatus).toHaveBeenCalledTimes(1)
+  })
+
   it('stops polling after repeated failures', async () => {
     ;(api.entries.list as jest.Mock).mockResolvedValue([entry('e1', { ai_status: 'queued' })])
     ;(api.entries.aiStatus as jest.Mock).mockRejectedValue(new Error('down'))
