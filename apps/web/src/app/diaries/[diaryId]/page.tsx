@@ -6,6 +6,7 @@ import { useParams, useRouter } from 'next/navigation'
 import { api, type Diary, type Entry, type Integration, type ScanRun, type ScanConfig, type BackfillRun } from '@/lib/api'
 import { useAuth } from '@/lib/auth-context'
 import { StatusPanel } from '@/components/StatusPanel'
+import { AiStatusBadge } from '@/components/AiStatusBadge'
 import { usePolling } from '@/lib/usePolling'
 import { formatDateRange } from '@/lib/date'
 import { navigateTo } from '@/lib/navigate'
@@ -16,6 +17,8 @@ import { BACKFILL_LIMIT_NOTE, formatResetDate, limitMessage, readOnlyBanner } fr
 
 // Must match the API's default page size for GET /v1/diaries/{id}/entries.
 const ENTRIES_PAGE_SIZE = 20
+const MAX_POLL_FAILURES = 5
+const AI_STATUS_POLL_MS = 3000
 
 function EntryCard({ entry }: { entry: Entry }) {
   const preview = entry.body_markdown?.slice(0, 120) ?? ''
@@ -34,6 +37,7 @@ function EntryCard({ entry }: { entry: Entry }) {
         )}
         <div style={{ marginTop: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
           <span className={`status-badge status-${entry.status}`}>{entry.status}</span>
+          <AiStatusBadge status={entry.ai_status ?? null} />
           {entry.events && entry.events.length > 0 && (
             <span style={{ fontSize: '0.75rem', color: '#888' }}>• {entry.events.length} event{entry.events.length !== 1 ? 's' : ''}</span>
           )}
@@ -88,9 +92,12 @@ export default function DiaryDetailPage() {
   const [newEntryTitle, setNewEntryTitle] = useState('')
   const [newEntryError, setNewEntryError] = useState('')
   const pollFailuresRef = useRef(0)
+  const [aiFailures, setAiFailures] = useState(0)
+  const aiInFlightRef = useRef(false)
+  const entriesRef = useRef<Entry[]>([])
+  entriesRef.current = entries
   const connectingRef = useRef(false)
   const [connecting, setConnecting] = useState(false)
-  const MAX_POLL_FAILURES = 5
 
   useEffect(() => {
     if (!authLoading && !user) router.replace('/login')
@@ -271,6 +278,32 @@ export default function DiaryDetailPage() {
   }, [diaryId, latestBackfillRun, statusFilter])
 
   usePolling(pollBackfill, 3000, pollingBackfill)
+
+  // Entries whose AI draft is queued or being written: poll until they finish.
+  const aiPending = entries.some((e) => e.ai_status)
+  const pollAiStatus = useCallback(async () => {
+    if (aiInFlightRef.current) return
+    aiInFlightRef.current = true
+    try {
+      const pending = await api.entries.aiStatus(diaryId)
+      const finished = entriesRef.current.filter((e) => e.ai_status && !pending[e.id])
+      const fresh = await Promise.all(finished.map((e) => api.entries.get(e.id)))
+      const replacements = new Map(fresh.map((e) => [e.id, e]))
+      setEntries((current) =>
+        current.map((e) => {
+          if (replacements.has(e.id)) return replacements.get(e.id)!
+          return e.ai_status && pending[e.id] ? { ...e, ai_status: pending[e.id] } : e
+        }),
+      )
+      setAiFailures(0)
+    } catch {
+      setAiFailures((n) => n + 1)
+    } finally {
+      aiInFlightRef.current = false
+    }
+  }, [diaryId])
+
+  usePolling(pollAiStatus, AI_STATUS_POLL_MS, aiPending && aiFailures < MAX_POLL_FAILURES)
 
   useEffect(() => {
     if (!pollingBackfill) return

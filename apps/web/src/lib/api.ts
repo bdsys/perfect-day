@@ -314,6 +314,9 @@ export interface Suggestion {
   created_at: string
 }
 
+/** Why an entry's AI draft is not ready yet: waiting in the queue, or being written. */
+export type AiStatus = 'queued' | 'writing'
+
 export interface Entry {
   id: string
   diary_id: string
@@ -336,6 +339,8 @@ export interface Entry {
   photos: Photo[]
   enrichments: Enrichment[]
   suggestion: Suggestion | null
+  /** Set while an AI draft for this entry is queued or being written */
+  ai_status: AiStatus | null
   location: EntryLocation | null
   /** IANA time zone for this entry's event times and date; null = the diary's */
   tz_override: string | null
@@ -587,6 +592,11 @@ export const api = {
       },
     ): Promise<Entry> {
       return apiFetch(`/v1/diaries/${diaryId}/entries`, { method: 'POST', body: JSON.stringify(data) })
+    },
+    /** Pending AI drafts of a diary, by entry id; a finished entry is absent. */
+    async aiStatus(diaryId: string): Promise<Record<string, AiStatus>> {
+      const r = await apiFetch<{ entries: Record<string, AiStatus> }>(`/v1/diaries/${diaryId}/entries/ai-status`)
+      return r.entries
     },
     async get(id: string): Promise<Entry> {
       return apiFetch(`/v1/entries/${id}`)
