@@ -113,7 +113,7 @@ make web         # Next.js dev server on :3000
 make test-all
 ```
 
-Chains lint → typecheck → unit+integration tests → end-to-end (Playwright), fail-fast, in about 10 minutes total. This is the recommended command to run after any non-trivial change. It does **not** include `make test-live` (calls the real Anthropic API — see below) or `make test-smoke` (requires a running stack).
+Chains lint → typecheck → API unit+integration tests → web unit tests (Jest, also `make test-web`) → end-to-end (Playwright), fail-fast, in about 11 minutes total. This is the recommended command to run after any non-trivial change. It does **not** include `make test-live` (calls the real Anthropic API — see below) or `make test-smoke` (requires a running stack).
 
 What it does and doesn't touch:
 

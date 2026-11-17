@@ -1,5 +1,5 @@
 .PHONY: up down infra api worker beat web migrate lint typecheck \
-        test test-fast test-all test-e2e test-live test-smoke test-coverage \
+        test test-web test-fast test-all test-e2e test-live test-smoke test-coverage \
         web-e2e-install seed-bucket bootstrap lock lock-upgrade
 
 API_DIR  := apps/api
@@ -107,7 +107,11 @@ test-fast:
 test:
 	cd $(API_DIR) && $(CURDIR)/$(PYTEST) tests/unit tests/integration -q
 
-# Run lint → typecheck → unit+integration → e2e in fail-fast order (~10 min).
+# Web unit tests (Jest). Part of test-all and of CI's Web build job.
+test-web:
+	cd $(WEB_DIR) && npx jest --ci
+
+# Run lint → typecheck → API unit+integration → web unit → e2e in fail-fast order (~11 min).
 # Excludes test-live (real API cost) and smoke-test.sh (needs a running stack).
 test-all:
 	@echo "TIP: First time on Linux/WSL? See the 'Linux / WSL one-time setup' section in README.md."
@@ -115,6 +119,7 @@ test-all:
 	@$(MAKE) lint
 	@$(MAKE) typecheck
 	@$(MAKE) test
+	@$(MAKE) test-web
 	@$(MAKE) test-e2e
 	@echo ""
 	@echo "All checks passed."
