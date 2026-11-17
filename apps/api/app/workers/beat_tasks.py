@@ -127,10 +127,16 @@ async def _release_lost_ai_drafts() -> int:
 
     async with db_session() as db:
         released = await sweep(db)
-        stale_jobs = await sweep_stale_jobs(db)
+    # Own session, after the spend release: the indicator is best-effort and
+    # must never undo the quota release above.
+    try:
+        async with db_session() as db:
+            stale_jobs = await sweep_stale_jobs(db)
         if stale_jobs:
             log.info("ai_draft_jobs_swept", count=stale_jobs)
-        return released
+    except Exception:
+        log.warning("ai_draft_jobs_sweep_failed", exc_info=True)
+    return released
 
 
 @celery_app.task(name="app.workers.beat_tasks.sweep_orphaned_photos")

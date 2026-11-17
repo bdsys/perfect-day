@@ -11,7 +11,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import AiDraftJob, Entry
+from app.models import AiDraftJob, AiDraftSpend, Entry
 from app.services.ai_draft_jobs import add_job, ai_statuses
 from tests.fixtures.factories import make_diary, make_entry, make_user
 
@@ -173,3 +173,33 @@ class TestBeatSweep:
 
         await beat_tasks._release_lost_ai_drafts()
         assert await _jobs(db_session, e.id) == []
+
+
+class TestBeatSweepFailure:
+    async def test_beat_sweep_failure_keeps_quota_release(self, db_session):
+        from app.workers import beat_tasks
+
+        owner = await make_user(db_session)
+        diary = await make_diary(db_session, owner)
+        e = await make_entry(db_session, diary)
+        db_session.add(
+            AiDraftSpend(
+                user_id=owner.id,
+                entry_id=e.id,
+                month="2026-11",
+                key="lost-1",
+                sweepable=True,
+                created_at=datetime.now(UTC) - timedelta(minutes=31),
+            )
+        )
+        await db_session.commit()
+
+        with patch(
+            "app.services.ai_draft_jobs.sweep_stale_jobs",
+            AsyncMock(side_effect=RuntimeError("db")),
+        ):
+            released = await beat_tasks._release_lost_ai_drafts()
+
+        assert released == 1
+        keys = (await db_session.execute(select(AiDraftSpend.key))).scalars().all()
+        assert "lost-1" not in keys
