@@ -67,6 +67,34 @@ echo "--- Health ---"
 _check "GET /healthz" 200 "$(_http "${BASE}/healthz")"
 _check "GET /readyz"  200 "$(_http "${BASE}/readyz")"
 
+# ---- Cleanup: on exit, delete every smoke-test account ----
+# Runs however the script ends, so a run that fails halfway still cleans up, and it
+# also removes accounts an earlier failed run left behind. It needs the database
+# behind BASE: a localhost BASE uses the local one; on the NUC, 40-update.sh sets
+# SMOKE_CLEANUP=1. Anywhere else it is skipped. A failed cleanup only warns: it
+# never fails the smoke test (and so never prompts a rollback).
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+_cleanup() {
+  local status=$?
+  echo ""
+  echo "--- Cleanup ---"
+  if [[ "${BASE}" == *"localhost"* || "${BASE}" == *"127.0.0.1"* || "${SMOKE_CLEANUP:-}" == "1" ]]; then
+    local out
+    if out=$("${REPO_ROOT}/scripts/admin.sh" users purge-smoke 2>&1); then
+      echo "  ✓ ${out##*$'\n'}"
+    else
+      echo "  ⚠ Cleanup failed; smoke-test accounts may be left behind."
+      echo "    Retry on the machine that runs the database: ./scripts/admin.sh users purge-smoke"
+      echo "${out}" | tail -3 | sed 's/^/    /'
+    fi
+  else
+    echo "  ⚠ Cleanup skipped: no database access for ${BASE}."
+    echo "    On the NUC, run: sudo SMOKE_CLEANUP=1 ./scripts/smoke-test.sh ${BASE}"
+  fi
+  exit "${status}"
+}
+trap _cleanup EXIT
+
 # ---- Auth: register ----
 echo ""
 echo "--- Auth ---"

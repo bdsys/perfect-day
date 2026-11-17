@@ -306,10 +306,15 @@ The `age` private key for decryption lives **off-NUC** (USB key, password manage
 
 ### B8 — Validate production deployment
 
+On the NUC:
+
 ```bash
-make test-smoke BASE=https://perfectday-api.andrewlass.com
-# Expect: 16 PASS lines
+cd /opt/perfect-day
+sudo SMOKE_CLEANUP=1 ./scripts/smoke-test.sh https://perfectday-api.andrewlass.com
+# Expect: 17 passed, 0 failed, then "Deleted N smoke-test user(s)"
 ```
+
+`SMOKE_CLEANUP=1` lets the smoke test delete its accounts (and any an earlier failed run left) through the admin CLI. Run from anywhere else, the test still passes or fails the same way but skips the cleanup.
 
 Then manually walk through the app at `https://perfectday.andrewlass.com`:
 - Register with email+password
@@ -376,7 +381,7 @@ The script:
 5. `alembic upgrade head` for migrations
 6. Restarts the app services; recreates `edge` and `cloudflare-ddns` so they reread their mounted files
 7. Polls `/readyz` for up to 90s; on failure tells you to run `50-rollback.sh`
-8. Records the new SHA in `/opt/perfect-day/last-deployed-sha`, then runs `./scripts/smoke-test.sh` against the public API (it registers a throwaway user each time)
+8. Records the new SHA in `/opt/perfect-day/last-deployed-sha`, then runs `./scripts/smoke-test.sh` against the public API with `SMOKE_CLEANUP=1` (it registers two throwaway users and deletes every smoke-test user when it ends; a failed cleanup only warns)
 
 Update logs land in `/var/log/perfect-day/update-<timestamp>.log`.
 
