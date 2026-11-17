@@ -254,9 +254,89 @@ end
   ([FortiOS 7.2.10](https://docs.fortinet.com/document/fortigate/7.2.10/administration-guide/713497/virtual-server-load-balance)).
   Flow is the default and `show` does not print it, so a missing `inspection-mode` line means
   flow-based.
-- **Open item: restrict `srcaddr` to Cloudflare.** Make an address group from
-  <https://www.cloudflare.com/ips-v4> and use it instead of `all`, so only Cloudflare's edge can
-  reach the origin.
+- **Open item: restrict `srcaddr` to Cloudflare** (backlog row 40). Until it's done, anyone who
+  knows the WAN IP can reach the origin directly; `dev.api.blacknight.bdsys.net` publishes it.
+  The commands, from Cloudflare's list as of 2026-11-16 (<https://www.cloudflare.com/ips-v4>,
+  15 ranges; regenerate them if the list changes):
+
+  ```
+  config firewall address
+      edit "cf-173-245-48-0-20"
+          set subnet 173.245.48.0/20
+          set comment "Cloudflare IPv4 (cloudflare.com/ips-v4, 2026-11-16)"
+      next
+      edit "cf-103-21-244-0-22"
+          set subnet 103.21.244.0/22
+          set comment "Cloudflare IPv4 (cloudflare.com/ips-v4, 2026-11-16)"
+      next
+      edit "cf-103-22-200-0-22"
+          set subnet 103.22.200.0/22
+          set comment "Cloudflare IPv4 (cloudflare.com/ips-v4, 2026-11-16)"
+      next
+      edit "cf-103-31-4-0-22"
+          set subnet 103.31.4.0/22
+          set comment "Cloudflare IPv4 (cloudflare.com/ips-v4, 2026-11-16)"
+      next
+      edit "cf-141-101-64-0-18"
+          set subnet 141.101.64.0/18
+          set comment "Cloudflare IPv4 (cloudflare.com/ips-v4, 2026-11-16)"
+      next
+      edit "cf-108-162-192-0-18"
+          set subnet 108.162.192.0/18
+          set comment "Cloudflare IPv4 (cloudflare.com/ips-v4, 2026-11-16)"
+      next
+      edit "cf-190-93-240-0-20"
+          set subnet 190.93.240.0/20
+          set comment "Cloudflare IPv4 (cloudflare.com/ips-v4, 2026-11-16)"
+      next
+      edit "cf-188-114-96-0-20"
+          set subnet 188.114.96.0/20
+          set comment "Cloudflare IPv4 (cloudflare.com/ips-v4, 2026-11-16)"
+      next
+      edit "cf-197-234-240-0-22"
+          set subnet 197.234.240.0/22
+          set comment "Cloudflare IPv4 (cloudflare.com/ips-v4, 2026-11-16)"
+      next
+      edit "cf-198-41-128-0-17"
+          set subnet 198.41.128.0/17
+          set comment "Cloudflare IPv4 (cloudflare.com/ips-v4, 2026-11-16)"
+      next
+      edit "cf-162-158-0-0-15"
+          set subnet 162.158.0.0/15
+          set comment "Cloudflare IPv4 (cloudflare.com/ips-v4, 2026-11-16)"
+      next
+      edit "cf-104-16-0-0-13"
+          set subnet 104.16.0.0/13
+          set comment "Cloudflare IPv4 (cloudflare.com/ips-v4, 2026-11-16)"
+      next
+      edit "cf-104-24-0-0-14"
+          set subnet 104.24.0.0/14
+          set comment "Cloudflare IPv4 (cloudflare.com/ips-v4, 2026-11-16)"
+      next
+      edit "cf-172-64-0-0-13"
+          set subnet 172.64.0.0/13
+          set comment "Cloudflare IPv4 (cloudflare.com/ips-v4, 2026-11-16)"
+      next
+      edit "cf-131-0-72-0-22"
+          set subnet 131.0.72.0/22
+          set comment "Cloudflare IPv4 (cloudflare.com/ips-v4, 2026-11-16)"
+      next
+  end
+  config firewall addrgrp
+      edit "cloudflare-ipv4"
+          set member "cf-173-245-48-0-20" "cf-103-21-244-0-22" "cf-103-22-200-0-22" "cf-103-31-4-0-22" "cf-141-101-64-0-18" "cf-108-162-192-0-18" "cf-190-93-240-0-20" "cf-188-114-96-0-20" "cf-197-234-240-0-22" "cf-198-41-128-0-17" "cf-162-158-0-0-15" "cf-104-16-0-0-13" "cf-104-24-0-0-14" "cf-172-64-0-0-13" "cf-131-0-72-0-22"
+          set comment "Only Cloudflare may reach the origin (policy 35)"
+      next
+  end
+  config firewall policy
+      edit 35
+          set srcaddr "cloudflare-ipv4"
+      next
+  end
+  ```
+
+  Check it from off-network (a phone on cellular): `https://<WAN_IP>/` should time out, and
+  `https://perfectday.andrewlass.com` should still work.
 - **Port 80 inbound is not needed.** Cloudflare redirects HTTP to HTTPS at its edge.
 
 ---
