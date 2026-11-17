@@ -370,6 +370,46 @@ describe('entry page: AI working notice', () => {
     expect(screen.queryByText(QUEUED)).not.toBeInTheDocument()
   })
 
+  const TIMED_OUT = 'Generation is taking longer than expected — refresh the page to check'
+
+  it('a Regenerate still waiting after 60 s hands over to the AI notice, not "failed"', async () => {
+    jest.useFakeTimers()
+    let done = false
+    get.mockImplementation(async () =>
+      done
+        ? ai({ ai_status: null, body_markdown: 'The new draft', updated_at: '2026-05-16T01:00:00Z', events: [{ id: 'ev' }] as never })
+        : ai({ ai_status: 'queued', events: [{ id: 'ev' }] as never }),
+    )
+    get.mockResolvedValueOnce(ai({ ai_status: null, events: [{ id: 'ev' }] as never }))
+    ;(api.entries.regenerate as jest.Mock).mockResolvedValue(ai({ ai_status: 'queued', events: [{ id: 'ev' }] as never }))
+    render(<EntryDetailPage />)
+    await act(async () => {})
+    fireEvent.click(screen.getByRole('button', { name: /regenerate with ai/i }))
+    await act(async () => {})
+    expect(screen.getByText('Regenerating draft…')).toBeInTheDocument()
+    await act(async () => { await jest.advanceTimersByTimeAsync(60 * 1000) })
+    expect(screen.queryByText(TIMED_OUT)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Regenerating draft|Still working/)).not.toBeInTheDocument()
+    expect(screen.getByText(QUEUED)).toBeInTheDocument()
+    done = true
+    await act(async () => { await jest.advanceTimersByTimeAsync(3000) })
+    expect(screen.getByText('The new draft')).toBeInTheDocument()
+    expect(screen.queryByTestId('ai-notice')).not.toBeInTheDocument()
+  })
+
+  it('a Regenerate with nothing pending after 60 s still says it is taking longer', async () => {
+    jest.useFakeTimers()
+    get.mockResolvedValue(ai({ ai_status: null, events: [{ id: 'ev' }] as never }))
+    ;(api.entries.regenerate as jest.Mock).mockResolvedValue(ai({ ai_status: 'queued', events: [{ id: 'ev' }] as never }))
+    render(<EntryDetailPage />)
+    await act(async () => {})
+    fireEvent.click(screen.getByRole('button', { name: /regenerate with ai/i }))
+    await act(async () => {})
+    await act(async () => { await jest.advanceTimersByTimeAsync(60 * 1000) })
+    expect(screen.getByText(TIMED_OUT)).toBeInTheDocument()
+    expect(screen.queryByTestId('ai-notice')).not.toBeInTheDocument()
+  })
+
   const WARN = 'The AI draft arrived while you were editing. Save to keep your text instead, or Cancel to read the AI draft.'
 
   it('warns when the AI draft lands mid-edit', async () => {

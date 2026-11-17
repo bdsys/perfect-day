@@ -98,6 +98,8 @@ function EntryDetailPageInner() {
   const [serverEntry, setServerEntry] = useState<Entry | null>(null)
   const editingRef = useRef(false)
   editingRef.current = editing
+  const entryRef = useRef<Entry | null>(null)
+  entryRef.current = entry
   const [answeringSuggestion, setAnsweringSuggestion] = useState(false)
 
   const [noticeKey, setNoticeKey] = useState(0)
@@ -228,7 +230,9 @@ function EntryDetailPageInner() {
       setRegenResult(null)
       setRegenSlow(false)
       setRegenErrorMessage(null)
-      await api.entries.regenerate(entry.id)
+      const queued = await api.entries.regenerate(entry.id)
+      // The response says whether the draft is queued; the timeout below reads it.
+      setEntry((current) => (current ? { ...current, ai_status: queued.ai_status ?? null } : current))
       setPollingRegen(true)
       setError('')
     } catch (e: unknown) {
@@ -264,6 +268,13 @@ function EntryDetailPageInner() {
           // No last_generation: fall back to old success behavior
           setRegenResult('success')
         }
+      } else {
+        // Keep the AI status fresh, so the timeout knows whether a draft is still coming.
+        setEntry((current) =>
+          current && current.ai_status !== updated.ai_status
+            ? { ...current, ai_status: updated.ai_status ?? null }
+            : current,
+        )
       }
     } catch {
     }
@@ -301,7 +312,14 @@ function EntryDetailPageInner() {
     const failTimer = setTimeout(() => {
       setPollingRegen(false)
       setRegenSlow(false)
-      setRegenResult('failed')
+      if (entryRef.current?.ai_status) {
+        // Still queued or being written: end the panel and let the AI notice
+        // and its polling show the draft when it lands.
+        setRegenResult(null)
+        setRegenStartTime(null)
+      } else {
+        setRegenResult('failed')
+      }
     }, 60 * 1000)
     return () => {
       clearTimeout(slowTimer)
