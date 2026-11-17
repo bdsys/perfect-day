@@ -20,6 +20,14 @@ function iconErrorMessage(e: unknown): string {
   return ICON_ERROR
 }
 
+/** Plain-words list of the Google access granted; unknown scopes are not shown. */
+function accessSummary(g: Integration): string {
+  const names: string[] = []
+  if (g.scopes_granted.some((s) => s.endsWith('calendar.readonly'))) names.push('Calendar')
+  if (g.photos || g.scopes_granted.some((s) => s.endsWith('photospicker.mediaitems.readonly'))) names.push('Google Photos')
+  return `Access: ${names.length ? names.join(', ') : 'none yet'}`
+}
+
 export default function ProfilePage() {
   const { user, loading: authLoading, avatarUrl, refreshUser, logout } = useAuth()
   const router = useRouter()
@@ -267,6 +275,7 @@ export default function ProfilePage() {
               {google ? (
                 <>
                   <span>Connected{google.google_email ? ` as ${google.google_email}` : ''}</span>
+                  <span>{accessSummary(google)}</span>
                   <button type="button" className="btn btn-secondary" disabled={busy === 'google'} onClick={disconnectGoogle}>
                     Disconnect Google
                   </button>

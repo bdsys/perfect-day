@@ -154,6 +154,31 @@ describe('ProfilePage', () => {
     expect(navigateTo).toHaveBeenCalledWith('https://google.example/auth')
   })
 
+  it('shows the granted access in plain words', async () => {
+    a.integrations.list.mockResolvedValue([
+      { provider: 'google', revoked: false, google_email: 'g@x.com', scopes_granted: ['calendar.readonly', 'photospicker.mediaitems.readonly'], photos: true },
+    ])
+    await renderPage()
+    expect(await screen.findByText('Access: Calendar, Google Photos')).toBeInTheDocument()
+  })
+
+  it('shows Calendar only when photos are not granted', async () => {
+    a.integrations.list.mockResolvedValue([
+      { provider: 'google', revoked: false, google_email: 'g@x.com', scopes_granted: ['calendar.readonly', 'mystery'], photos: false },
+    ])
+    await renderPage()
+    expect(await screen.findByText('Access: Calendar')).toBeInTheDocument()
+    expect(screen.queryByText(/Google Photos|mystery/)).not.toBeInTheDocument()
+  })
+
+  it('says none yet when no known access is granted', async () => {
+    a.integrations.list.mockResolvedValue([
+      { provider: 'google', revoked: false, google_email: 'g@x.com', scopes_granted: [], photos: false },
+    ])
+    await renderPage()
+    expect(await screen.findByText('Access: none yet')).toBeInTheDocument()
+  })
+
   it('Google disconnect reloads the list', async () => {
     a.integrations.list
       .mockResolvedValueOnce([{ provider: 'google', revoked: false, google_email: 'g@x.com', scopes_granted: [] }])
