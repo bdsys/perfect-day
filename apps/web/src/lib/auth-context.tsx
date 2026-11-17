@@ -44,19 +44,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setAvatarUrl(next)
   }, [])
 
-  // Take a freshly read profile: store it and sync the photo's object URL.
+  // Bumped by every applyProfile, logout and unmount: a result whose token is no
+  // longer current is stale and is dropped (including its object URL).
+  const tokenRef = useRef(0)
+  const invalidate = useCallback(() => {
+    tokenRef.current++
+  }, [])
+
+  // Take a freshly read profile: store it and sync the photo's object URL. The user and
+  // the URL are set together, after the blob arrives.
   const applyProfile = useCallback(
     async (me: UserProfile | null) => {
-      setUser(me)
+      const token = ++tokenRef.current
+      let url: string | null = null
       if (me?.avatar?.kind === 'photo') {
         try {
-          replaceAvatarUrl(URL.createObjectURL(await api.auth.avatar()))
+          const blob = await api.auth.avatar()
+          if (token !== tokenRef.current) return
+          url = URL.createObjectURL(blob)
         } catch {
-          replaceAvatarUrl(null)
+          if (token !== tokenRef.current) return
         }
-      } else {
-        replaceAvatarUrl(null)
       }
+      setUser(me)
+      replaceAvatarUrl(url)
     },
     [replaceAvatarUrl],
   )
@@ -65,10 +76,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setPendingDeletionHandler(() => setSignalled(true))
     return () => {
       setPendingDeletionHandler(null)
+      invalidate()
       if (urlRef.current) URL.revokeObjectURL(urlRef.current)
       urlRef.current = null
     }
-  }, [])
+  }, [invalidate])
 
   useEffect(() => {
     // Try to refresh on mount (may have a valid cookie)
@@ -107,11 +119,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   )
 
   const logout = useCallback(async () => {
+    invalidate()
     await api.auth.logout()
     setAccessToken('')
     setSignalled(false)
     await applyProfile(null)
-  }, [applyProfile])
+  }, [applyProfile, invalidate])
 
   const loginWithGoogle = useCallback(
     async (idToken: string) => {

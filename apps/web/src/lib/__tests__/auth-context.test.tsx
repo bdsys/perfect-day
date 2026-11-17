@@ -118,4 +118,102 @@ describe("AuthProvider", () => {
     view.unmount();
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:3");
   });
+
+  const deferred = <T,>() => {
+    let resolve!: (v: T) => void;
+    const promise = new Promise<T>((r) => (resolve = r));
+    return { promise, resolve };
+  };
+  const photo = () => profile({ avatar: { kind: "photo" } });
+
+  it("an older refreshUser resolving after a newer one does not overwrite it", async () => {
+    me.mockResolvedValueOnce(profile());
+    mount();
+    await waitFor(() => expect(ctx.loading).toBe(false));
+
+    const oldBlob = deferred<Blob>();
+    me.mockResolvedValueOnce(photo());
+    avatar.mockReturnValueOnce(oldBlob.promise);
+    let first!: Promise<void>;
+    act(() => {
+      first = ctx.refreshUser();
+    });
+    await waitFor(() => expect(avatar).toHaveBeenCalledTimes(1));
+
+    me.mockResolvedValueOnce(profile({ avatar: { kind: "icon", name: "cat" } }));
+    await act(async () => {
+      await ctx.refreshUser();
+    });
+    expect(ctx.user?.avatar).toEqual({ kind: "icon", name: "cat" });
+
+    await act(async () => {
+      oldBlob.resolve(new Blob(["x"]));
+      await first;
+    });
+    expect(ctx.user?.avatar).toEqual({ kind: "icon", name: "cat" });
+    expect(ctx.avatarUrl).toBeNull();
+    expect(URL.createObjectURL).not.toHaveBeenCalled();
+  });
+
+  it("logout during an in-flight refresh leaves no user and no avatar URL", async () => {
+    me.mockResolvedValueOnce(profile());
+    (api.auth as unknown as Record<string, jest.Mock>).logout = jest.fn().mockResolvedValue(undefined);
+    mount();
+    await waitFor(() => expect(ctx.loading).toBe(false));
+
+    const blob = deferred<Blob>();
+    me.mockResolvedValueOnce(photo());
+    avatar.mockReturnValueOnce(blob.promise);
+    let refresh!: Promise<void>;
+    act(() => {
+      refresh = ctx.refreshUser();
+    });
+    await waitFor(() => expect(avatar).toHaveBeenCalled());
+
+    await act(async () => {
+      await ctx.logout();
+    });
+    await act(async () => {
+      blob.resolve(new Blob(["x"]));
+      await refresh;
+    });
+    expect(ctx.user).toBeNull();
+    expect(ctx.avatarUrl).toBeNull();
+    expect(URL.createObjectURL).not.toHaveBeenCalled();
+  });
+
+  it("unmount during the avatar fetch does not leak an object URL", async () => {
+    const blob = deferred<Blob>();
+    me.mockResolvedValueOnce(photo());
+    avatar.mockReturnValueOnce(blob.promise);
+    const view = mount();
+    await waitFor(() => expect(avatar).toHaveBeenCalled());
+    view.unmount();
+    await act(async () => {
+      blob.resolve(new Blob(["x"]));
+    });
+    expect(URL.createObjectURL).not.toHaveBeenCalled();
+  });
+
+  it("user and avatarUrl change together, never pairing a photo with the old URL", async () => {
+    me.mockResolvedValueOnce(photo());
+    avatar.mockResolvedValueOnce(new Blob(["x"]));
+    mount();
+    await waitFor(() => expect(ctx.avatarUrl).toBe("blob:1"));
+
+    const blob = deferred<Blob>();
+    me.mockResolvedValueOnce(photo());
+    avatar.mockReturnValueOnce(blob.promise);
+    act(() => {
+      void ctx.refreshUser();
+    });
+    await waitFor(() => expect(avatar).toHaveBeenCalledTimes(2));
+    // mid-flight: the context still shows a consistent old pair
+    expect(ctx.user?.avatar.kind).toBe("photo");
+    expect(ctx.avatarUrl).toBe("blob:1");
+    await act(async () => {
+      blob.resolve(new Blob(["y"]));
+    });
+    expect(ctx.avatarUrl).toBe("blob:2");
+  });
 });

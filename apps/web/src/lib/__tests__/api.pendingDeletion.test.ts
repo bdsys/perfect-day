@@ -61,4 +61,22 @@ describe("avatar upload", () => {
     expect(init.body).toBe(file);
     expect(init.headers["Content-Type"]).toBe("image/png");
   });
+
+  it("refreshes once and retries the upload on a 401", async () => {
+    const fetchMock = jest
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 401, json: async () => ({}) })
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ access_token: "new" }) })
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ id: "u" }) });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    const file = new Blob(["abc"], { type: "image/jpeg" });
+    await expect(api.auth.uploadAvatar(file)).resolves.toEqual({ id: "u" });
+    expect(String(fetchMock.mock.calls[1][0])).toContain("/v1/auth/refresh");
+    const [url, init] = fetchMock.mock.calls[2];
+    expect(String(url)).toContain("/v1/auth/me/avatar");
+    expect(init.method).toBe("PUT");
+    expect(init.body).toBe(file);
+    expect(init.headers["Content-Type"]).toBe("image/jpeg");
+    expect(init.headers["Authorization"]).toBe("Bearer new");
+  });
 });
