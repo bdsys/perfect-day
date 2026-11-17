@@ -10,7 +10,12 @@ from pydantic import BaseModel, EmailStr, field_validator
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import get_current_user, get_current_user_within_grace
+from app.core.auth import (
+    account_unavailable,
+    deletion_state,
+    get_current_user,
+    get_current_user_within_grace,
+)
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.security import (
@@ -162,8 +167,9 @@ async def login(
     ):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid_credentials")
 
-    if user.deleted_at is not None or user.hard_delete_after is not None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="account_unavailable")
+    # An account pending deletion may log in: that is how its owner restores it (C-14).
+    if deletion_state(user) == "blocked":
+        raise account_unavailable()
 
     return await _issue_tokens(
         user, response, db, device_hint=request.headers.get("User-Agent", "")[:200]
@@ -208,10 +214,8 @@ async def social_google(
     if identity is not None:
         user_result = await db.execute(select(User).where(User.id == identity.user_id))
         user = user_result.scalar_one_or_none()
-        if user is None or user.deleted_at is not None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED, detail="account_unavailable"
-            )
+        if user is None or deletion_state(user) == "blocked":
+            raise account_unavailable()
         return await _issue_tokens(
             user, response, db, device_hint=request.headers.get("User-Agent", "")[:200]
         )
@@ -311,6 +315,8 @@ async def refresh(
                     raise HTTPException(
                         status_code=status.HTTP_401_UNAUTHORIZED, detail="unauthorized"
                     )
+                if deletion_state(user) == "blocked":
+                    raise account_unavailable()
                 access = create_access_token(user.id, is_admin=user.is_admin)
                 return TokenResponse(access_token=access)
 
@@ -330,8 +336,8 @@ async def refresh(
     rt.revoked_at = now
     user_result = await db.execute(select(User).where(User.id == rt.user_id))
     user = user_result.scalar_one_or_none()
-    if user is None or user.deleted_at is not None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="account_unavailable")
+    if user is None or deletion_state(user) == "blocked":
+        raise account_unavailable()
 
     access = create_access_token(user.id, is_admin=user.is_admin)
     raw, new_hash = generate_refresh_token()
@@ -394,13 +400,18 @@ class UserProfile(BaseModel):
     subscription_tier: str
     is_admin: bool
     email_verified_at: datetime | None
+    # The exact moment the account is deleted, while it is pending deletion; else None.
+    deletion_scheduled_for: datetime | None = None
 
     model_config = {"from_attributes": True}
 
 
 @router.get("/me", response_model=UserProfile)
-async def me(user: User = Depends(get_current_user)) -> User:
-    return user
+async def me(user: User = Depends(get_current_user_within_grace)) -> UserProfile:
+    profile = UserProfile.model_validate(user)
+    if deletion_state(user) == "pending":
+        profile.deletion_scheduled_for = user.hard_delete_after
+    return profile
 
 
 @router.get("/me/plan", response_model=MyPlanOut)
@@ -416,15 +427,20 @@ async def my_plan(
 # ---------------------------------------------------------------------------
 
 
-@router.delete("/account", status_code=status.HTTP_204_NO_CONTENT)
+class AccountDeletionOut(BaseModel):
+    deletion_scheduled_for: datetime
+
+
+@router.delete("/account", response_model=AccountDeletionOut)
 async def delete_account(
     response: Response,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db, scope="function"),
-) -> None:
+) -> AccountDeletionOut:
     now = datetime.now(tz=UTC)
+    deadline = now + timedelta(days=7)
     user.deleted_at = now
-    user.hard_delete_after = now + timedelta(days=7)
+    user.hard_delete_after = deadline
 
     # Revoke all tokens immediately
     await db.execute(
@@ -442,6 +458,7 @@ async def delete_account(
     if token is not None:
         await revoke_and_forget_google(db, token, user_id=user.id)
     response.delete_cookie(REFRESH_COOKIE, path="/v1/auth")
+    return AccountDeletionOut(deletion_scheduled_for=deadline)
 
 
 @router.post("/account/restore", status_code=status.HTTP_204_NO_CONTENT)
@@ -449,8 +466,7 @@ async def restore_account(
     user: User = Depends(get_current_user_within_grace),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> None:
-    # Re-check: get fresh user since the middleware already blocked deleted users,
-    # so if they're here they must still be within grace (hard_delete_after not yet passed)
+    # The dependency refused blocked accounts, so this one is active or pending.
     result = await db.execute(select(User).where(User.id == user.id))
     fresh_user = result.scalar_one()
     fresh_user.deleted_at = None

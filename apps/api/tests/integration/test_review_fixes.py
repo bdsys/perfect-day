@@ -295,7 +295,7 @@ class TestDeletedAccountIsNotScanned:
 
         with patch("httpx.AsyncClient.post", AsyncMock(return_value=httpx.Response(200))):
             r = await client.delete("/v1/auth/account", headers=auth)
-        assert r.status_code == 204
+        assert r.status_code == 200
 
         rows = (
             await db_session.execute(select(OAuthToken).where(OAuthToken.user_id == user_id))

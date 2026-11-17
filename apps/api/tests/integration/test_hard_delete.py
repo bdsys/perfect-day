@@ -101,8 +101,11 @@ class TestHardDeleteUser:
         auth = {"Authorization": f"Bearer {token}"}
 
         r = await client.delete("/v1/auth/account", headers=auth)
-        assert r.status_code == 204
+        assert r.status_code == 200
 
-        # Account unavailable immediately
+        # Pending deletion immediately: other endpoints refuse with 403, /me shows the deadline
+        diaries = await client.get("/v1/diaries", headers=auth)
+        assert diaries.status_code == 403
         me = await client.get("/v1/auth/me", headers=auth)
-        assert me.status_code == 401
+        assert me.status_code == 200
+        assert me.json()["deletion_scheduled_for"] == r.json()["deletion_scheduled_for"]

@@ -17,7 +17,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import get_current_user
+from app.core.auth import deletion_state, get_current_user
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.dependencies import get_redis
@@ -300,6 +300,13 @@ async def _google_callback(
         return _redirect(web_base, return_to, google="failed", reason="nonce_reuse")
 
     user_id = uuid.UUID(payload["user_id"])
+
+    # A connect started before the account was deleted can finish afterwards.
+    # Only an active account may store Google tokens; the code is not even
+    # exchanged otherwise (deletion revoked the grant; restoring needs a reconnect).
+    account = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+    if account is None or deletion_state(account) != "active":
+        return _redirect(web_base, return_to, google="failed", reason="account_unavailable")
 
     # Exchange code for tokens
     async with httpx.AsyncClient() as client:
