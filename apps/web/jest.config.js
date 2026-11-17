@@ -9,6 +9,7 @@ const config = {
   },
   testMatch: ['**/__tests__/**/*.[jt]s?(x)', '**/?(*.)+(spec|test).[jt]s?(x)'],
   testPathIgnorePatterns: ['/node_modules/', '/e2e/'],
+  globalSetup: '<rootDir>/jest.global-setup.js',
   setupFiles: ['<rootDir>/jest.setup.ts'],
   setupFilesAfterEnv: ['<rootDir>/jest.setup-after.ts'],
 }
