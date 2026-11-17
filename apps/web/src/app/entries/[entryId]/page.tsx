@@ -23,6 +23,14 @@ import LimitNote from '@/components/LimitNote'
 import { aiEntryNote, aiLimitNote, formatResetDate, limitMessage, readOnlyBanner } from '@/lib/plan'
 import { EVENT_REMOVED_NOTE, showEventRemovedNote } from '@/lib/entryNotes'
 
+const MAX_POLL_FAILURES = 5
+const AI_STATUS_POLL_MS = 3000
+
+const AI_NOTICES = {
+  writing: 'AI is writing this entry. Wait a moment, or edit anyway: your text is kept and the AI draft appears as a suggestion.',
+  queued: 'AI will write this entry shortly. You can wait, or edit anyway: your text is kept and the AI draft appears as a suggestion.',
+} as const
+
 function planDetails(plan: OwnerPlan & { ai_drafts_limit: number }) {
   return [
     {
@@ -78,6 +86,10 @@ function EntryDetailPageInner() {
   const [regenSlow, setRegenSlow] = useState(false)
   const [regenErrorMessage, setRegenErrorMessage] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const [aiFailures, setAiFailures] = useState(0)
+  const aiInFlightRef = useRef(false)
+  const editingRef = useRef(false)
+  editingRef.current = editing
   const [answeringSuggestion, setAnsweringSuggestion] = useState(false)
 
   const [noticeKey, setNoticeKey] = useState(0)
@@ -237,6 +249,29 @@ function EntryDetailPageInner() {
   }, [entry, regenStartedAt, regenStartedGenAt])
 
   usePolling(pollRegen, 2000, pollingRegen)
+
+  // A queued or running AI draft: poll until it finishes.
+  const aiPending = !!entry?.ai_status && !pollingRegen
+  const pollAi = useCallback(async () => {
+    if (!entry || aiInFlightRef.current) return
+    aiInFlightRef.current = true
+    try {
+      const updated = await api.entries.get(entry.id)
+      // Mid-edit, take only the AI fields so nothing typed is touched.
+      setEntry((current) =>
+        editingRef.current && current
+          ? { ...current, ai_status: updated.ai_status, suggestion: updated.suggestion, last_generation: updated.last_generation }
+          : updated,
+      )
+      setAiFailures(0)
+    } catch {
+      setAiFailures((n) => n + 1)
+    } finally {
+      aiInFlightRef.current = false
+    }
+  }, [entry])
+
+  usePolling(pollAi, AI_STATUS_POLL_MS, aiPending && aiFailures < MAX_POLL_FAILURES)
 
   useEffect(() => {
     if (!pollingRegen) return
@@ -469,6 +504,10 @@ function EntryDetailPageInner() {
                   ×
                 </button>
               </div>
+            )}
+
+            {entry.ai_status && !pollingRegen && (
+              <LimitNote>{AI_NOTICES[entry.ai_status]}</LimitNote>
             )}
 
             {entry.body_markdown ? (

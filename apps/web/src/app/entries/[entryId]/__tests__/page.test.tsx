@@ -255,3 +255,80 @@ describe('entry page: event moved or removed note', () => {
     expect(screen.queryByText(NOTE)).toBeNull()
   })
 })
+
+describe('entry page: AI working notice', () => {
+  const WRITING = 'AI is writing this entry. Wait a moment, or edit anyway: your text is kept and the AI draft appears as a suggestion.'
+  const QUEUED = 'AI will write this entry shortly. You can wait, or edit anyway: your text is kept and the AI draft appears as a suggestion.'
+  const ai = (over: Partial<Entry>): Entry => ({ ...entry([]), ...over }) as Entry
+
+  beforeEach(() => {
+    ;(api.integrations.list as jest.Mock).mockResolvedValue([])
+    listForEntry.mockResolvedValue([])
+  })
+
+  it('shows the writing notice', async () => {
+    get.mockResolvedValue(ai({ ai_status: 'writing' }))
+    render(<EntryDetailPage />)
+    expect(await screen.findByText(WRITING)).toBeInTheDocument()
+    expect(screen.queryByText(QUEUED)).not.toBeInTheDocument()
+  })
+
+  it('shows the queued notice', async () => {
+    get.mockResolvedValue(ai({ ai_status: 'queued' }))
+    render(<EntryDetailPage />)
+    expect(await screen.findByText(QUEUED)).toBeInTheDocument()
+    expect(screen.queryByText(WRITING)).not.toBeInTheDocument()
+  })
+
+  it('hides the notice while Regenerate runs', async () => {
+    get.mockResolvedValue(ai({ ai_status: 'queued', events: [{ id: 'ev' }] as never }))
+    ;(api.entries.regenerate as jest.Mock).mockResolvedValue(ai({ ai_status: 'queued' }))
+    render(<EntryDetailPage />)
+    expect(await screen.findByText(QUEUED)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /regenerate with ai/i }))
+    await act(async () => {})
+    expect(screen.queryByText(QUEUED)).not.toBeInTheDocument()
+    expect(screen.queryByText(WRITING)).not.toBeInTheDocument()
+    expect(screen.getByText('Regenerating draft…')).toBeInTheDocument()
+  })
+
+  it('polls and shows the draft when AI finishes', async () => {
+    jest.useFakeTimers()
+    get
+      .mockResolvedValueOnce(ai({ ai_status: 'writing', body_markdown: null }))
+      .mockResolvedValueOnce(ai({ ai_status: 'writing', body_markdown: null }))
+      .mockResolvedValue(ai({ ai_status: null, body_markdown: 'The finished draft' }))
+    render(<EntryDetailPage />)
+    await act(async () => {})
+    expect(screen.getByText(WRITING)).toBeInTheDocument()
+    expect(screen.queryByText('The finished draft')).not.toBeInTheDocument()
+    await act(async () => { jest.advanceTimersByTime(3000) })
+    expect(screen.getByText('The finished draft')).toBeInTheDocument()
+    expect(screen.queryByText(WRITING)).not.toBeInTheDocument()
+  })
+
+  it('keeps an edit in progress when AI finishes', async () => {
+    jest.useFakeTimers()
+    const suggestion = { title: 'S', body_markdown: 'AI text', flagged_tokens: [], body_source: 'llm', created_at: '2026-05-16T00:00:00Z' }
+    get
+      .mockResolvedValueOnce(ai({ ai_status: 'writing' }))
+      .mockResolvedValueOnce(ai({ ai_status: 'writing' }))
+      .mockResolvedValue(ai({ ai_status: null, suggestion: suggestion as never }))
+    render(<EntryDetailPage />)
+    await act(async () => {})
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
+    fireEvent.change(screen.getByLabelText('Body'), { target: { value: 'My typed body' } })
+    await act(async () => { jest.advanceTimersByTime(3000) })
+    expect(screen.getByLabelText('Body')).toHaveValue('My typed body')
+    expect(screen.queryByText(WRITING)).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(screen.getByText('AI text')).toBeInTheDocument()
+  })
+
+  it('edit stays enabled while AI works', async () => {
+    get.mockResolvedValue(ai({ ai_status: 'writing' }))
+    render(<EntryDetailPage />)
+    expect(await screen.findByText(WRITING)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Edit' })).toBeEnabled()
+  })
+})
