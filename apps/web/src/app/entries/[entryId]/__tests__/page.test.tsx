@@ -116,7 +116,7 @@ describe('entry page: plan limits', () => {
   it('grays out the AI button at the limit and points it at the AI note', async () => {
     get.mockResolvedValue(withPlan(freePlan({ ai_drafts_left: 0 }), { body_markdown: 'Body', events: [{ id: 'ev' }] as never }))
     render(<EntryDetailPage />)
-    const btn = await screen.findByRole('button', { name: /regenerate with ai/i })
+    const btn = await screen.findByRole('button', { name: /create event description with ai/i })
     expect(btn).toBeDisabled()
     const note = document.getElementById(btn.getAttribute('aria-describedby')!)
     expect(note).toHaveTextContent('No AI drafts left this month. Resets Dec 1.')
@@ -132,7 +132,7 @@ describe('entry page: plan limits', () => {
 
     get.mockResolvedValue(withPlan(freePlan({ ai_drafts_left: 5 }), { last_generation: failed, events: [{ id: 'ev' }] as never }))
     render(<EntryDetailPage />)
-    const btn = await screen.findByRole('button', { name: /regenerate with ai/i })
+    const btn = await screen.findByRole('button', { name: /create event description with ai/i })
     expect(screen.queryByText(/Out of AI drafts until/)).not.toBeInTheDocument()
     expect(btn).toBeEnabled()
   })
@@ -179,7 +179,7 @@ describe('entry page: plan limits', () => {
       new ApiError(403, 'limit reached', 'tier_limit', { source: 'ai_draft', resets_on: '2026-12-01' }),
     )
     render(<EntryDetailPage />)
-    fireEvent.click(await screen.findByRole('button', { name: /regenerate with ai/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /create event description with ai/i }))
     expect((await screen.findAllByText('No AI drafts left this month. Resets Dec 1.')).length).toBeGreaterThan(0)
     expect(screen.getByRole('button', { name: /AI drafts: 3 of 5 left/ })).toBeInTheDocument()
   })
@@ -191,7 +191,7 @@ describe('entry page: plan limits', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Publish' }))
     await screen.findByRole('button', { name: 'Unpublish' })
     expect(screen.getByRole('button', { name: /AI drafts: 0 of 5 left/ })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /regenerate with ai/i })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /create event description with ai/i })).toBeDisabled()
   })
 
   it('a regenerate refused as diary_read_only shows the read-only copy, not the AI note', async () => {
@@ -200,7 +200,7 @@ describe('entry page: plan limits', () => {
       new ApiError(403, 'tier_limit', 'tier_limit', { source: 'diary_read_only' }),
     )
     render(<EntryDetailPage />)
-    fireEvent.click(await screen.findByRole('button', { name: /regenerate with ai/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /create event description with ai/i }))
     expect(await screen.findByText(/This diary is read-only on the Free plan/)).toBeInTheDocument()
     expect(screen.queryByText(/No AI drafts left/)).not.toBeInTheDocument()
     expect(screen.queryByText(/tier_limit/)).not.toBeInTheDocument()
@@ -285,7 +285,7 @@ describe('entry page: AI working notice', () => {
     ;(api.entries.regenerate as jest.Mock).mockResolvedValue(ai({ ai_status: 'queued' }))
     render(<EntryDetailPage />)
     expect(await screen.findByText(QUEUED)).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: /regenerate with ai/i }))
+    fireEvent.click(screen.getByRole('button', { name: /create event description with ai/i }))
     await act(async () => {})
     expect(screen.queryByText(QUEUED)).not.toBeInTheDocument()
     expect(screen.queryByText(WRITING)).not.toBeInTheDocument()
@@ -384,7 +384,7 @@ describe('entry page: AI working notice', () => {
     ;(api.entries.regenerate as jest.Mock).mockResolvedValue(ai({ ai_status: 'queued', events: [{ id: 'ev' }] as never }))
     render(<EntryDetailPage />)
     await act(async () => {})
-    fireEvent.click(screen.getByRole('button', { name: /regenerate with ai/i }))
+    fireEvent.click(screen.getByRole('button', { name: /create event description with ai/i }))
     await act(async () => {})
     expect(screen.getByText('Regenerating draft…')).toBeInTheDocument()
     await act(async () => { await jest.advanceTimersByTimeAsync(60 * 1000) })
@@ -403,7 +403,7 @@ describe('entry page: AI working notice', () => {
     ;(api.entries.regenerate as jest.Mock).mockResolvedValue(ai({ ai_status: 'queued', events: [{ id: 'ev' }] as never }))
     render(<EntryDetailPage />)
     await act(async () => {})
-    fireEvent.click(screen.getByRole('button', { name: /regenerate with ai/i }))
+    fireEvent.click(screen.getByRole('button', { name: /create event description with ai/i }))
     await act(async () => {})
     await act(async () => { await jest.advanceTimersByTimeAsync(60 * 1000) })
     expect(screen.getByText(TIMED_OUT)).toBeInTheDocument()
@@ -464,5 +464,81 @@ describe('entry page: AI working notice', () => {
     await act(async () => { jest.advanceTimersByTime(3000) })
     expect(screen.queryByText(WARN)).not.toBeInTheDocument()
     expect(screen.queryByText(WRITING)).not.toBeInTheDocument()
+  })
+})
+
+describe('entry page: AI button label (row 27)', () => {
+  const CREATE = 'Create event description with AI'
+  const POLISH = 'Polish event description with AI'
+  const words = (n: number) => Array.from({ length: n }, (_, i) => `w${i}`).join(' ')
+  const ev = [{ id: 'ev' }] as never
+
+  beforeEach(() => {
+    ;(api.integrations.list as jest.Mock).mockResolvedValue([])
+    listForEntry.mockResolvedValue([])
+  })
+
+  const show = async (over: Partial<Entry>, name: string) => {
+    get.mockResolvedValue(withPlan(freePlan(), over))
+    render(<EntryDetailPage />)
+    return screen.findByRole('button', { name })
+  }
+
+  it('an untouched AI draft with events says Create', async () => {
+    const btn = await show({ body_source: 'llm', body_markdown: words(200), events: ev }, CREATE)
+    expect(btn).toBeEnabled()
+  })
+
+  it('5 words of the parent with events says Create', async () => {
+    expect(await show({ body_source: 'user', body_markdown: 'one two three four five', events: ev }, CREATE)).toBeEnabled()
+  })
+
+  it('6 words of the parent with events says Polish', async () => {
+    expect(await show({ body_source: 'user', body_markdown: words(6), events: ev }, POLISH)).toBeEnabled()
+  })
+
+  it('a long AI draft the parent touched (one typo fixed) says Polish', async () => {
+    expect(await show({ body_source: 'user', body_markdown: words(200), events: ev }, POLISH)).toBeEnabled()
+  })
+
+  it('a polished body of 6 words with no events says Polish and stays enabled', async () => {
+    expect(await show({ body_source: 'llm_polished', body_markdown: words(6), events: [] }, POLISH)).toBeEnabled()
+  })
+
+  it('no events and 3 words is Create, disabled, with the tooltip', async () => {
+    const btn = await show({ body_source: 'user', body_markdown: 'Zoo with Grandma', events: [] }, CREATE)
+    expect(btn).toBeDisabled()
+    expect(btn).toHaveAttribute('title', 'Write a bit more or add events')
+  })
+
+  it('no events and untouched AI text is disabled, with the tooltip', async () => {
+    const btn = await show({ body_source: 'llm', body_markdown: words(50), events: [] }, CREATE)
+    expect(btn).toBeDisabled()
+    expect(btn).toHaveAttribute('title', 'Write a bit more or add events')
+  })
+
+  it('a published entry follows the same rule', async () => {
+    expect(await show({ status: 'published', body_source: 'user', body_markdown: words(6), events: ev }, POLISH)).toBeInTheDocument()
+  })
+
+  it('at the plan limit with no events and 3 words it stays disabled and points at the plan note', async () => {
+    get.mockResolvedValue(withPlan(freePlan({ ai_drafts_left: 0 }), { body_source: 'user', body_markdown: 'Zoo with Grandma', events: [] }))
+    render(<EntryDetailPage />)
+    const btn = await screen.findByRole('button', { name: CREATE })
+    expect(btn).toBeDisabled()
+    const note = document.getElementById(btn.getAttribute('aria-describedby')!)
+    expect(note).toHaveTextContent('No AI drafts left this month. Resets Dec 1.')
+  })
+
+  it.each([
+    ['llm', words(20), CREATE, 'Creating…'],
+    ['user', words(6), POLISH, 'Polishing…'],
+  ] as const)('while running, a %s body reads %s → %s', async (body_source, body_markdown, idle, running) => {
+    const e = withPlan(freePlan(), { body_source, body_markdown, events: ev })
+    get.mockResolvedValue(e)
+    ;(api.entries.regenerate as jest.Mock).mockResolvedValue({ ...e, ai_status: 'queued' })
+    render(<EntryDetailPage />)
+    fireEvent.click(await screen.findByRole('button', { name: idle }))
+    expect(await screen.findByRole('button', { name: running })).toBeDisabled()
   })
 })

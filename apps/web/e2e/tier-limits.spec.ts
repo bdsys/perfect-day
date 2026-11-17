@@ -104,7 +104,7 @@ test.describe('Free plan limits', () => {
     const badge = page.getByText(/AI drafts: 0 of 5 left/)
     await expect(badge).toBeVisible({ timeout: 10_000 })
     await expect(badge).toHaveAttribute('data-color', 'red')
-    await expect(page.getByRole('button', { name: /(Regenerate|Generate|Polish) with AI/ })).toBeDisabled()
+    await expect(page.getByRole('button', { name: /(Create|Polish) event description with AI/ })).toBeDisabled()
     await expect(page.getByText(/No AI drafts left this month\. Resets [A-Z][a-z]{2} \d{1,2}\./)).toBeVisible()
 
     await page.getByRole('link', { name: 'Upgrade now' }).first().click()
@@ -134,7 +134,7 @@ test.describe('Free plan limits', () => {
 
     sql(`UPDATE users SET subscription_tier = 'plus' WHERE id = '${user.id}'`)
     await page.reload()
-    await expect(page.getByRole('button', { name: /(Regenerate|Generate|Polish) with AI/ })).toBeVisible()
+    await expect(page.getByRole('button', { name: /(Create|Polish) event description with AI/ })).toBeVisible()
     await expect(page.getByText(/AI drafts:/)).toHaveCount(0)
   })
 

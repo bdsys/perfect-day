@@ -22,6 +22,7 @@ import PlanBadge from '@/components/PlanBadge'
 import LimitNote from '@/components/LimitNote'
 import { aiEntryNote, aiLimitNote, formatResetDate, limitMessage, readOnlyBanner } from '@/lib/plan'
 import { EVENT_REMOVED_NOTE, showEventRemovedNote } from '@/lib/entryNotes'
+import { AI_BUTTON_LABELS, NEEDS_MORE_INPUT, aiButtonState } from '@/lib/aiButton'
 
 const MAX_POLL_FAILURES = 5
 const AI_STATUS_POLL_MS = 3000
@@ -386,6 +387,7 @@ function EntryDetailPageInner() {
   const readOnly = plan?.read_only ?? false
   const aiStalled = aiFailures >= MAX_POLL_FAILURES
   const aiOut = plan?.ai_drafts_left === 0
+  const aiButton = aiButtonState(entry)
   const photoRoom = plan == null || plan.photos_per_entry == null
     ? null
     : Math.max(0, plan.photos_per_entry - entry.photos.length)
@@ -726,19 +728,11 @@ function EntryDetailPageInner() {
               <button
                 className="btn btn-secondary"
                 onClick={handleRegenerate}
-                disabled={pollingRegen || readOnly || aiOut || (!entry.events.length && !entry.body_markdown)}
+                disabled={pollingRegen || readOnly || aiOut || aiButton.needsMoreInput}
                 aria-describedby={aiOut && plan ? 'ai-limit-note' : undefined}
-                title={(!entry.events.length && !entry.body_markdown) ? 'Add events or write something first' : undefined}
+                title={aiButton.needsMoreInput ? NEEDS_MORE_INPUT : undefined}
               >
-                {pollingRegen
-                  ? (entry.body_markdown ? 'Regenerating…' : 'Generating…')
-                  : (entry.events.length > 0 && entry.body_markdown)
-                    ? 'Regenerate with AI'
-                    : (entry.events.length > 0 && !entry.body_markdown)
-                      ? 'Generate with AI'
-                      : (!entry.events.length && entry.body_markdown)
-                        ? 'Polish with AI'
-                        : 'Generate with AI'}
+                {AI_BUTTON_LABELS[aiButton.mode][pollingRegen ? 'running' : 'idle']}
               </button>
               <button className="btn btn-danger" onClick={handleDelete} disabled={deleting}>
                 {deleting ? 'Deleting…' : 'Delete'}
