@@ -127,7 +127,7 @@ test.describe('AI suggestion box', () => {
     await expect(page.getByRole('region', { name: 'The AI suggests a new version' })).toHaveCount(0)
   })
 
-  test('a published entry offers Regenerate and shows a waiting suggestion', async ({ page }) => {
+  test('a published entry offers the AI button and shows a waiting suggestion', async ({ page }) => {
     const entryId = await entryWithSuggestion()
     const ctx = await playwrightRequest.newContext()
     await ctx.post(`${API}/v1/entries/${entryId}/publish`, {
@@ -138,11 +138,11 @@ test.describe('AI suggestion box', () => {
     seedSuggestion(entryId)
     await openEntry(page, entryId)
 
-    await expect(page.getByRole('button', { name: /Regenerate|Polish|Generate/ })).toBeEnabled()
+    await expect(page.getByRole('button', { name: /(Create|Polish) event description with AI|Creating…|Polishing…/ })).toBeEnabled()
     await expect(page.getByRole('region', { name: 'The AI suggests a new version' })).toBeVisible()
   })
 
-  test('a switched-off Regenerate looks switched off', async ({ page }) => {
+  test('a switched-off AI button looks switched off', async ({ page }) => {
     const ctx = await playwrightRequest.newContext()
     const r = await ctx.post(`${API}/v1/diaries/${shared.diaryId}/entries`, {
       headers: { Authorization: `Bearer ${shared.token}` },
@@ -153,7 +153,7 @@ test.describe('AI suggestion box', () => {
     await openEntry(page, id)
 
     // No text and no events: nothing for the AI to work from.
-    const regenerate = page.getByRole('button', { name: /Regenerate|Polish|Generate/ })
+    const regenerate = page.getByRole('button', { name: /(Create|Polish) event description with AI|Creating…|Polishing…/ })
     await expect(regenerate).toBeDisabled()
     await expect(regenerate).toHaveCSS('cursor', 'not-allowed')
     expect(Number(await regenerate.evaluate((el) => getComputedStyle(el).opacity))).toBeLessThan(1)
