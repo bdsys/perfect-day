@@ -20,7 +20,7 @@ const ENTRIES_PAGE_SIZE = 20
 const MAX_POLL_FAILURES = 5
 const AI_STATUS_POLL_MS = 3000
 
-function EntryCard({ entry }: { entry: Entry }) {
+function EntryCard({ entry, aiStalled }: { entry: Entry; aiStalled: boolean }) {
   const preview = entry.body_markdown?.slice(0, 120) ?? ''
   const firstEventSummary = !entry.body_markdown && entry.events?.length > 0 ? entry.events[0].summary : null
   return (
@@ -37,7 +37,7 @@ function EntryCard({ entry }: { entry: Entry }) {
         )}
         <div style={{ marginTop: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
           <span className={`status-badge status-${entry.status}`}>{entry.status}</span>
-          <AiStatusBadge status={entry.ai_status ?? null} />
+          <AiStatusBadge status={entry.ai_status ?? null} stalled={aiStalled} />
           {entry.events && entry.events.length > 0 && (
             <span style={{ fontSize: '0.75rem', color: '#888' }}>• {entry.events.length} event{entry.events.length !== 1 ? 's' : ''}</span>
           )}
@@ -763,7 +763,7 @@ export default function DiaryDetailPage() {
             )}
           </div>
         ) : (
-          entries.map((e) => <EntryCard key={e.id} entry={e} />)
+          entries.map((e) => <EntryCard key={e.id} entry={e} aiStalled={aiFailures >= MAX_POLL_FAILURES} />)
         )}
 
         {hasMoreEntries && (

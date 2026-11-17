@@ -410,6 +410,20 @@ describe('entry page: AI working notice', () => {
     expect(screen.queryByTestId('ai-notice')).not.toBeInTheDocument()
   })
 
+  it('after polling gives up, the notice says to refresh, with no spinner', async () => {
+    jest.useFakeTimers()
+    get.mockResolvedValueOnce(ai({ ai_status: 'writing' })).mockRejectedValue(new Error('down'))
+    render(<EntryDetailPage />)
+    await act(async () => {})
+    expect(screen.getByText(WRITING)).toBeInTheDocument()
+    for (let i = 0; i < 5 + 2; i++) await act(async () => { await jest.advanceTimersByTimeAsync(3000) })
+    expect(get).toHaveBeenCalledTimes(1 + 5)
+    const box = screen.getByTestId('ai-notice')
+    expect(box).toHaveTextContent(/^Couldn't check on the AI draft\. Refresh the page to see it\.$/)
+    expect(box).toHaveAttribute('role', 'status')
+    expect(box.querySelector('.spinner')).toBeNull()
+  })
+
   const WARN = 'The AI draft arrived while you were editing. Save to keep your text instead, or Cancel to read the AI draft.'
 
   it('warns when the AI draft lands mid-edit', async () => {

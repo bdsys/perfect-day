@@ -35,6 +35,8 @@ const AI_NOTICES_NO_EDIT = {
   writing: 'AI is writing this entry.',
   queued: 'AI will write this entry shortly.',
 } as const
+// Polling gave up, so the status may be stale.
+const AI_NOTICE_STALLED = "Couldn't check on the AI draft. Refresh the page to see it."
 
 function planDetails(plan: OwnerPlan & { ai_drafts_limit: number }) {
   return [
@@ -376,6 +378,7 @@ function EntryDetailPageInner() {
 
   const diaryHref = `/diaries/${entry.diary_id}`
   const readOnly = plan?.read_only ?? false
+  const aiStalled = aiFailures >= MAX_POLL_FAILURES
   const aiOut = plan?.ai_drafts_left === 0
   const photoRoom = plan == null || plan.photos_per_entry == null
     ? null
@@ -561,12 +564,16 @@ function EntryDetailPageInner() {
                   border: '1px solid var(--accent)', borderLeftWidth: 4, borderRadius: 6,
                 }}
               >
-                {entry.ai_status === 'writing' ? (
+                {aiStalled ? null : entry.ai_status === 'writing' ? (
                   <span className="spinner" aria-hidden="true" style={{ width: 16, height: 16 }} />
                 ) : (
                   <span aria-hidden="true">⏱</span>
                 )}
-                <span>{(entry.can_edit && !readOnly ? AI_NOTICES : AI_NOTICES_NO_EDIT)[entry.ai_status]}</span>
+                <span>
+                  {aiStalled
+                    ? AI_NOTICE_STALLED
+                    : (entry.can_edit && !readOnly ? AI_NOTICES : AI_NOTICES_NO_EDIT)[entry.ai_status]}
+                </span>
               </div>
             )}
 

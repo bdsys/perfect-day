@@ -517,6 +517,23 @@ describe('diary page: AI status', () => {
     expect(api.entries.aiStatus).toHaveBeenCalledTimes(5)
   })
 
+  it('after polling gives up, pending badges stop pretending', async () => {
+    ;(api.entries.list as jest.Mock).mockResolvedValue([
+      entry('e1', { ai_status: 'queued' }),
+      entry('e2', { ai_status: 'writing' }),
+    ])
+    ;(api.entries.aiStatus as jest.Mock).mockRejectedValue(new Error('down'))
+    render(<DiaryDetailPage />)
+    expect(await screen.findByText('Queued')).toBeInTheDocument()
+    for (let i = 0; i < 5 + 2; i++) await tick()
+    const badges = screen.getAllByTestId('ai-status')
+    expect(badges).toHaveLength(2)
+    badges.forEach((b) => {
+      expect(b).toHaveTextContent(/^Refresh to check$/)
+      expect(b.querySelector('.spinner')).toBeNull()
+    })
+  })
+
   it('updates an entry loaded by load more', async () => {
     const first = Array.from({ length: 20 }, (_, i) => entry(`a${i}`, { title: `T${i}` }))
     ;(api.entries.list as jest.Mock).mockImplementation(async (_d: string, params: { cursor?: string }) =>
