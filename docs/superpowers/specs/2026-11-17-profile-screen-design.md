@@ -420,16 +420,9 @@ to rediscover them.
 ## Status and next steps (2026-11-17)
 
 - **The design is approved** (Andrew: "Yes this looks good, I approve").
-- **Branch** `feat/profile-screen`, local only (not pushed). It holds only this document and the
-  mockup copy. It was cut from `main` at `4e7597b`. Before building, rebase it onto the latest
-  `main`, which by then includes row 50, the iOS Chrome Google Photos fix (`fix/google-photos-one-tap`).
-- **Next:**
-  1. Write the implementation plan with superpowers:writing-plans. Save it as
-     `docs/superpowers/plans/2026-11-17-profile-screen.md`.
-  2. Ask Andrew to choose the execution method. My recommendation is subagent-driven: the
-     work is large, it touches the API, the migration and 13 pages, and it has a security
-     surface.
-  3. Then `make test-all` (Jest included), the dev-stack check, the PR, CI, the merge, a
-     deploy (ask Andrew first), and Andrew's phone check.
-- **Ordering.** The one-tap Google Photos fix for iOS Chrome went first, on its own branch.
-  Andrew, 2026-11-17: "We'll do profile afterwards."
+- **Building.** Branch `feat/profile-screen`, local only (not pushed). The API, the migration, the
+  Profile page, the shared header, the restore screen and the Playwright journeys
+  (`apps/web/e2e/profile.spec.ts`) are built. Rows 29 and 32 of `POC_PHASE2_TODO.md` are "in review".
+- **Next:** final whole-branch review, `make test-all`, the dev-stack check, the PR, CI, the merge,
+  a deploy (ask Andrew first), and Andrew's phone check (see Verification, By hand).
+
