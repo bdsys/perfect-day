@@ -15,7 +15,7 @@ This document captures guidance specific to deploying Perfect Day on the home-la
 - **Cloudflare proxy (orange cloud):** public-facing TLS (browser ↔ CF) via Cloudflare Universal SSL — auto-renewed by CF, no operator action needed.
 - **FortiGate 7.2+:** CF↔origin TLS termination via a Cloudflare Origin Certificate, IPS and antivirus (policy 35's profiles; no WAF profile today). Forwards plain HTTP to NUC on the LAN.
 - One Cloudflare Origin Certificate for `*.andrewlass.com, andrewlass.com`, generated via CSR on FortiGate (private key never leaves the device). **Expires 2027-11-16**; see § FortiGate Virtual Server setup, Step 1.
-- Planned, not built: a FortiGate WAF rule so `perfectday-media` accepts PUT only (uploads). Depends on P-10.
+- Not needed today: uploads and photo reads go through the API (S-7), so `perfectday-media` has no traffic. The old plan (a PUT-only media host) is dropped unless a direct-to-storage upload comes back.
 - CORS allowlist on the API for the web origin; Expo dev tunnel allowed only when `ENV=dev`
 - **Hybrid mode:** in the hybrid topology, the NUC's FortiGate vhost for `perfectday.andrewlass.com` is deactivated. The NUC is reachable only over WireGuard (or LAN). DNS A records point to the CX21, which handles all public TLS. See [`deploy/hybrid.md`](hybrid.md).
 
@@ -94,7 +94,7 @@ handshake to them.
 |---|---|
 | `perfectday.andrewlass.com` | `web:3000` (Next.js) |
 | `perfectday-api.andrewlass.com` | `api:8000` (FastAPI) |
-| `perfectday-media.andrewlass.com` | nothing yet (DNS record only; P-10 decides how photo links work) |
+| `perfectday-media.andrewlass.com` | nothing (DNS record only; photos go through the API, S-7) |
 
 **TLS path.** Browser → Cloudflare (Universal SSL, `andrewlass.com, *.andrewlass.com`) →
 FortiGate (Cloudflare Origin Certificate, decrypts, runs IPS/AV) → plain HTTP on the LAN →

@@ -36,7 +36,7 @@ The original `diary.perfectday.andrewlass.com` names were two levels deep and ne
 |---|---|---|---|---|---|
 | `perfectday` | A | home WAN IP | **Proxied** | Auto | Web (Next.js) |
 | `perfectday-api` | A | home WAN IP | **Proxied** | Auto | API (FastAPI) |
-| `perfectday-media` | A | home WAN IP | **Proxied** | Auto | Reserved for photo links; no route yet (P-10) |
+| `perfectday-media` | A | home WAN IP | **Proxied** | Auto | Unused: photos go through the API (S-7); kept for a possible media host |
 
 - Proxied records always use TTL Auto (300 s); it cannot be changed
   ([Cloudflare](https://developers.cloudflare.com/dns/proxy-status/)).

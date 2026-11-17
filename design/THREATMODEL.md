@@ -133,7 +133,7 @@ For each threat: actors, vectors, mitigations in place, residual risk, and re-ev
 - User calls `GET /v1/photos/{id}` in a loop to saturate outbound bandwidth (especially acute on NUC home-lab uplink).
 
 **Mitigations in place**:
-- Planned, not built: edge proxy restricts `perfectday-media.andrewlass.com` to PUT only, rate-limited (depends on P-10; Caddy has no media route today).
+- Uploads go through the API (S-7), so its auth and rate limits apply; there is no direct-to-storage upload host. `perfectday-media.andrewlass.com` has no route.
 - Orphan sweeper deletes unfinalised uploads after 24 hours.
 - Per-user API rate limit: 100 req/min.
 - Photo storage quota per user tier (Phase 2 enforcement — gap noted below).

@@ -29,7 +29,7 @@ Primary use case: a parent's diary of their child's life.
 
 - Self-hosted Intel NUC (4-core x86 1.85GHz, 8GB RAM) — shared with other services, resource-constrained
 - Network edge: Cloudflare (public TLS via Universal SSL, edge WAF, DDoS, residential IP hidden) in front of FortiGate 7.2+ (CF↔origin TLS termination via Cloudflare Origin Certificate, host-based routing, FortiGate WAF/IPS). FortiGate forwards plain HTTP to NUC on the home LAN.
-- Domains (P-9, 2026-11-16): `perfectday.andrewlass.com` (web), `perfectday-api.andrewlass.com` (API), `perfectday-media.andrewlass.com` (reserved for photo links, P-10). Every public name has exactly one label before `andrewlass.com`: Cloudflare's free Universal SSL does not cover deeper names, so `api.perfectday.andrewlass.com` would not work. Setup: `deploy/cloudflare.md`, `deploy/nuc.md`
+- Domains (P-9, 2026-11-16): `perfectday.andrewlass.com` (web), `perfectday-api.andrewlass.com` (API), `perfectday-media.andrewlass.com` (DNS only, unused). Every public name has exactly one label before `andrewlass.com`: Cloudflare's free Universal SSL does not cover deeper names, so `api.perfectday.andrewlass.com` would not work. Setup: `deploy/cloudflare.md`, `deploy/nuc.md`
 - Hybrid deployment supported: fully self-hosted on NUC, or NUC + cloud offload for LLM/heavy processing
 
 ## Core Data Model (planned)
@@ -99,6 +99,14 @@ Defer:
 - Social sharing
 - Notification system
 - Stripe / subscription enforcement
+
+## NUC operations (production, since 2026-11-16)
+
+- Runbook: `deploy/nuc-ops.md`. Edge (Cloudflare, FortiGate): `deploy/cloudflare.md`, `deploy/nuc.md`.
+- Deploy `main`: on the NUC, `cd /opt/perfect-day && sudo ./scripts/nuc/40-update.sh`. It builds the images on the NUC (there is no registry yet, PoC 25.4), keeps the running ones as `:previous`, migrates, restarts and smoke-tests. `sudo ./scripts/nuc/50-rollback.sh` goes back one deploy.
+- Change hostnames, the Google client or the DDNS token in place with `sudo ./scripts/nuc/15-update-config.sh` (`--google-client <json>`, `--ddns-credentials`). **Never re-run `10-secrets.sh` on a NUC with data:** it regenerates `MASTER_SECRET`, which encrypts stored photos and Google tokens.
+- Admin commands against production: `sudo ./scripts/admin.sh …` on the NUC (`scripts/ADMIN_CLI.md`).
+- Before a big change, dump the database to `/var/backups/perfect-day/`. Nothing is backed up automatically yet (tracker row 36).
 
 ## Development Notes
 

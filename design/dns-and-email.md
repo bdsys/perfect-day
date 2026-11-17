@@ -6,7 +6,7 @@
 |---|---|
 | `perfectday.andrewlass.com` | Web app |
 | `perfectday-api.andrewlass.com` | API |
-| `perfectday-media.andrewlass.com` | Reserved for photo links; no route yet (P-10) |
+| `perfectday-media.andrewlass.com` | Unused: photos go through the API (S-7); kept for a possible media host |
 
 Every public name has exactly one label before `andrewlass.com`: Cloudflare's free Universal SSL covers only the apex and first-level subdomains (P-9). Current setup: [`deploy/cloudflare.md`](../deploy/cloudflare.md).
 | `andrewlass.com` | Apex domain — controls email identity (SPF/DKIM/DMARC) |
