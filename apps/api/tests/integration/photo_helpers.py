@@ -1,7 +1,10 @@
 """Shared helpers for photo integration tests."""
 from __future__ import annotations
 
+import io
 import pathlib
+
+from PIL import Image
 
 PASSWORD = "Password1!"  # noqa: S105
 
@@ -56,3 +59,31 @@ async def upload_photo(client, headers, body: bytes, content_type: str = "image/
     )
     assert r.status_code == 201, r.text
     return r.json()["id"]
+
+
+def heic_bytes() -> bytes:
+    import pillow_heif
+
+    pillow_heif.register_heif_opener()
+    buf = io.BytesIO()
+    Image.new("RGB", (32, 24), (10, 120, 200)).save(buf, format="HEIF")
+    return buf.getvalue()
+
+
+def gps_heic_bytes() -> bytes:
+    """A HEIC whose EXIF carries GPS coordinates (47.6 N, 122.3 W)."""
+    import pillow_heif
+
+    pillow_heif.register_heif_opener()
+    exif = Image.Exif()
+    exif[0x010F] = "TestCam"
+    gps = exif.get_ifd(0x8825)
+    gps[1], gps[2] = "N", (47.0, 36.0, 0.0)
+    gps[3], gps[4] = "W", (122.0, 18.0, 0.0)
+    buf = io.BytesIO()
+    Image.new("RGB", (32, 24), (10, 120, 200)).save(buf, format="HEIF", exif=exif.tobytes())
+    return buf.getvalue()
+
+
+def gps_of(data: bytes) -> dict:
+    return dict(Image.open(io.BytesIO(data)).getexif().get_ifd(0x8825))
