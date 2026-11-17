@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import UTC, date, datetime
 
@@ -15,8 +16,11 @@ from app.core.database import get_db
 from app.models import Entry, Event, User
 from app.routers.v1.diaries import _get_diary_or_404
 from app.routers.v1.entries import EntryOut, _entry_out_from_orm
+from app.services.ai_draft_jobs import ai_statuses
 from app.services.read_only import ensure_diary_writable
 from app.workers.tasks import enqueue_entry_draft
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(tags=["calendar_events"])
 
@@ -155,5 +159,13 @@ async def create_entry_from_event(
         logging.getLogger(__name__).exception(
             "Failed to queue generate_entry_draft for entry %s", out.id
         )
+
+    # Report the queued draft, as regenerate does (row 38). Best-effort: everything
+    # above is committed, so on failure roll back the read and answer without it.
+    try:
+        out.ai_status = (await ai_statuses(db, [out.id])).get(out.id)
+    except Exception:
+        log.warning("Failed to read ai_status for entry %s", out.id, exc_info=True)
+        await db.rollback()
 
     return out

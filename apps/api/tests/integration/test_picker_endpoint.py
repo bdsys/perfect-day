@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from unittest.mock import ANY, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 from httpx import AsyncClient
 from sqlalchemy import update
@@ -151,6 +151,44 @@ class TestCreateFromEvent:
 
         await db_session.refresh(ev)
         assert ev.entry_id == uuid.UUID(data["id"])
+
+    async def test_response_reports_the_queued_draft(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
+        token, auth, diary = await _setup(client, "picker-ai-status@example.com")
+        ev = await make_event(db_session, diary_id=uuid.UUID(diary["id"]))
+
+        with patch("app.workers.tasks.generate_entry_draft"):
+            r = await client.post(
+                f"/v1/diaries/{diary['id']}/entries/from-event",
+                json={"event_id": str(ev.id)},
+                headers=auth,
+            )
+
+        assert r.status_code == 201, r.text
+        assert r.json()["ai_status"] == "queued"
+
+    async def test_ai_status_read_failure_still_returns_201(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
+        token, auth, diary = await _setup(client, "picker-ai-status-fail@example.com")
+        ev = await make_event(db_session, diary_id=uuid.UUID(diary["id"]))
+
+        with (
+            patch("app.workers.tasks.generate_entry_draft"),
+            patch(
+                "app.routers.v1.calendar_events.ai_statuses",
+                AsyncMock(side_effect=RuntimeError("db")),
+            ),
+        ):
+            r = await client.post(
+                f"/v1/diaries/{diary['id']}/entries/from-event",
+                json={"event_id": str(ev.id)},
+                headers=auth,
+            )
+
+        assert r.status_code == 201, r.text
+        assert r.json()["ai_status"] is None
 
     async def test_returns_409_if_event_already_attached(
         self, client: AsyncClient, db_session: AsyncSession
