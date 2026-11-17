@@ -144,8 +144,11 @@ test("the new tab starts the session and replaces itself with Google's picker", 
   await page.waitForURL('https://photos.google.com/picker/abc/autoclose')
   await expect(page.getByText('Google Photos picker')).toBeVisible()
   expect(posts).toBe(1)
-  // Replaced, not pushed: Back can't return to the opener page, and the picker may close the tab.
-  expect(await page.evaluate(() => history.length)).toBe(1)
+  // Replaced, not pushed: Back never returns to our page (which would start a second session).
+  // (history.length is no use here: Playwright's tab starts with an about:blank entry.)
+  await page.goBack().catch(() => null)
+  expect(page.url()).not.toContain('/google-photos/open')
+  expect(posts).toBe(1)
 })
 
 test('the new tab explains when Google Photos is not connected', async ({ page }) => {
@@ -154,7 +157,8 @@ test('the new tab explains when Google Photos is not connected', async ({ page }
     r.fulfill(json({ detail: 'google_photos_not_connected' }, 409)),
   )
   await page.goto(`/google-photos/open?entry=${ENTRY_ID}`)
-  await expect(page.getByRole('alert')).toHaveText(
-    "Google Photos isn't connected yet. Close this tab and use Connect Google Photos on the entry.",
-  )
+  // By text: Next.js's route announcer is also role="alert".
+  await expect(
+    page.getByText("Google Photos isn't connected yet. Close this tab and use Connect Google Photos on the entry."),
+  ).toHaveAttribute('role', 'alert')
 })
