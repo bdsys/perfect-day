@@ -19,8 +19,8 @@
 - Two states, exact strings:
   - List badge: `Queued` and `AI is writing…` (a single `…` character).
   - Entry-page notices:
-    - Writing: `AI is writing this entry. Wait a moment, or edit anyway: your text is kept and the AI draft appears as a suggestion.`
-    - Queued: `AI will write this entry shortly. You can wait, or edit anyway: your text is kept and the AI draft appears as a suggestion.`
+    - Writing: `AI is writing this entry. Wait a moment for the draft, or edit anyway.`
+    - Queued: `AI will write this entry shortly. Wait for the draft, or edit anyway.`
 - API value: `ai_status: "queued" | "writing" | null`. An entry is "writing" if any of its jobs has `started_at`; else "queued" if any job exists; else null.
 - **Best-effort indicator:** a failure to insert, mark or delete a job row is logged and never stops or fails a draft.
 - **`updated_at` stays untouched:** nothing in this work writes to `entries`.

@@ -143,8 +143,11 @@ about 40 minutes.
   - The text is real text, not only an icon. The spinner respects
     `prefers-reduced-motion`.
 - **Entry page** shows a notice above the body while `ai_status` is set:
-  - Writing: "AI is writing this entry. Wait a moment, or edit anyway: your text is kept and the AI draft appears as a suggestion."
-  - Queued: "AI will write this entry shortly. You can wait, or edit anyway: your text is kept and the AI draft appears as a suggestion."
+  - Writing: "AI is writing this entry. Wait a moment for the draft, or edit anyway."
+  - Queued: "AI will write this entry shortly. Wait for the draft, or edit anyway."
+  - **While editing, when the AI draft lands:** "The AI draft arrived while you were editing. Save to keep your text instead, or Cancel to read the AI draft." Cancel then shows the AI draft.
+  - **Correction (2026-11-17, Task 5 review).** The first wording promised "your text is kept and the AI draft appears as a suggestion". That's only true if the person saves before the AI finishes. An empty entry whose AI draft lands while the person is still typing gets the AI text in place (`write_in_place` in `workers/llm.py`). Saving then replaces it with the person's text, and no suggestion is made. The notice now promises less, and the edit form warns when the draft arrives.
+  - **Prominence:** a callout, not small print. It has an accent border, the spinner or clock icon, body-size text and `role="status"`.
   - **Only one indicator at a time:** while the existing Regenerate panel (`StatusPanel`) is running, the notice is hidden.
 - **Polling** uses the existing `usePolling`.
   - **Diary page:** while any loaded entry has a status, poll the ai-status endpoint every 3 s. When an entry leaves the map, refetch the entry list once so its new title and text appear.
