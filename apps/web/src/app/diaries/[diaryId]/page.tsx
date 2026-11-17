@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
-import { api, type Diary, type Entry, type Integration, type ScanRun, type ScanConfig, type BackfillRun } from '@/lib/api'
+import { api, ApiError, type Diary, type Entry, type Integration, type ScanRun, type ScanConfig, type BackfillRun } from '@/lib/api'
 import { useAuth } from '@/lib/auth-context'
 import { StatusPanel } from '@/components/StatusPanel'
 import { AiStatusBadge } from '@/components/AiStatusBadge'
@@ -287,13 +287,22 @@ export default function DiaryDetailPage() {
     try {
       const pending = await api.entries.aiStatus(diaryId)
       const finished = entriesRef.current.filter((e) => e.ai_status && !pending[e.id])
-      const fresh = await Promise.all(finished.map((e) => api.entries.get(e.id)))
-      const replacements = new Map(fresh.map((e) => [e.id, e]))
+      // One bad re-fetch must not discard the rest of the poll.
+      const results = await Promise.allSettled(finished.map((e) => api.entries.get(e.id)))
+      const replacements = new Map<string, Entry>()
+      const gone = new Set<string>()
+      results.forEach((r, i) => {
+        if (r.status === 'fulfilled') replacements.set(finished[i].id, r.value)
+        // Deleted elsewhere. Any other failure keeps the badge so the next poll retries.
+        else if (r.reason instanceof ApiError && r.reason.status === 404) gone.add(finished[i].id)
+      })
       setEntries((current) =>
-        current.map((e) => {
-          if (replacements.has(e.id)) return replacements.get(e.id)!
-          return e.ai_status && pending[e.id] ? { ...e, ai_status: pending[e.id] } : e
-        }),
+        current
+          .filter((e) => !gone.has(e.id))
+          .map((e) => {
+            if (replacements.has(e.id)) return replacements.get(e.id)!
+            return e.ai_status && pending[e.id] ? { ...e, ai_status: pending[e.id] } : e
+          }),
       )
       setAiFailures(0)
     } catch {

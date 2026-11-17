@@ -469,6 +469,45 @@ describe('diary page: AI status', () => {
     expect(api.entries.aiStatus).toHaveBeenCalledTimes(1)
   })
 
+  it('drops an entry that was deleted elsewhere', async () => {
+    ;(api.entries.list as jest.Mock).mockResolvedValue([
+      entry('e1', { title: 'Gone', ai_status: 'queued' }),
+      entry('e2', { title: 'Old', ai_status: 'queued' }),
+    ])
+    ;(api.entries.aiStatus as jest.Mock).mockResolvedValue({})
+    ;(api.entries.get as jest.Mock).mockImplementation(async (id: string) => {
+      if (id === 'e1') throw new ApiError(404, 'Not found')
+      return entry('e2', { title: 'Fresh' })
+    })
+    render(<DiaryDetailPage />)
+    expect(await screen.findByText('Fresh')).toBeInTheDocument()
+    expect(screen.queryByText('Gone')).toBeNull()
+    expect(screen.queryByTestId('ai-status')).toBeNull()
+    await tick()
+    await tick()
+    expect(api.entries.aiStatus).toHaveBeenCalledTimes(1)
+  })
+
+  it('one failed re-fetch does not freeze the others', async () => {
+    ;(api.entries.list as jest.Mock).mockResolvedValue([
+      entry('e1', { title: 'One', ai_status: 'queued' }),
+      entry('e2', { title: 'Two', ai_status: 'queued' }),
+    ])
+    ;(api.entries.aiStatus as jest.Mock).mockResolvedValue({})
+    ;(api.entries.get as jest.Mock).mockImplementation(async (id: string) => {
+      if (id === 'e1') throw new ApiError(500, 'boom')
+      return entry('e2', { title: 'Two done' })
+    })
+    render(<DiaryDetailPage />)
+    expect(await screen.findByText('Two done')).toBeInTheDocument()
+    expect(screen.getAllByTestId('ai-status')).toHaveLength(1)
+    expect(screen.getByText('One')).toBeInTheDocument()
+    const before = (api.entries.get as jest.Mock).mock.calls.filter(([id]) => id === 'e1').length
+    await tick()
+    const after = (api.entries.get as jest.Mock).mock.calls.filter(([id]) => id === 'e1').length
+    expect(after).toBeGreaterThan(before)
+  })
+
   it('stops polling after repeated failures', async () => {
     ;(api.entries.list as jest.Mock).mockResolvedValue([entry('e1', { ai_status: 'queued' })])
     ;(api.entries.aiStatus as jest.Mock).mockRejectedValue(new Error('down'))
