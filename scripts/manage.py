@@ -477,5 +477,23 @@ def photos_import() -> None:
     _echo_stats(stats)
 
 
+@photos.command("verify")
+@click.option("--limit", default=20, show_default=True, help="How many of the newest photos.")
+def photos_verify(limit: int) -> None:
+    """Decrypt every avatar and the newest photos with the current keys; exit 1 on any failure."""
+    from app.services.backup_verify import has_photo_or_avatar_rows, verify_photo_sample
+
+    with _make_session() as db:
+        report = verify_photo_sample(db, limit=limit)
+        nothing_checked = report.checked == 0 and has_photo_or_avatar_rows(db)
+    click.echo(f"checked={report.checked} failures={len(report.failures)}")
+    for failure in report.failures:
+        click.echo(f"  {failure}")
+    if report.failures or nothing_checked:
+        if nothing_checked:
+            click.echo("  photo rows exist but none could be checked")
+        sys.exit(1)
+
+
 if __name__ == "__main__":
     cli()
