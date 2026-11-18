@@ -21,7 +21,7 @@ Primary use case: a parent's diary of their child's life.
 | Mobile frontend | Expo (React Native) — iOS and Android |
 | Backend API | Python, FastAPI |
 | Database | PostgreSQL |
-| File/photo storage | MinIO (S3-compatible, self-hosted) — use S3 API for portability to AWS S3 |
+| File/photo storage | Garage (`dxflrs/garage`, S3-compatible, self-hosted; replaced MinIO, tracker row 41) — use the S3 API for portability to AWS S3 |
 | LLM | Anthropic Claude (Opus/Sonnet preferred); Gemini as fallback |
 | Auth | Google OAuth, Facebook OAuth, email+password |
 
@@ -40,7 +40,7 @@ Key entities:
 - **Permission** — links a User to a Diary with `view` or `edit` role
 - **Entry** — belongs to a Diary; has `status: draft | published`; contains narrative body, photos, date, title, location, weather (optional), music (optional)
 - **Event** — raw calendar/photo/location data attached to an Entry
-- **Photo** — stored in MinIO; linked to Entry; contains EXIF/location metadata
+- **Photo** — stored in the S3 object store (Garage); linked to Entry; contains EXIF/location metadata
 - **OAuthToken** — per-user per-provider (Google Calendar scope, Google Photos scope stored separately to handle partial grants)
 - **ScanJob** — per-diary scan scheduling state, last scan timestamp, backfill cursor
 
@@ -64,7 +64,7 @@ Key entities:
 
 **Photo storage:**
 - Photos are of a child — treat as sensitive personal data
-- Encryption at rest in MinIO is required
+- Encryption at rest is required: the app encrypts every object before it reaches the store, so the store only ever holds ciphertext
 - Data deletion flow must cascade: diary deletion removes entries, photos, scan state; account deletion removes all diaries and user data
 
 **Entitlement/tier checks:**
@@ -104,8 +104,9 @@ Defer:
 
 - Runbook: `deploy/nuc-ops.md`. Edge (Cloudflare, FortiGate): `deploy/cloudflare.md`, `deploy/nuc.md`.
 - Deploy `main`: on the NUC, `cd /opt/perfect-day && sudo ./scripts/nuc/40-update.sh`. It builds the images on the NUC (there is no registry yet, PoC 25.4), keeps the running ones as `:previous`, migrates, restarts and smoke-tests. `sudo ./scripts/nuc/50-rollback.sh` goes back one deploy.
-- Change hostnames, the Google client or the DDNS token in place with `sudo ./scripts/nuc/15-update-config.sh` (`--google-client <json>`, `--ddns-credentials`). **Never re-run `10-secrets.sh` on a NUC with data:** it regenerates `MASTER_SECRET`, which encrypts stored photos and Google tokens.
+- Change hostnames, the Google client or the DDNS token in place with `sudo ./scripts/nuc/15-update-config.sh` (`--google-client <json>`, `--ddns-credentials`). **Never re-run `10-secrets.sh` on a NUC with data:** it rewrites the whole `app.env` from its template, so hostnames, the Google client and every setting changed in place since go back to the template. It keeps the generated secrets (`MASTER_SECRET`, which encrypts stored photos and Google tokens, among them) and the storage address. A setting a newer release needs is added by `40-update.sh` through `scripts/nuc/lib/envfile.py ensure`.
 - Admin commands against production: `sudo ./scripts/admin.sh …` on the NUC (`scripts/ADMIN_CLI.md`).
+- Photo storage moves from MinIO to Garage with `sudo ./scripts/nuc/60-switch-storage.sh` (`--back` returns to MinIO), at a time Andrew picks; `deploy/nuc-ops.md` § B-Storage. Which store the app uses is `S3_ENDPOINT_URL` in `app.env`. Deploys fail if `/readyz` does not report `storage: ok`.
 - Nightly encrypted backups (database, photos, `/etc/perfect-day/`) go to the NAS at 02:17; status in `/var/log/perfect-day/backup-status.json`, restore and drill in `deploy/nuc-ops.md` § B7 (tracker row 36). Before a big change, still dump the database to `/var/backups/perfect-day/` with `umask 077`.
 
 ## Development Notes

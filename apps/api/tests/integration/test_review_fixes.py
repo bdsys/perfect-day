@@ -145,6 +145,22 @@ class TestReadinessErrorDetail:
         assert "db-internal-host" not in r.text
 
 
+class TestReadinessStorage:
+    """Tracker row 41: the check is named for its job, not for MinIO."""
+
+    async def test_readyz_reports_storage(self, client: AsyncClient):
+        r = await client.get("/readyz")
+        assert r.json()["checks"]["storage"] == "ok"
+        assert "minio" not in r.json()["checks"]
+
+    async def test_storage_error_is_reported_but_not_fatal(self, client: AsyncClient):
+        with patch("app.core.dependencies.get_s3", side_effect=RuntimeError("store down")):
+            r = await client.get("/readyz")
+        assert r.json()["checks"]["storage"] == "error"
+        assert r.status_code == 200
+        assert "store down" not in r.text
+
+
 # ---------------------------------------------------------------------------
 # D-1, D-2, D-3 — hard deletes
 # ---------------------------------------------------------------------------

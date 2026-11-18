@@ -18,6 +18,11 @@
 #   docker compose --profile nuc run --rm api alembic downgrade <that commit's head revision>
 set -euo pipefail
 
+# shellcheck source=lib/backup.sh
+source "$(dirname "$(readlink -f "$0")")/lib/backup.sh"
+# shellcheck source=lib/readyz.sh
+source "$(dirname "$(readlink -f "$0")")/lib/readyz.sh"
+
 if [ "$(id -u)" -ne 0 ]; then
     echo "ERROR: This script must be run as root (use sudo)." >&2
     exit 1
@@ -51,6 +56,22 @@ for svc in ${APP_SERVICES}; do
 done
 echo "Rolling back to ${PREV_SHA} (currently $(cat "${DEPLOY_DIR}/last-deployed-sha" 2>/dev/null || echo unknown))"
 
+# The previous release must be able to use the photo store this machine runs. Before
+# row 41 the compose file pinned MinIO; after the switch to Garage, going back to it
+# would break every photo while /readyz still answered 200.
+PREV_COMPOSE="$(mktemp)"
+git show "${PREV_SHA}:docker-compose.yml" > "${PREV_COMPOSE}"
+if ! why="$(compose_serves_store "${PREV_COMPOSE}" /etc/perfect-day/app.env 2>&1)"; then
+    rm -f "${PREV_COMPOSE}"
+    echo "ERROR: cannot roll back to ${PREV_SHA}: ${why}." >&2
+    echo "  Move the photos back to MinIO first, then roll back:" >&2
+    echo "    sudo ./scripts/nuc/60-switch-storage.sh --back" >&2
+    echo "    sudo ./scripts/nuc/50-rollback.sh" >&2
+    echo "  Nothing changed." >&2
+    exit 1
+fi
+rm -f "${PREV_COMPOSE}"
+
 echo '[1/4] Checking out the previous commit (Caddyfile and app.env are kept)...'
 git checkout -q "${PREV_SHA}"
 
@@ -76,6 +97,11 @@ until curl -sf --max-time 5 "${HEALTH_URL}" > /dev/null 2>&1; do
     echo "  Waiting... ${ELAPSED}s"
 done
 echo "${PREV_SHA}" > "${DEPLOY_DIR}/last-deployed-sha"
+# /readyz answers 200 even with photo storage down, so ask about storage itself.
+if ! readyz_storage_ok "${HEALTH_URL}"; then
+    echo "WARNING: rolled back, but photo storage is not ok (see the line above)." >&2
+    echo '  Check the store: docker compose --profile nuc ps; docker compose logs --tail=50 garage (minio before the switch)' >&2
+fi
 
 echo "[4/4] Rollback complete: ${PREV_SHA}"
 echo "Log: ${LOG_FILE}"

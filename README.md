@@ -41,9 +41,9 @@ sudo apt-get update -q && sudo apt-get install -y google-chrome-stable
 Then run `make bootstrap` as normal. The Playwright config detects Linux automatically and uses system Chrome for e2e tests.
 
 > **Important:** `make bootstrap` is the single command that does everything — creates the Python
-> venv, runs DB migrations, seeds the MinIO `photos` bucket, and installs Node deps. If you set up
+> venv, runs DB migrations, starts Garage (which creates the `photos` bucket), and installs Node deps. If you set up
 > manually (e.g. `docker compose up -d` only), you **must** also run `make migrate` and
-> `make seed-bucket` before the app is usable. Skipping either causes confusing downstream errors
+> before the app is usable. Skipping either causes confusing downstream errors
 > (HTTP 500 on auth, HTTP 404 on photo uploads) that are hard to attribute to missing setup.
 
 ---

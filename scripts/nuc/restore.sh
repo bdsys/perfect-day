@@ -8,11 +8,15 @@
 #                     /var/backups/perfect-day/pre-restore-<ts>.sql.gz, stops api,
 #                     worker and beat, replaces the database and imports the photos,
 #                     starts them again and runs the smoke test.
-#   --into <project>  restores into another compose project's postgres and minio
-#                     (e.g. perfect-day-drill); starts only those two.
+#   --into <project>  restores into another compose project's postgres and photo
+#                     store (e.g. perfect-day-drill); starts only those two. The
+#                     store is the one S3_ENDPOINT_URL names (garage or minio).
 #   --from-nas        fetches the night from rsync://192.168.1.112/Backups/perfect-day/
 #   --with-config     also puts /etc/perfect-day back (asks you to type "replace config";
-#                     the current one is kept as /etc/perfect-day.pre-restore-<ts>)
+#                     the current one is kept as /etc/perfect-day.pre-restore-<ts>).
+#                     The live S3_ENDPOINT_URL is kept: it says which photo store
+#                     this machine runs, not a secret, so a night from before the
+#                     MinIO -> Garage switch restores here unchanged (row 41).
 #   --config-only     only /etc/perfect-day, no Docker: step one on a new machine,
 #                     before 20-deploy.sh (see deploy/nuc-ops.md § B7). Never run
 #                     10-secrets.sh on a machine you are restoring.
@@ -84,8 +88,21 @@ if [ "${CONFIG_ONLY}" = 1 ] || [ "${WITH_CONFIG}" = 1 ]; then
         cp -a "${PD_ETC}" "${saved}"
         echo "Current config kept at ${saved}"
     fi
+    live_endpoint="$(python3 "${PD_ENVFILE_PY}" get "${PD_ETC}/app.env" S3_ENDPOINT_URL 2>/dev/null || true)"
     decrypt config.tar.age | tar -C / -xf -
     echo "Config restored."
+    if [ -n "${live_endpoint}" ]; then
+        python3 "${PD_ENVFILE_PY}" set "${PD_ETC}/app.env" S3_ENDPOINT_URL "${live_endpoint}" >/dev/null
+        echo "  kept the storage address this machine uses (${live_endpoint})"
+    else
+        # A new machine: keep the night's store only if this compose file defines it.
+        svc="$(storage_service_from_env "${PD_ETC}/app.env" 2>/dev/null || echo unknown)"
+        if ! grep -qE "^  ${svc}:" "${PD_DEPLOY_DIR}/docker-compose.yml" 2>/dev/null; then
+            python3 "${PD_ENVFILE_PY}" set "${PD_ETC}/app.env" S3_ENDPOINT_URL http://garage:3900 >/dev/null
+            echo "  the backup's photo store is ${svc}, but there is no ${svc} service here;"
+            echo "  S3_ENDPOINT_URL set to http://garage:3900"
+        fi
+    fi
     [ "${CONFIG_ONLY}" = 1 ] && exit 0
 fi
 
@@ -99,7 +116,8 @@ if [ -n "${INTO}" ]; then
     # The api service has no image name, so a new project would build its own;
     # borrow production's built image under this project's name instead.
     docker tag perfect-day-api:latest "${INTO}-api:latest"
-    compose_p up -d --wait postgres minio
+    store="$(storage_service_from_env "${PD_ETC}/app.env")" || die "not restoring: see above"
+    compose_p up -d --wait postgres "${store}"
     decrypt db.sql.gz.age | gunzip | compose_p exec -T postgres sh -c "${PSQL_RESTORE}"
     decrypt photos.tar.age | compose_p "${IMPORT[@]}"
     echo "Restored ${DATE} into project ${INTO}."

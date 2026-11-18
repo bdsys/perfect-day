@@ -83,8 +83,8 @@ FastAPI exposes `/metrics` in Prometheus exposition format. The endpoint is boun
 | `celery_queue_depth` | Gauge | `queue_name` |
 | `db_pool_connections_active` | Gauge | — |
 | `db_pool_connections_idle` | Gauge | — |
-| `minio_upload_bytes_total` | Counter | — |
-| `minio_download_bytes_total` | Counter | — |
+| `storage_upload_bytes_total` | Counter | — |
+| `storage_download_bytes_total` | Counter | — |
 
 ### Custom metrics
 
@@ -133,7 +133,7 @@ Three dashboards in Grafana Cloud:
 - API request rate + error rate + p95 latency
 - Celery queue depth + task success rate
 - DB pool utilisation
-- MinIO upload/download bytes
+- Photo store upload/download bytes
 - Recent alerts
 
 **Product**

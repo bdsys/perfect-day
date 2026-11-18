@@ -30,9 +30,9 @@ jobs:
           REDIS_URL=redis://redis:6379/0
           CELERY_BROKER_URL=redis://redis:6379/0
           CELERY_RESULT_BACKEND=redis://redis:6379/1
-          S3_ENDPOINT_URL=http://minio:9000
-          S3_ACCESS_KEY=minioadmin
-          S3_SECRET_KEY=minioadmin
+          S3_ENDPOINT_URL=http://garage:3900
+          S3_ACCESS_KEY=perfectday-dev
+          S3_SECRET_KEY=perfectday-dev-secret-0001
           S3_BUCKET_PHOTOS=photos
           GOOGLE_CLIENT_ID=
           GOOGLE_CLIENT_SECRET=
@@ -49,8 +49,15 @@ jobs:
       - name: Wait for API readiness
         run: ./scripts/wait-for-healthy.sh http://localhost:8000/readyz 90
 
-      - name: Seed MinIO bucket
-        run: ./scripts/seed-minio-bucket.sh || true  # photos bucket (Phase 2)
+      # The stack starts on an empty database; `make test-e2e` migrates from the host,
+      # here the api image does it (this step was missing until row 41's PR first ran
+      # this workflow: every test failed at register with "relation users does not exist").
+      - name: Migrate the test database
+        run: docker compose -f docker-compose.yml -f docker-compose.test.yml run --rm --no-deps api alembic upgrade head
+
+      # /readyz answers 200 even with storage down, so ask about the photo store itself.
+      - name: Check photo storage
+        run: curl -s http://localhost:8000/readyz | jq -e '.checks.storage == "ok"'
 
       # ---- Install Node + Playwright ----
       - name: Set up Node

@@ -21,7 +21,10 @@ setup() {
     WORK="$(mktemp -d "${TOP}/w.XXXX")"
     mkdir -p "${WORK}/bin" "${WORK}/etc/perfect-day" "${WORK}/backups/nightly" "${WORK}/log" \
         "${WORK}/deploy/scripts" "${WORK}/nas" "${WORK}/calls" "${WORK}/objects"
-    echo "MASTER_SECRET=live" > "${WORK}/etc/perfect-day/app.env"
+    # The NUC before the switch (row 41): the app uses MinIO.
+    printf "MASTER_SECRET=live\nS3_ENDPOINT_URL=http://minio:9000\n" > "${WORK}/etc/perfect-day/app.env"
+    printf "services:\n  postgres:\n    image: p\n  minio:\n    image: m\n  garage:\n    image: g\n" \
+        > "${WORK}/deploy/docker-compose.yml"
     echo "PRIVATE" > "${WORK}/etc/perfect-day/backup.key"
     printf 'one' > "${WORK}/objects/a.bin"; printf 'two!' > "${WORK}/objects/b.bin"
     printf '#!/usr/bin/env bash\necho "smoke" >> "%s/calls/order"\n' "${WORK}" > "${WORK}/deploy/scripts/smoke-test.sh"
@@ -176,7 +179,7 @@ echo "into a project: never touches production"
 setup
 bash "${RESTORE}" 2026-11-18 --into perfect-day-drill </dev/null >/dev/null 2>&1
 check "every compose call names the project" bash -c '! grep "compose" "$1" | grep -qv -- "-p perfect-day-drill"' _ "${CALLS}/docker"
-check "starts only postgres and minio" grep -q "up -d --wait postgres minio" "${CALLS}/docker"
+check "starts postgres and the store the app uses (minio)" grep -q "up -d --wait postgres minio" "${CALLS}/docker"
 check "never --profile nuc" bash -c '! grep -q -- "--profile nuc" "$1"' _ "${CALLS}/docker"
 check "reuses production's api image instead of building one" grep -q "tag perfect-day-api:latest perfect-day-drill-api:latest" "${CALLS}/docker"
 check "tags before the import runs" bash -c 'grep -n "" "$1" | grep -E "tag perfect-day-api|photos import" | head -1 | grep -q " tag "' _ "${CALLS}/docker"
@@ -209,7 +212,7 @@ check "ran photos verify" grep -q "photos verify" "${CALLS}/docker"
 check "tore the project down with its volumes" grep -q -- "-p perfect-day-drill down -v" "${CALLS}/docker"
 check "removes the borrowed image tag" grep -q "image rm perfect-day-drill-api:latest" "${CALLS}/docker"
 
-echo "drill_starts_only_postgres_minio"
+echo "drill_starts_only_postgres_and_the_store"
 setup
 export PS_SERVICES='api\nminio\npostgres\n'
 RC=0; OUT=$(bash "${DRILL}" 2>&1) || RC=$?
@@ -244,6 +247,81 @@ RC=0; OUT=$(bash "${DRILL}" 2>&1) || RC=$?
 check "fails" test "${RC}" -ne 0
 check "says app.env differs" grep -q "app.env" <<<"${OUT}"
 check "never prints a secret" bash -c '! grep -q "MASTER_SECRET" <<<"$1"' _ "${OUT}"
+
+# ── row 41: the store follows S3_ENDPOINT_URL; every night stays restorable ──
+set_live_endpoint() { python3 "${HERE}/../lib/envfile.py" set "${PD_ETC}/app.env" S3_ENDPOINT_URL "$1" >/dev/null; }
+
+echo "into_starts_storage_named_by_endpoint"
+setup
+set_live_endpoint http://garage:3900
+bash "${RESTORE}" 2026-11-18 --into perfect-day-drill </dev/null >/dev/null 2>&1
+check "starts postgres and garage" grep -q "up -d --wait postgres garage" "${CALLS}/docker"
+check "not minio" bash -c '! grep -q "up -d --wait postgres minio" "$1"' _ "${CALLS}/docker"
+
+echo "drill_expects_postgres_and_endpoint_service"
+setup
+set_live_endpoint http://garage:3900
+make_night 2026-11-18 "${NAS}/Backups/perfect-day/nightly/2026-11-18"   # a night after the switch
+export PS_SERVICES='garage\npostgres\n'
+RC=0; OUT=$(bash "${DRILL}" 2>&1) || RC=$?
+check "passes with garage and postgres" test "${RC}" -eq 0
+check "says DRILL PASSED" grep -q "DRILL PASSED" <<<"${OUT}"
+export PS_SERVICES='minio\npostgres\n'
+RC=0; OUT=$(bash "${DRILL}" 2>&1) || RC=$?
+check "fails when the other store ran" test "${RC}" -ne 0
+
+echo "drill_ignores_only_the_endpoint_line"
+setup   # the night on the NAS says minio (taken before the switch)
+set_live_endpoint http://garage:3900
+export PS_SERVICES='garage\npostgres\n'
+RC=0; OUT=$(bash "${DRILL}" 2>&1) || RC=$?
+check "a night from before the switch still passes" test "${RC}" -eq 0
+setup
+set_live_endpoint http://garage:3900
+echo "MASTER_SECRET=different" >> "${PD_ETC}/app.env"
+python3 - "${PD_ETC}/app.env" <<'PYX'
+import sys; p = sys.argv[1]; lines = open(p).read().splitlines()
+open(p, "w").write("\n".join(l for l in lines if l != "MASTER_SECRET=live") + "\n")
+PYX
+export PS_SERVICES='garage\npostgres\n'
+RC=0; OUT=$(bash "${DRILL}" 2>&1) || RC=$?
+check "any other difference still fails" test "${RC}" -ne 0
+check "says app.env differs" grep -q "app.env" <<<"${OUT}"
+
+echo "drill_passes_on_a_night_from_before_the_rpc_secret"
+# The first deploy of release 1 adds GARAGE_RPC_SECRET to app.env, so every older
+# night lacks it; those nights must still drill clean (review, Important 3).
+setup   # the night has no GARAGE_RPC_SECRET
+echo "GARAGE_RPC_SECRET=$(printf 'a%.0s' $(seq 64))" >> "${PD_ETC}/app.env"
+RC=0; OUT=$(bash "${DRILL}" 2>&1) || RC=$?
+check "passes" test "${RC}" -eq 0
+check "says DRILL PASSED" grep -q "DRILL PASSED" <<<"${OUT}"
+
+echo "with_config_keeps_live_endpoint"
+setup   # the night says minio
+printf "MASTER_SECRET=changed\nS3_ENDPOINT_URL=http://garage:3900\n" > "${PD_ETC}/app.env"
+RC=0; OUT=$(bash "${RESTORE}" 2026-11-18 --config-only <<<"replace config" 2>&1) || RC=$?
+check "exits 0" test "${RC}" -eq 0
+check "secrets are the backup's" grep -qx "MASTER_SECRET=live" "${PD_ETC}/app.env"
+check "the live storage address is kept" grep -qx "S3_ENDPOINT_URL=http://garage:3900" "${PD_ETC}/app.env"
+check "says so" grep -q "kept the storage address" <<<"${OUT}"
+
+echo "config_only_rewrites_unknown_service_endpoint"
+setup   # the night says minio
+rm -f "${PD_ETC}/app.env"   # a new machine: no live config
+printf "services:\n  postgres:\n    image: p\n  garage:\n    image: g\n" > "${PD_DEPLOY_DIR}/docker-compose.yml"
+RC=0; OUT=$(bash "${RESTORE}" 2026-11-18 --config-only <<<"replace config" 2>&1) || RC=$?
+check "exits 0" test "${RC}" -eq 0
+check "points at Garage" grep -qx "S3_ENDPOINT_URL=http://garage:3900" "${PD_ETC}/app.env"
+check "says why" grep -q "no minio service" <<<"${OUT}"
+check "still no Docker" test ! -s "${CALLS}/docker"
+
+echo "config_only_keeps_known_service_endpoint"
+setup
+rm -f "${PD_ETC}/app.env"
+RC=0; bash "${RESTORE}" 2026-11-18 --config-only <<<"replace config" >/dev/null 2>&1 || RC=$?
+check "exits 0" test "${RC}" -eq 0
+check "minio kept while compose defines it" grep -qx "S3_ENDPOINT_URL=http://minio:9000" "${PD_ETC}/app.env"
 
 echo ""
 if [ "${FAILS}" -eq 0 ]; then echo "restore: all passed"; else echo "restore: ${FAILS} failed"; exit 1; fi

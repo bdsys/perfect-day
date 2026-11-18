@@ -29,7 +29,7 @@
                   ┌────────────┘         │         │
                   │                      │         │
           ┌───────▼──────┐       ┌───────▼──────┐  │
-          │ PostgreSQL   │       │ MinIO (S3)   │  │
+          │ PostgreSQL   │       │ Garage (S3)  │  │
           │ relational   │       │ photos, enc. │  │
           └──────────────┘       └──────────────┘  │
                   ▲                                │
@@ -73,7 +73,7 @@ Three deployment targets are supported. The application code does not depend on 
 - **Web ↔ API:** SSR fetches use a server-side HTTP client; browser-side fetches use the same API. JWT in `Authorization: Bearer`.
 - **Expo ↔ API:** Same JWT scheme. Tokens in `expo-secure-store`.
 - **API ↔ Postgres:** all relational data.
-- **API ↔ MinIO:** boto3 S3 client. Photo delivery proxied through the API (decrypt-and-stream); signed URLs for uploads only.
+- **API ↔ Garage (S3):** boto3 S3 client. Photo delivery and uploads both go through the API (encrypt or decrypt and stream); no signed URLs. Garage replaced MinIO (tracker row 41).
 - **Worker ↔ Google APIs:** stored per-user OAuth refresh tokens (encrypted at rest — see [08-security-privacy.md](08-security-privacy.md)).
 - **Worker ↔ LLM:** outbound HTTPS to Anthropic. Retries and backoff handled inside the Celery task.
 

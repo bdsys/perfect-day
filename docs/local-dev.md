@@ -15,7 +15,6 @@ Covers: macOS and Linux (x86_64 and ARM). Requires Docker.
 | Node.js | 24+ | `brew install node` or `nvm install 24` |
 | pnpm | 9+ | `npm install -g pnpm` |
 | jq | any | `brew install jq` or `apt install jq` |
-| mc (MinIO client) | any | Optional. Used by `seed-minio-bucket.sh`. Falls back to Docker if absent. |
 
 The API venv (`apps/api/.venv`) is Python 3.12 installed from `requirements-dev.lock`, the same as CI and the production image.
 
@@ -37,9 +36,9 @@ make bootstrap
 
 This runs `scripts/bootstrap-local.sh` which:
 1. Creates `apps/api/.env` from `.env.example` and generates cryptographic secrets.
-2. Starts `postgres`, `redis`, and `minio` via Docker Compose.
+2. Starts `postgres`, `redis`, and `garage` (the photo store) via Docker Compose.
 3. Waits for all three to be healthy.
-4. Creates the `photos` MinIO bucket.
+4. (Garage creates the `photos` bucket itself on first start.)
 5. Builds `apps/api/.venv` with `uv` (Python 3.12) from `requirements-dev.lock`.
 6. Runs Alembic migrations (`alembic upgrade head`).
 7. Installs Node deps.
@@ -78,14 +77,14 @@ make up          # docker compose up -d (all 7 services)
 make logs        # follow all logs
 ```
 
-Services started: `postgres`, `redis`, `minio`, `pgadmin`, `api`, `worker`, `beat`, `web`.
+Services started: `postgres`, `redis`, `garage`, `pgadmin`, `api`, `worker`, `beat`, `web`. (MinIO is still defined, behind the `minio` profile, only for the NUC's switch; nothing starts it in dev.)
 
 ### Option B — Hot-reload local dev (recommended for iteration)
 
 Keep infra in Docker, run app services locally for faster feedback:
 
 ```bash
-make up          # starts postgres, redis, minio only (compose handles deps)
+make infra       # starts postgres, redis, garage only
 # Then in separate terminal panes:
 make api         # FastAPI on :8000 with --reload
 make worker      # Celery worker
@@ -100,10 +99,19 @@ make web         # Next.js dev server on :3000
 | API | http://localhost:8000 | FastAPI |
 | API docs | http://localhost:8000/docs | Swagger UI (dev mode only) |
 | Web UI | http://localhost:3000 | Next.js |
-| MinIO console | http://localhost:9001 | minioadmin / minioadmin |
+| Garage S3 API | http://localhost:3900 | `perfectday-dev` / `perfectday-dev-secret-0001` (no web console) |
 | pgAdmin 4 | http://localhost:5050 | Postgres web GUI; admin@example.com / admin |
 
 ---
+
+### Start over (`make nuke-dev`)
+
+`make nuke-dev` wipes the local dev stack: the `perfect-day` containers and volumes
+on this machine (database, Garage photo store, pgAdmin) and the e2e scratch folders
+`/tmp/pd-test-*`. It lists what it will delete and asks you to type `nuke`. Images
+are never removed. It refuses on the NUC (where `/etc/perfect-day` exists) and when
+Docker points anywhere but this machine. Then `make up && make migrate` starts empty;
+sign in again locally.
 
 ## Running the Test Suite
 
@@ -117,7 +125,7 @@ Chains lint → typecheck → API unit+integration tests → web unit tests (Jes
 
 What it does and doesn't touch:
 
-- **It tests throwaway databases, not yours.** The API tests start their own Postgres, Redis and MinIO containers (testcontainers); every integration test is pointed at that Redis, never at `localhost:6379`. The e2e step migrates and uses a separate `perfectday_test` database. Your dev database is never migrated by it: run `make migrate` yourself.
+- **It tests throwaway databases, not yours.** The API tests start their own Postgres, Redis and Garage containers (testcontainers); every integration test is pointed at that Redis, never at `localhost:6379`. The e2e step migrates and uses a separate `perfectday_test` database. Your dev database is never migrated by it: run `make migrate` yourself.
 - **It replaces your dev containers.** The e2e step uses the same compose project as `make up`, so it swaps your running dev containers for test ones and removes them at the end (`down -v`). Your dev data volumes survive. Run `make up` afterwards.
 
 ### Before merging a PR: the dev-stack check
@@ -144,7 +152,7 @@ Tests: `apps/api/tests/unit/` — argon2/JWT/AES-GCM, timezone utilities, citati
 make test
 ```
 
-Integration tests spin up **real** Postgres, Redis, and MinIO containers via `testcontainers` — no mocking of these services (see `design/testing.md` § Mocking policy). Requires Docker. Subsequent runs use cached container images (~1 min).
+Integration tests spin up **real** Postgres, Redis, and Garage containers via `testcontainers` — no mocking of these services (see `design/testing.md` § Mocking policy). Requires Docker. Subsequent runs use cached container images (~1 min).
 
 ### With coverage report
 
@@ -232,10 +240,9 @@ Each row maps a scope item (`design/09-poc-scope.md` items 1–10) to the comman
 ## Troubleshooting
 
 **`GET /readyz` returns 503**
-MinIO `photos` bucket doesn't exist. Run:
-```bash
-./scripts/seed-minio-bucket.sh
-```
+Garage isn't healthy or has no `photos` bucket. Check `docker compose logs --tail=50 garage`.
+Garage creates the bucket on first start; if the dev secret changed, it refuses to start
+(it remembers the first one): `make nuke-dev` and start again.
 
 **Alembic migration fails with `citext extension does not exist`**
 Your Postgres container is missing the extension. The migration enables it automatically via `CREATE EXTENSION IF NOT EXISTS citext`. If you're using an external Postgres, ensure the `citext` extension is available. The official `postgres:16-alpine` image includes it.
@@ -377,4 +384,4 @@ curl -s -X POST http://localhost:8000/v1/diaries/<diary_id>/scan/run \
 
 - Generated secrets in `apps/api/.env` are for local use only. Never commit `.env` (it's in `.gitignore`).
 - `MASTER_SECRET` and `OAUTH_TOKEN_SECRET` are AES-256-GCM encryption keys. If you rotate them after the database has data, existing encrypted rows become unreadable. See [`deploy/nuc-ops.md`](../deploy/nuc-ops.md) for the production secrets workflow and the upgrade path to sops+YubiKey.
-- MinIO admin credentials (`minioadmin`/`minioadmin`) are only used locally. The NUC deployment uses random credentials via `scripts/nuc/10-secrets.sh`.
+- The dev Garage key (`perfectday-dev`/`perfectday-dev-secret-0001`) is only used locally. The NUC deployment uses random credentials via `scripts/nuc/10-secrets.sh`.

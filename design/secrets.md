@@ -22,7 +22,7 @@ All secrets the application handles, where each is stored, who needs it at runti
 | `expo_push_access_token` | Expo Push Notification service | API process | sops YAML | KMS secret | Not present | On staff change or suspected leak |
 | `postgres_password` | Database access | API process, Celery worker, Alembic | sops YAML | KMS secret | Replica password only (separate credential, read-only access) | On staff change or suspected leak |
 | `redis_password` | Redis access | API process, Celery worker | sops YAML | KMS secret | sops YAML on CX21 (CX21 API proxies writes to NUC Redis over WG) | On staff change or suspected leak |
-| `minio_access_key` / `minio_secret_key` | Object store access | API process, Celery worker | sops YAML | KMS / provider IAM | **R2 access key + secret (not MinIO)** — sops YAML on CX21 | On staff change or suspected leak |
+| `s3_access_key` / `s3_secret_key` | Object store access | API process, Celery worker | sops YAML | KMS / provider IAM | **R2 access key + secret (not MinIO)** — sops YAML on CX21 | On staff change or suspected leak |
 | `r2_access_key` / `r2_secret_key` | Cloudflare R2 object store (hybrid photo path) | CX21 FastAPI + NUC Celery worker | Not present in NUC-only | N/A | sops YAML on CX21; also injected to NUC Celery for photo ingest writes | On staff change or suspected leak |
 | `wg_private_key_cx21` | WireGuard private key for CX21 peer | CX21 WireGuard | N/A | N/A | `/etc/wireguard/wg0.conf` (system secret, not app secret) | On suspected compromise |
 | `mtls_client_cert_cx21` | mTLS client cert for DEK-unwrap RPC | CX21 FastAPI | N/A | N/A | sops YAML on CX21 (cert + private key) | Annual renewal |

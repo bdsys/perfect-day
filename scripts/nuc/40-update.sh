@@ -25,6 +25,8 @@ self_update_snapshot
 # (lib/deploy-lock.sh). Waits up to 30 minutes for a running backup.
 # shellcheck source=lib/deploy-lock.sh
 source "$(dirname "$(readlink -f "$0")")/lib/deploy-lock.sh"
+# shellcheck source=lib/readyz.sh
+source "$(dirname "$(readlink -f "$0")")/lib/readyz.sh"
 if ! deploy_lock_take; then
     echo "ERROR: a backup has held the lock for 30 minutes; not deploying." >&2
     exit 1
@@ -82,6 +84,12 @@ else
     echo "  WARNING: ${ENV_FILE} not found — Caddyfile will use private_ranges fallback." >&2
 fi
 ./scripts/nuc/render-caddyfile.sh
+if [ -f "${ENV_FILE}" ]; then
+    # Settings a newer release needs that an older install lacks (10-secrets.sh must
+    # never be re-run on a NUC with data). Generated once, kept after, never printed.
+    # Garage cannot start without its RPC secret (tracker row 41).
+    python3 "${DEPLOY_DIR}/scripts/nuc/lib/envfile.py" ensure "${ENV_FILE}" GARAGE_RPC_SECRET hex32
+fi
 
 echo '[3/8] Keeping the running images for rollback...'
 previous_complete() {
@@ -114,7 +122,7 @@ fi
 echo '[4/8] Building app images...'
 # shellcheck disable=SC2086
 docker compose --profile nuc build ${APP_SERVICES}
-docker compose --profile nuc pull edge
+docker compose --profile nuc pull edge garage
 
 echo '[5/8] Running migrations...'
 # The worker and beat would otherwise run old code against a half-changed schema.
@@ -132,6 +140,18 @@ echo '[6/8] Restarting app services (infra stays up)...'
 docker compose --profile nuc up -d --no-deps ${APP_SERVICES}
 # Caddy and the DDNS updater read mounted files that compose cannot see change.
 docker compose --profile nuc up -d --no-deps --force-recreate edge
+# The photo store: compose recreates it when its image tag changed; a changed
+# garage.toml (a mounted file compose cannot see) needs --force-recreate. Before the
+# switch nothing uses it yet; after it, this is how a Garage update reaches the NUC.
+GARAGE_ARGS=()
+if [ -n "${DEPLOYED_SHA}" ] && ! git diff --quiet "${DEPLOYED_SHA}" "${NEW_SHA}" -- deploy/garage/garage.toml 2>/dev/null; then
+    GARAGE_ARGS=(--force-recreate)
+fi
+if ! docker compose --profile nuc up -d --no-deps --wait --wait-timeout 120 "${GARAGE_ARGS[@]}" garage; then
+    echo "ERROR: Garage, the photo store, did not become healthy (the app itself was restarted)." >&2
+    echo '  Check it: docker compose --profile nuc logs --tail=50 garage' >&2
+    exit 1
+fi
 if [ -f "${DDNS_CONFIG}" ]; then
     docker compose --profile nuc up -d --no-deps --force-recreate cloudflare-ddns
 fi
@@ -149,6 +169,19 @@ until curl -sf --max-time 5 "${HEALTH_URL}" > /dev/null 2>&1; do
     ELAPSED=$(( ELAPSED + 5 ))
     echo "  Waiting... ${ELAPSED}s"
 done
+# /readyz answers 200 even when photo storage is down, so ask about storage itself.
+STORAGE_WAIT=0
+until readyz_storage_ok "${HEALTH_URL}"; do
+    if [ "${STORAGE_WAIT}" -ge 30 ]; then
+        echo "ERROR: the app is up but photo storage is not (see the line above)." >&2
+        echo '  Check the store: docker compose --profile nuc ps; docker compose logs --tail=50 garage (minio before the switch)' >&2
+        echo '  If this deploy caused it: sudo ./scripts/nuc/50-rollback.sh' >&2
+        exit 1
+    fi
+    sleep 5
+    STORAGE_WAIT=$(( STORAGE_WAIT + 5 ))
+done
+echo '  Photo storage: ok'
 
 echo "${NEW_SHA}" > "${DEPLOY_DIR}/last-deployed-sha"
 echo "  Recorded deployed SHA: ${NEW_SHA}"

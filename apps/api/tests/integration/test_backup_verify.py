@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -13,7 +14,11 @@ from sqlalchemy.orm import Session
 
 from app.core.photo_crypto import encrypt_stream, generate_dek, wrap_dek
 from app.services.avatar import store_avatar
-from app.services.backup_verify import verify_photo_sample
+from app.services.backup_verify import (
+    missing_referenced_keys,
+    referenced_keys,
+    verify_photo_sample,
+)
 from app.services.photos import put_object_bytes
 from tests.fixtures.factories import make_photo, make_user
 
@@ -145,3 +150,61 @@ async def test_cli_nothing_checked_with_rows_present_fails(client, db_session, m
 
     assert result.exit_code == 1
     assert "checked=0" in result.output
+
+
+# ── Every referenced object present (row 41: the storage switch refuses otherwise) ──
+
+
+async def test_missing_referenced_keys_lists_absent_photo_and_avatar_keys(
+    client, db_session, sync_engine, s3_client
+) -> None:
+    user = await make_user(db_session)
+    whole = await _photo(db_session, user)
+    put_object_bytes(whole.thumbnail_s3_key, b"thumb")
+    whole.display_s3_key = f"{user.id}/{whole.id}_display.enc"  # never stored
+    user.avatar_s3_key = f"{user.id}/avatar/{whole.id.hex}.jpg"  # never stored
+    gone = await make_photo(db_session, user=user)  # soft-deleted: its objects may be gone
+    gone.deleted_at = datetime.now(tz=UTC)
+    await make_photo(db_session, user=user, finalized=False)  # upload not finished
+    await db_session.commit()
+
+    with Session(sync_engine) as db:
+        referenced = referenced_keys(db)
+        missing = missing_referenced_keys(db, s3_client, "photos-test")
+
+    assert missing == sorted([whole.display_s3_key, user.avatar_s3_key])
+    needed = {whole.s3_key, whole.thumbnail_s3_key, whole.display_s3_key, user.avatar_s3_key}
+    assert needed <= referenced
+    assert gone.s3_key not in referenced
+
+
+async def test_missing_referenced_keys_empty_when_all_present(
+    client, db_session, sync_engine, s3_client
+) -> None:
+    user, photos = await _two_photos_one_avatar(db_session)
+    for photo in photos:
+        put_object_bytes(photo.thumbnail_s3_key, b"thumb")
+
+    with Session(sync_engine) as db:
+        assert missing_referenced_keys(db, s3_client, "photos-test") == []
+
+
+async def test_cli_photos_missing_exits_1_and_never_prints_full_keys(
+    client, db_session, manage
+) -> None:
+    user, photos = await _two_photos_one_avatar(db_session)
+    for photo in photos:
+        put_object_bytes(photo.thumbnail_s3_key, b"thumb")
+    runner = CliRunner()
+
+    good = runner.invoke(manage.cli, ["photos", "missing"])
+    assert good.exit_code == 0, good.output
+    assert good.output.splitlines()[0] == "missing=0"
+
+    photos[0].display_s3_key = f"{user.id}/{photos[0].id}_display.enc"
+    await db_session.commit()
+    bad = runner.invoke(manage.cli, ["photos", "missing"])
+    assert bad.exit_code == 1
+    assert bad.output.splitlines()[0] == "missing=1"
+    assert photos[0].display_s3_key not in bad.output
+    assert str(user.id) not in bad.output

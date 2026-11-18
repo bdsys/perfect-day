@@ -1,16 +1,26 @@
 #!/usr/bin/env bash
 # scripts/nuc/10-secrets.sh — Provision application secrets on the NUC
 # Run on the NUC as: sudo ./scripts/nuc/10-secrets.sh
-# Writes /etc/perfect-day/app.env (chmod 600, root:docker).
+# Writes /etc/perfect-day/app.env (chmod 640, root:docker).
+#
+# For a NEW install. Do not re-run it on a NUC with data: it rewrites the whole
+# file from the template below, so every setting changed since (hostnames, the
+# Google client, anything added in place) goes back to the template. The generated
+# secrets, MASTER_SECRET included, and the storage address are kept, not
+# regenerated. Change settings in place with 15-update-config.sh instead.
+#
+# PD_ETC, PD_LOG_DIR and PD_SECRETS_ALLOW_NONROOT=1 are for its tests only
+# (scripts/nuc/tests/secrets.test.sh).
 set -euo pipefail
 
-if [ "$(id -u)" -ne 0 ]; then
+if [ "$(id -u)" -ne 0 ] && [ "${PD_SECRETS_ALLOW_NONROOT:-}" != 1 ]; then
     echo "ERROR: This script must be run as root (use sudo)." >&2
     exit 1
 fi
 
-ENV_FILE=/etc/perfect-day/app.env
-LOG_DIR=/var/log/perfect-day
+PD_ETC="${PD_ETC:-/etc/perfect-day}"
+ENV_FILE="${PD_ETC}/app.env"
+LOG_DIR="${PD_LOG_DIR:-/var/log/perfect-day}"
 
 mkdir -p "${LOG_DIR}"
 
@@ -138,6 +148,18 @@ OAUTH_TOKEN_SECRET=$(keep_or_generate OAUTH_TOKEN_SECRET hex32)
 SECRET_KEY=$(keep_or_generate SECRET_KEY hex32)
 POSTGRES_PASSWORD=$(keep_or_generate POSTGRES_PASSWORD hex32)
 MINIO_ROOT_PASSWORD=$(keep_or_generate MINIO_ROOT_PASSWORD hex24)
+# Garage's internal (node-to-node) secret; one node, but Garage requires it.
+GARAGE_RPC_SECRET=$(keep_or_generate GARAGE_RPC_SECRET hex32)
+
+# The photo store the app uses. Kept as it is: before the switch an install still
+# says MinIO (scripts/nuc/60-switch-storage.sh changes it). A new install gets Garage.
+S3_ENDPOINT_URL="$(existing_value S3_ENDPOINT_URL)"
+if [[ -n "${S3_ENDPOINT_URL}" ]]; then
+    echo "  S3_ENDPOINT_URL kept (${S3_ENDPOINT_URL})" >&2
+else
+    S3_ENDPOINT_URL=http://garage:3900
+    echo "  S3_ENDPOINT_URL set to ${S3_ENDPOINT_URL}" >&2
+fi
 
 echo ""
 echo "--- Writing ${ENV_FILE} ---"
@@ -172,12 +194,14 @@ CELERY_RESULT_BACKEND=redis://redis:6379/1
 MINIO_ROOT_USER=perfectday
 MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
 
-# S3 (API client config — points at MinIO using the same creds)
-S3_ENDPOINT_URL=http://minio:9000
+# Photo storage (S3 API). The same key pair is Garage's default key and MinIO's
+# root login, so the switch between them changes only S3_ENDPOINT_URL.
+S3_ENDPOINT_URL=${S3_ENDPOINT_URL}
 S3_ACCESS_KEY=perfectday
 S3_SECRET_KEY=${MINIO_ROOT_PASSWORD}
 S3_BUCKET_PHOTOS=photos
 S3_REGION=us-east-1
+GARAGE_RPC_SECRET=${GARAGE_RPC_SECRET}
 
 # JWT / crypto
 SECRET_KEY=${SECRET_KEY}
@@ -216,14 +240,14 @@ EOF
 
 # 640, not 600: compose runs as the perfectday service user (docker group) and
 # has to read this file through the .env symlinks.
-chown root:docker "${ENV_FILE}"
+[ "$(id -u)" -eq 0 ] && chown root:docker "${ENV_FILE}"
 chmod 640 "${ENV_FILE}"
 
 echo "  Written: ${ENV_FILE}"
 echo "  Mode:    $(stat -c '%a %U:%G' ${ENV_FILE})"
 
 # ── Write Cloudflare DDNS config ──────────────────────────────────────────────
-DDNS_CONFIG=/etc/perfect-day/cloudflare-ddns.config.json
+DDNS_CONFIG="${PD_ETC}/cloudflare-ddns.config.json"
 if [[ -n "${CLOUDFLARE_API_TOKEN:-}" && -n "${CLOUDFLARE_ZONE_ID:-}" ]]; then
     echo ""
     echo "--- Writing ${DDNS_CONFIG} ---"

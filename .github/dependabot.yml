@@ -32,3 +32,17 @@ updates:
         update-types:
           - "minor"
           - "patch"
+
+  # Compose images: the pinned Garage tag (tracker row 41), Postgres, Redis, Caddy.
+  - package-ecosystem: "docker-compose"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    ignore:
+      # Never a major version from a bot: CI starts every store empty, so it cannot
+      # see that a Postgres 16 data folder will not open in Postgres 17+, or that a
+      # Garage major (v1 -> v2 did) needs a migration step first. Majors are done by
+      # hand with a plan. Minor and patch updates still come through.
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]

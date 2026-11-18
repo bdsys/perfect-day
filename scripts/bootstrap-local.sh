@@ -31,12 +31,10 @@ else
 fi
 
 # ---- 2. Start infrastructure ----
-echo "→ Starting postgres, redis, minio..."
+echo "→ Starting postgres, redis, garage (waiting until healthy)..."
+# Garage creates the photos bucket itself (--default-bucket), so nothing to seed.
 docker compose -f "${REPO_ROOT}/docker-compose.yml" -f "${REPO_ROOT}/docker-compose.dev.yml" \
-  up -d postgres redis minio
-
-echo "→ Waiting for MinIO..."
-"${REPO_ROOT}/scripts/wait-for-healthy.sh" "http://localhost:9000/minio/health/live" 60
+  up -d --wait postgres redis garage
 echo "→ Waiting for postgres..."
 # Postgres via pg_isready
 for i in $(seq 1 20); do
@@ -44,10 +42,6 @@ for i in $(seq 1 20); do
     pg_isready -U perfectday > /dev/null 2>&1 && break
   sleep 3
 done
-
-# ---- 3. Seed MinIO bucket ----
-echo "→ Seeding MinIO bucket..."
-"${REPO_ROOT}/scripts/seed-minio-bucket.sh"
 
 # ---- 4. Python env + migrations ----
 # Same Python (3.12) and same hashed lock as CI and the production image.
