@@ -10,8 +10,12 @@ keeps describing the old event. Today only two event changes redraft an entry: a
 
 ## What the parent sees (approved)
 
-- After an edit to an event's **title, location, description or guests**, the entry's draft catches up within about
-  10 minutes (the existing redraft coalescing window).
+- After an edit to an event's **title, location, description or guests**, the entry's draft catches up after the
+  app next sees the event, then about 10 more minutes. The app sees edits at the diary's next scan (hourly by
+  default, `scan_interval_minutes`) or when the parent taps **Scan now** on the diary page. The redraft then runs
+  after the 10-minute coalescing window (`REDRAFT_WINDOW_SECONDS = 600` in `apps/api/app/workers/tasks.py`). So it's
+  up to about 70 minutes, or about 10 minutes after Scan now. (Corrected 2026-11-18: the first version said
+  "within about 10 minutes", which left out the scan.)
 - **A draft only the AI wrote** is rewritten in place.
 - **A draft the parent edited** keeps their text; the new version appears in the AI suggestion box beside it
   (row 25.3 behaviour).
@@ -50,6 +54,7 @@ How to handle row 33's "it's a new LLM cost path, so measure on the NUC first" (
 - **How:** `queue_redraft(entry_id)` after the session commits, exactly as the move and cancel paths do. The
   existing drafting code already decides in-place versus suggestion (`apps/api/app/workers/llm.py:548-551`,
   `write_in_place`), and already never writes over published text.
+- **Only events that have happened:** an edit redrafts only when the event has ended (its new time is in the past). A move to the future belongs to the move rule alone, which leaves calendar-pick drafts attached; redrafting them would describe something that hasn't happened. (Added while building, 2026-11-18.)
 - **A move to the future and an edit at once:** the existing move path wins (it may release the event from an
   untouched draft). Don't queue a second redraft for the same entry; `queue_redraft` would coalesce it anyway.
 - **Accounts waiting for deletion:** don't queue for an entry whose diary owner isn't active (`deletion_state()` in
@@ -76,5 +81,5 @@ How to handle row 33's "it's a new LLM cost path, so measure on the NUC first" (
   - An owner pending deletion queues nothing.
   - The log line carries the field names and no event text.
 - `make test-all`, then the dev-stack check, then CI.
-- After deploy, Andrew renames an event that has a draft and checks that the draft catches up within about
-  10 minutes. Then edit a draft he wrote and check a suggestion appears. The NUC logs show `event_edit_redraft_queued`.
+- After deploy, Andrew renames an event that has a draft, taps **Scan now** on the diary, and checks that the draft
+  catches up about 10 minutes later. Then edit a draft he wrote and check a suggestion appears. The NUC logs show `event_edit_redraft_queued`.
