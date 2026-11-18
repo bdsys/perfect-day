@@ -36,6 +36,10 @@ services:
   # release 2 removes it (tracker row 41).
   minio:
     image: minio/minio:latest
+    # Started only when a command names it (the switch, the drill, a restore), so
+    # fresh dev, CI and e2e stacks never pull this image, which is no longer
+    # published. On the NUC, Docker keeps restarting the running one regardless.
+    profiles: ["minio"]
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:

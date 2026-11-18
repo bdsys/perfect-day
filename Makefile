@@ -1,6 +1,6 @@
 .PHONY: up down infra api worker beat web migrate lint typecheck \
         test test-web test-scripts test-fast test-all test-e2e test-live test-smoke test-coverage \
-        web-e2e-install seed-bucket bootstrap lock lock-upgrade
+        web-e2e-install bootstrap lock lock-upgrade
 
 API_DIR  := apps/api
 WEB_DIR  := apps/web
@@ -47,14 +47,14 @@ logs:
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile dev logs -f
 
 # Option B: infra in Docker + app processes locally (hot-reload dev)
-#   Step 1: make infra          — start postgres, redis, minio only
+#   Step 1: make infra          — start postgres, redis, garage only
 #   Step 2 (separate terminals):
 #     make api    — FastAPI with --reload on :8000
 #     make worker — Celery worker
 #     make beat   — Celery beat scheduler
 #     make web    — Next.js dev server on :3000
 infra:
-	docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres redis minio
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --wait postgres redis garage
 
 # Run app processes locally (use after `make infra`, not after `make up`)
 api:
@@ -78,9 +78,6 @@ migrate:
 
 migrate-down:
 	cd $(API_DIR) && $(CURDIR)/$(VENV_BIN)/alembic downgrade -1
-
-seed-bucket:
-	./scripts/seed-minio-bucket.sh
 
 # ---------------------------------------------------------------------------
 # Code quality
@@ -109,7 +106,8 @@ test:
 
 # Shell tests for the NUC scripts (no Docker, no root). Part of test-all and CI's Lint job.
 test-scripts:
-	@set -e; for t in scripts/nuc/tests/*.test.sh; do echo "== $$t"; bash "$$t"; done
+	@set -e; for t in scripts/nuc/tests/*.test.sh scripts/tests/*.test.sh; do \
+	  [ -e "$$t" ] || continue; echo "== $$t"; bash "$$t"; done
 
 # Web unit tests (Jest). Part of test-all and of CI's Web build job.
 test-web:
@@ -119,7 +117,7 @@ test-web:
 # Excludes test-live (real API cost) and smoke-test.sh (needs a running stack).
 test-all:
 	@echo "TIP: First time on Linux/WSL? See the 'Linux / WSL one-time setup' section in README.md."
-	@echo "TIP: Before the app is usable locally, run: make bootstrap  (or manually: make migrate && make seed-bucket)"
+	@echo "TIP: Before the app is usable locally, run: make bootstrap  (or manually: make migrate)"
 	@$(MAKE) lint
 	@$(MAKE) test-scripts
 	@$(MAKE) typecheck
@@ -141,9 +139,6 @@ test-e2e:
 	./scripts/wait-for-healthy.sh http://localhost:8000/readyz 60
 	./scripts/wait-for-healthy.sh http://localhost:3000 90
 	./scripts/wait-for-healthy.sh http://localhost:3000/login 90
-	docker run --rm --network perfect-day_default \
-	  --entrypoint sh minio/mc:latest -c \
-	  'mc alias set local http://minio:9000 minioadmin minioadmin && mc mb --ignore-existing local/photos'
 	cd $(API_DIR) && DATABASE_URL_SYNC=postgresql://perfectday:perfectday@localhost:5432/perfectday_test \
 	  $(CURDIR)/$(VENV_BIN)/alembic upgrade head
 	$(MAKE) web-e2e-install

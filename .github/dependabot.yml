@@ -32,3 +32,10 @@ updates:
         update-types:
           - "minor"
           - "patch"
+
+  # Compose images: the pinned Garage tag (tracker row 41), Postgres, Redis, Caddy.
+  - package-ecosystem: "docker-compose"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"

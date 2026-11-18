@@ -65,3 +65,11 @@ def test_garage_toml_has_no_secret():
     assert cfg["data_fsync"] is True
     assert cfg["s3_api"]["s3_region"] == "us-east-1"
     assert cfg["s3_api"]["api_bind_addr"] == "[::]:3900"
+
+
+def test_minio_only_when_asked_for():
+    # MinIO stays defined until release 2 so the switch can read it, but nothing
+    # starts it unless a command names it: fresh dev, CI and e2e stacks never pull
+    # the image, which is no longer published (tracker row 41).
+    assert _services()["minio"]["profiles"] == ["minio"]
+    assert "profiles" not in _services()["garage"]
