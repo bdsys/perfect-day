@@ -58,7 +58,7 @@ jobs:
 
       - name: ESLint
         working-directory: apps/web
-        run: npx next lint --max-warnings 0
+        run: npx eslint src --max-warnings 0
 
       - name: TypeScript check
         working-directory: apps/web
