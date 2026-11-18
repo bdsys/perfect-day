@@ -52,6 +52,13 @@ button:disabled {
   padding: 0 1rem;
 }
 
+/* Same width and side padding as .container, so page content lines up with the header. */
+.page-container {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 1.5rem 1rem 0;
+}
+
 .app-header {
   background: var(--surface);
   border-bottom: 1px solid var(--border);
