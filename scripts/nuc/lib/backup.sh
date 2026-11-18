@@ -26,6 +26,22 @@ backup_log() { echo "[backup $(date -u +%FT%TZ)] $*"; }
 # docker compose for the production project, run from the deploy dir.
 pd_compose() { (cd "${PD_DEPLOY_DIR}" && docker compose --profile nuc "$@"); }
 
+PD_ENVFILE_PY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/envfile.py"
+
+# storage_service_from_env <env file>: the compose service the app's photo store is,
+# from the host in S3_ENDPOINT_URL (garage or minio; garage when unset, as compose's
+# default). Returns 1 for anything else. Tracker row 41.
+storage_service_from_env() {
+    local url
+    url="$(python3 "${PD_ENVFILE_PY}" get "$1" S3_ENDPOINT_URL 2>/dev/null || true)"
+    case "${url}" in
+        "") echo garage ;;
+        http://garage:*) echo garage ;;
+        http://minio:*) echo minio ;;
+        *) echo "unknown photo store in S3_ENDPOINT_URL: ${url}" >&2; return 1 ;;
+    esac
+}
+
 # backup_keep_list <today YYYY-MM-DD> <folder names...>
 # Prints the folder names to keep, sorted: the newest 30, plus the earliest of
 # each calendar month among the 12 months ending with today's month. Names that

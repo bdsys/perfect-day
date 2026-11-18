@@ -4,12 +4,13 @@
 # Usage: sudo ./scripts/nuc/drill.sh [YYYY-MM-DD]   (default: the newest night on the NAS)
 #
 # Fetches the night from the NAS, restores it into a throwaway compose project
-# (perfect-day-drill: postgres and minio only, nothing published, so nothing scans
+# (perfect-day-drill: postgres and the photo store only, nothing published, so nothing scans
 # Google, calls Anthropic, sends email or touches DNS), then checks that:
-#   - the restored app.env matches the live one,
+#   - the restored app.env matches the live one (apart from S3_ENDPOINT_URL: a
+#     night from before the MinIO -> Garage switch says minio, row 41),
 #   - row and object counts match the backup's manifest,
 #   - photos and avatars decrypt (manage.py photos verify),
-#   - only postgres and minio ran, with no published ports.
+#   - only postgres and the store S3_ENDPOINT_URL names ran, with no published ports.
 # The project and its volumes are always removed afterwards. The data never leaves
 # this machine. Prints DRILL PASSED or DRILL FAILED: <reasons>.
 set -euo pipefail
@@ -46,10 +47,13 @@ rsync -a --timeout=60 "${PD_NAS_URL}${DATE}/" "${TMP}/night/" \
 MANIFEST="${TMP}/night/manifest.json"
 
 # The compose file reads the live /etc/perfect-day/app.env, so the restored one
-# must be identical for this drill to have tested the backup's keys.
+# must be identical for this drill to have tested the backup's keys. The storage
+# address is left out: it names the store, not a key, and changes at the switch.
 age -d -i "${PD_KEY}" < "${TMP}/night/config.tar.age" | tar -xOf - "${PD_ETC#/}/app.env" > "${TMP}/app.env" \
     || REASONS+=("the config backup has no app.env")
-cmp -s "${TMP}/app.env" "${PD_ETC}/app.env" || REASONS+=("the restored app.env differs from the live one")
+cmp -s <(grep -v '^S3_ENDPOINT_URL=' "${TMP}/app.env") <(grep -v '^S3_ENDPOINT_URL=' "${PD_ETC}/app.env") \
+    || REASONS+=("the restored app.env differs from the live one")
+STORE="$(storage_service_from_env "${PD_ETC}/app.env")" || { echo "DRILL FAILED: unknown photo store"; exit 1; }
 
 if "${HERE}/restore.sh" "${DATE}" --source-dir "${TMP}/night" --into "${PROJECT}" </dev/null; then
     rows="$(compose_p exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -c "select (select count(*) from users), (select count(*) from diaries), (select count(*) from entries), (select count(*) from photos)"')"
@@ -71,7 +75,8 @@ else
 fi
 
 running="$(compose_p ps --services --status running | sort | tr '\n' ' ')"
-[ "${running}" = "minio postgres " ] || REASONS+=("expected only postgres and minio running, saw: ${running}")
+expected="$(printf '%s\n' postgres "${STORE}" | sort | tr '\n' ' ')"
+[ "${running}" = "${expected}" ] || REASONS+=("expected only postgres and ${STORE} running, saw: ${running}")
 if docker ps --filter "label=com.docker.compose.project=${PROJECT}" --format '{{.Ports}}' | grep -q -- '->'; then
     REASONS+=("a drill container published a port")
 fi
