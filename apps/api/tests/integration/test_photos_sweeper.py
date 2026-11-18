@@ -64,7 +64,7 @@ async def test_sweep_removes_old_unfinalized_row(
     )
     await db_session.commit()
 
-    # Put a stray tmp object in MinIO matching the key the sweeper will attempt to clean
+    # Put a stray tmp object in storage matching the key the sweeper will attempt to clean
     tmp_key = f"tmp/{user_id}/{photo_id}"
     s3_client.put_object(Bucket=photos_bucket, Key=tmp_key, Body=b"x")
 

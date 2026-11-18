@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import AsyncGenerator
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -11,7 +12,8 @@ import pytest_asyncio
 import sqlalchemy as sa
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from testcontainers.minio import MinioContainer
+from testcontainers.core.container import DockerContainer
+from testcontainers.core.waiting_utils import wait_for_logs
 from testcontainers.postgres import PostgresContainer
 from testcontainers.redis import RedisContainer
 
@@ -19,10 +21,36 @@ from testcontainers.redis import RedisContainer
 # Session-scoped containers (start once, reused across all tests)
 # ---------------------------------------------------------------------------
 
-# minio/minio and minio/mc were removed from Docker Hub (MinIO stopped
-# distributing community images), so a machine without a cached copy cannot
-# pull them. Chainguard rebuilds the same server from source.
-MINIO_TEST_IMAGE = "cgr.dev/chainguard/minio:latest"
+# Photo storage is Garage, as in every other environment (tracker row 41). The image
+# tag is read from docker-compose.yml, the one place it is pinned, and the server
+# uses the same committed config file as dev and the NUC.
+REPO_ROOT = Path(__file__).resolve().parents[4]
+GARAGE_TOML = REPO_ROOT / "deploy" / "garage" / "garage.toml"
+S3_TEST_ACCESS_KEY = "perfectday-test"
+S3_TEST_SECRET_KEY = "perfectday-test-secret-01"  # noqa: S105  # throwaway container
+
+
+def garage_image() -> str:
+    import yaml
+
+    compose = yaml.safe_load((REPO_ROOT / "docker-compose.yml").read_text())
+    return compose["services"]["garage"]["image"]
+
+
+class _S3Server:
+    """The running Garage container, with the connection details tests need."""
+
+    def __init__(self, container: DockerContainer):
+        self.container = container
+
+    def get_config(self) -> dict[str, str]:
+        host = self.container.get_container_host_ip()
+        port = self.container.get_exposed_port(3900)
+        return {
+            "endpoint": f"{host}:{port}",
+            "access_key": S3_TEST_ACCESS_KEY,
+            "secret_key": S3_TEST_SECRET_KEY,
+        }
 
 
 @pytest.fixture(scope="session")
@@ -71,22 +99,32 @@ def isolate_redis(redis_container):
 
 
 @pytest.fixture(scope="session")
-def minio_container():
-    with MinioContainer(image=MINIO_TEST_IMAGE) as m:
-        yield m
+def s3_server():
+    container = (
+        DockerContainer(garage_image())
+        .with_exposed_ports(3900)
+        .with_volume_mapping(str(GARAGE_TOML), "/etc/garage.toml", "ro")
+        .with_env("GARAGE_DEFAULT_ACCESS_KEY", S3_TEST_ACCESS_KEY)
+        .with_env("GARAGE_DEFAULT_SECRET_KEY", S3_TEST_SECRET_KEY)
+        .with_env("GARAGE_RPC_SECRET", "0" * 64)
+        .with_command("/garage server --single-node --default-access-key")
+    )
+    with container:
+        wait_for_logs(container, "S3 API server listening", timeout=30)
+        yield _S3Server(container)
 
 
 @pytest.fixture(scope="session")
-def s3_endpoint(minio_container):
-    cfg = minio_container.get_config()
+def s3_endpoint(s3_server):
+    cfg = s3_server.get_config()
     return f"http://{cfg['endpoint']}"
 
 
 @pytest.fixture(scope="session")
-def s3_client(minio_container, s3_endpoint):
+def s3_client(s3_server, s3_endpoint):
     import boto3
 
-    cfg = minio_container.get_config()
+    cfg = s3_server.get_config()
     return boto3.client(
         "s3",
         endpoint_url=s3_endpoint,
@@ -197,11 +235,11 @@ async def db_session(db_engine) -> AsyncGenerator[AsyncSession, None]:
 
 @pytest_asyncio.fixture
 async def client(
-    db_url, redis_container, minio_container, s3_endpoint, photos_bucket
+    db_url, redis_container, s3_server, s3_endpoint, photos_bucket
 ) -> AsyncGenerator[AsyncClient, None]:
-    """AsyncClient wired to the FastAPI app with testcontainer DB + Redis + MinIO."""
+    """AsyncClient wired to the FastAPI app with testcontainer DB + Redis + Garage."""
     redis_url = f"redis://{redis_container.get_container_host_ip()}:{redis_container.get_exposed_port(6379)}/0"
-    cfg = minio_container.get_config()
+    cfg = s3_server.get_config()
 
     env_overrides = {
         "DATABASE_URL": db_url,

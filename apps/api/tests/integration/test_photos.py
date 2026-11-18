@@ -7,8 +7,8 @@ from tests.integration.photo_helpers import read_fixture, register_and_login, up
 
 
 @pytest.mark.asyncio
-async def test_minio_fixture_smoke(s3_client, photos_bucket):
-    """Sanity check: MinIO testcontainer + bucket fixture wire up correctly."""
+async def test_s3_fixture_smoke(s3_client, photos_bucket):
+    """Sanity check: Garage testcontainer + bucket fixture wire up correctly."""
     s3_client.put_object(Bucket=photos_bucket, Key="smoke", Body=b"ok")
     obj = s3_client.get_object(Bucket=photos_bucket, Key="smoke")
     assert obj["Body"].read() == b"ok"
