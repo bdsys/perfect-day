@@ -1,15 +1,16 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import AppHeader from '@/components/AppHeader'
 import Avatar from '@/components/Avatar'
 import {
-  api, ApiError, type AvatarChoice, type AvatarIconName, type Integration, type TemperatureUnit,
+  api, ApiError, setAccessToken, type AvatarChoice, type AvatarIconName, type Integration, type TemperatureUnit,
 } from '@/lib/api'
 import { useAuth } from '@/lib/auth-context'
 import { AVATAR_ICONS, TONES } from '@/lib/avatarIcons'
+import { googleStatusMessage } from '@/lib/googleStatus'
 import { navigateTo } from '@/lib/navigate'
 
 const ICON_ERROR = "Couldn't save your icon. Try again."
@@ -26,6 +27,24 @@ function accessSummary(g: Integration): string {
   if (g.scopes_granted.some((s) => s.endsWith('calendar.readonly'))) names.push('Calendar')
   if (g.photos || g.scopes_granted.some((s) => s.endsWith('photospicker.mediaitems.readonly'))) names.push('Google Photos')
   return `Access: ${names.length ? names.join(', ') : 'none yet'}`
+}
+
+/** What Google sent the browser back with; reloads the connection after a successful connect. */
+function GoogleResult({ onConnected }: { onConnected: () => void }) {
+  const sp = useSearchParams()
+  const status = sp.get('google')
+  useEffect(() => {
+    if (status === 'connected') onConnected()
+  }, [status]) // eslint-disable-line react-hooks/exhaustive-deps
+  const msg = googleStatusMessage({
+    status,
+    missing: sp.get('missing'),
+    reason: sp.get('reason'),
+    expected: sp.get('expected'),
+    page: 'profile',
+  })
+  if (!msg) return null
+  return <p className={msg.isError ? 'error-message' : 'success-message'} role={msg.isError ? 'alert' : 'status'}>{msg.text}</p>
 }
 
 export default function ProfilePage() {
@@ -169,11 +188,14 @@ export default function ProfilePage() {
     setDeleteError('')
     try {
       const { deletion_scheduled_for } = await api.auth.deleteAccount()
+      // Not the context logout(): it clears `user`, and this page's signed-out effect would
+      // router.replace('/login') and can drop ?deleted= (WebKit). navigateTo reloads the context.
       try {
-        await logout()
+        await api.auth.logout()
       } catch {
         // the server already revoked every session
       }
+      setAccessToken('')
       navigateTo('/login?deleted=' + encodeURIComponent(deletion_scheduled_for))
     } catch {
       setDeleteError("Couldn't delete your account. Try again.")
@@ -270,6 +292,9 @@ export default function ProfilePage() {
 
         <section className="card profile-section" aria-labelledby="google-h">
           <h2 id="google-h">Google</h2>
+          <Suspense fallback={null}>
+            <GoogleResult onConnected={loadGoogle} />
+          </Suspense>
           {googleLoaded && (
             <div className="profile-row">
               {google ? (

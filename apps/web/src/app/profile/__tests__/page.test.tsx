@@ -13,6 +13,7 @@ jest.mock('@/lib/api', () => {
         uploadAvatar: jest.fn(),
         deleteAvatar: jest.fn(),
         logoutAll: jest.fn(),
+        logout: jest.fn(),
         deleteAccount: jest.fn(),
         myPlan: jest.fn(),
       },
@@ -29,8 +30,10 @@ jest.mock('@/lib/auth-context', () => ({
   useAuth: () => ({ user: mockUser, loading: false, avatarUrl: null, refreshUser: mockRefreshUser, logout: mockLogout }),
 }))
 const mockReplace = jest.fn()
+let mockSearch = ''
 jest.mock('next/navigation', () => ({
   useRouter: () => ({ push: jest.fn(), replace: mockReplace }),
+  useSearchParams: () => new URLSearchParams(mockSearch),
 }))
 
 const a = api as unknown as {
@@ -40,6 +43,7 @@ const a = api as unknown as {
 
 beforeEach(() => {
   jest.clearAllMocks()
+  mockSearch = ''
   mockUser = {
     id: 'u1', email: 'pat@example.com', temperature_unit: 'F', avatar: { kind: 'initial' },
   }
@@ -49,6 +53,7 @@ beforeEach(() => {
   a.auth.logoutAll.mockResolvedValue(undefined)
   a.auth.deleteAccount.mockResolvedValue({ deletion_scheduled_for: '2026-11-24T17:04:00Z' })
   a.integrations.list.mockResolvedValue([])
+  a.auth.logout.mockResolvedValue(undefined)
   mockLogout.mockResolvedValue(undefined)
 })
 
@@ -58,6 +63,31 @@ async function renderPage() {
 }
 
 describe('ProfilePage', () => {
+  it('lays the page out in the page container so it lines up with the header', async () => {
+    const { container } = render(<ProfilePage />)
+    await screen.findByText('Plus')
+    expect(container.querySelector('.page-container')).toContainElement(screen.getByRole('heading', { name: 'Profile' }))
+  })
+
+  it('explains a partial Google grant without naming a button this page lacks', async () => {
+    mockSearch = 'google=partial&missing=calendar'
+    await renderPage()
+    const msg = await screen.findByText(/Calendar access wasn't granted/)
+    expect(msg.textContent).not.toMatch(/Connect Google Calendar/)
+  })
+
+  it('explains a cancelled Google connection', async () => {
+    mockSearch = 'google=cancelled'
+    await renderPage()
+    expect(await screen.findByText('You cancelled the Google connection. Nothing was changed.')).toBeInTheDocument()
+  })
+
+  it('reloads the Google connection after a successful connect', async () => {
+    mockSearch = 'google=connected'
+    await renderPage()
+    expect(await screen.findByText('Google connected.')).toBeInTheDocument()
+  })
+
   it('shows who you are and your plan', async () => {
     await renderPage()
     expect(screen.getByRole('heading', { name: 'Profile' })).toBeInTheDocument()
@@ -128,8 +158,11 @@ describe('ProfilePage', () => {
     expect(confirm).toBeEnabled()
     fireEvent.click(confirm)
     await waitFor(() => expect(a.auth.deleteAccount).toHaveBeenCalled())
-    await waitFor(() => expect(mockLogout).toHaveBeenCalled())
-    expect(navigateTo).toHaveBeenCalledWith('/login?deleted=' + encodeURIComponent('2026-11-24T17:04:00Z'))
+    await waitFor(() => expect(a.auth.logout).toHaveBeenCalled())
+    await waitFor(() => expect(navigateTo).toHaveBeenCalledWith('/login?deleted=' + encodeURIComponent('2026-11-24T17:04:00Z')))
+    // No context logout: it would flip `user` and let the page's own redirect race the notice.
+    expect(mockLogout).not.toHaveBeenCalled()
+    expect(mockReplace).not.toHaveBeenCalled()
   })
 
   it('Cancel closes the delete panel', async () => {
