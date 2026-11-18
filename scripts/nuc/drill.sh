@@ -6,8 +6,8 @@
 # Fetches the night from the NAS, restores it into a throwaway compose project
 # (perfect-day-drill: postgres and the photo store only, nothing published, so nothing scans
 # Google, calls Anthropic, sends email or touches DNS), then checks that:
-#   - the restored app.env matches the live one (apart from S3_ENDPOINT_URL: a
-#     night from before the MinIO -> Garage switch says minio, row 41),
+#   - the restored app.env matches the live one (apart from S3_ENDPOINT_URL and
+#     GARAGE_RPC_SECRET, which nights from before row 41 lack or name differently),
 #   - row and object counts match the backup's manifest,
 #   - photos and avatars decrypt (manage.py photos verify),
 #   - only postgres and the store S3_ENDPOINT_URL names ran, with no published ports.
@@ -51,7 +51,10 @@ MANIFEST="${TMP}/night/manifest.json"
 # address is left out: it names the store, not a key, and changes at the switch.
 age -d -i "${PD_KEY}" < "${TMP}/night/config.tar.age" | tar -xOf - "${PD_ETC#/}/app.env" > "${TMP}/app.env" \
     || REASONS+=("the config backup has no app.env")
-cmp -s <(grep -v '^S3_ENDPOINT_URL=' "${TMP}/app.env") <(grep -v '^S3_ENDPOINT_URL=' "${PD_ETC}/app.env") \
+# GARAGE_RPC_SECRET is left out too: the first deploy of row 41 adds it, so every
+# older night lacks it, and nothing the restore reads depends on it.
+NOT_KEYS='^(S3_ENDPOINT_URL|GARAGE_RPC_SECRET)='
+cmp -s <(grep -Ev "${NOT_KEYS}" "${TMP}/app.env") <(grep -Ev "${NOT_KEYS}" "${PD_ETC}/app.env") \
     || REASONS+=("the restored app.env differs from the live one")
 STORE="$(storage_service_from_env "${PD_ETC}/app.env")" || { echo "DRILL FAILED: unknown photo store"; exit 1; }
 

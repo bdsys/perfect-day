@@ -122,7 +122,7 @@ fi
 echo '[4/8] Building app images...'
 # shellcheck disable=SC2086
 docker compose --profile nuc build ${APP_SERVICES}
-docker compose --profile nuc pull edge
+docker compose --profile nuc pull edge garage
 
 echo '[5/8] Running migrations...'
 # The worker and beat would otherwise run old code against a half-changed schema.
@@ -140,6 +140,18 @@ echo '[6/8] Restarting app services (infra stays up)...'
 docker compose --profile nuc up -d --no-deps ${APP_SERVICES}
 # Caddy and the DDNS updater read mounted files that compose cannot see change.
 docker compose --profile nuc up -d --no-deps --force-recreate edge
+# The photo store: compose recreates it when its image tag changed; a changed
+# garage.toml (a mounted file compose cannot see) needs --force-recreate. Before the
+# switch nothing uses it yet; after it, this is how a Garage update reaches the NUC.
+GARAGE_ARGS=()
+if [ -n "${DEPLOYED_SHA}" ] && ! git diff --quiet "${DEPLOYED_SHA}" "${NEW_SHA}" -- deploy/garage/garage.toml 2>/dev/null; then
+    GARAGE_ARGS=(--force-recreate)
+fi
+if ! docker compose --profile nuc up -d --no-deps --wait --wait-timeout 120 "${GARAGE_ARGS[@]}" garage; then
+    echo "ERROR: Garage, the photo store, did not become healthy (the app itself was restarted)." >&2
+    echo '  Check it: docker compose --profile nuc logs --tail=50 garage' >&2
+    exit 1
+fi
 if [ -f "${DDNS_CONFIG}" ]; then
     docker compose --profile nuc up -d --no-deps --force-recreate cloudflare-ddns
 fi

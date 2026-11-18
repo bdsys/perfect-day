@@ -445,7 +445,7 @@ The script:
 3. If the commit differs from the one deployed, tags the running `perfect-day-{api,worker,beat,web}` images `:previous` and records that commit in `previous-deployed-sha`
 4. `docker compose build api worker beat web` (the web bakes in `NEXT_PUBLIC_API_URL` and `NEXT_PUBLIC_GOOGLE_CLIENT_ID` from `app.env`), and pulls the Caddy image
 5. `alembic upgrade head` for migrations
-6. Restarts the app services; recreates `edge` and `cloudflare-ddns` so they reread their mounted files
+6. Restarts the app services; recreates `edge` and `cloudflare-ddns` so they reread their mounted files; pulls Garage and recreates it when its image or `deploy/garage/garage.toml` changed (it must come up healthy within 120s)
 7. Polls `/readyz` for up to 90s, then requires `checks.storage` to be `ok` within 30s more (`/readyz` itself answers 200 with storage down); on failure tells you what to check and to run `50-rollback.sh`. Before that it adds any generated setting a newer release needs (today `GARAGE_RPC_SECRET`) to `app.env`, never printing it
 8. Records the new SHA in `/opt/perfect-day/last-deployed-sha`, then runs `./scripts/smoke-test.sh` against the public API with `SMOKE_CLEANUP=1` (it registers two throwaway users and deletes every smoke-test user when it ends; a failed cleanup only warns)
 
@@ -459,6 +459,20 @@ Design: [`docs/superpowers/specs/2026-11-18-garage-design.md`](../docs/superpowe
 **When:** after the release that adds Garage is deployed (nothing changes for users until
 this step). Pick a time; **not within 30 minutes of the 02:17 backup** (the script refuses
 then). The whole site is down for a few minutes.
+
+**Before the switch, once** (after the release 1 deploy):
+
+```bash
+docker compose version                                  # then:
+docker compose up --help | grep -q -- --wait-timeout && echo ok   # the switch needs it
+sudo reboot                                             # then, after it is back:
+curl -s https://perfectday-api.andrewlass.com/readyz   # "storage": "ok" (still MinIO)
+```
+
+The reboot proves MinIO, now behind a compose profile, still comes back on its own.
+
+**The switch.** Run it inside `tmux` (`tmux new -s switch`), so a dropped ssh session
+cannot cut it off; if it is cut off anyway, it puts the app back on MinIO.
 
 ```bash
 cd /opt/perfect-day
@@ -482,6 +496,10 @@ It copies Garage into MinIO the same careful way, so photos added or deleted sin
 switch are carried over. It refuses if Garage lacks anything the database needs, so an
 empty store can never be copied over the good one.
 
+**Rolling back a deploy after the switch:** `50-rollback.sh` refuses (changing nothing)
+if the previous release cannot use Garage: every release before row 41 pinned MinIO. Run
+`60-switch-storage.sh --back` first, then the rollback.
+
 **Release 2** (later, Andrew's OK, after backups and a drill have passed from Garage)
 removes MinIO from the compose file. The `perfect-day_minio_data` volume and the MinIO
 image stay on the NUC until Andrew decides; from then on, going back means a restore.
@@ -489,6 +507,9 @@ image stay on the NUC until Andrew decides; from then on, going back means a res
 ## B-Rollback
 
 If `40-update.sh` aborts (or you discover a regression after a deploy):
+
+After the photo switch (row 41), a rollback to a release that pins MinIO is refused with
+the next step: `sudo ./scripts/nuc/60-switch-storage.sh --back`, then roll back.
 
 ```bash
 sudo ./scripts/nuc/50-rollback.sh

@@ -70,7 +70,10 @@ case "${a}" in
         exit "${VERIFY_DST_EXIT:-0}" ;;
     *pg_dump*) step dump; printf -- '-- dump\n'; exit "${DUMP_FAIL:-0}" ;;
     *readyz*) step readyz; echo "${READYZ:-ok}"; exit 0 ;;
-    *" stop api worker beat"*) step stop-app; exit 0 ;;
+    *" stop api worker beat"*)
+        step stop-app
+        if [ -n "${TERM_DURING_STOP:-}" ]; then kill -TERM "$(cat "${WORK}/switch.pid")"; sleep 0.3; fi
+        exit 0 ;;
     *" up -d --no-deps api worker beat"*) step start-app; exit 0 ;;
     *" stop minio"*) step stop-minio; exit 0 ;;
     *" stop garage"*) step stop-garage; exit 0 ;;
@@ -87,7 +90,7 @@ EOF
         PD_RUN_BACKUP=1 PD_NOW_HHMM=1200 PD_COMPOSE_PROJECT="" PD_COMPOSE_PROFILE="nuc" \
         PD_READY_TIMEOUT=2
     unset UP_FAIL MISSING DST_DIGEST VERIFY_DST_EXIT VERIFY_LIVE_EXIT READYZ SMOKE_EXIT BACKUP_EXIT \
-        DF_AVAIL_KB TERM_DURING_IMPORT DUMP_FAIL 2>/dev/null || true
+        DF_AVAIL_KB TERM_DURING_IMPORT TERM_DURING_STOP DUMP_FAIL 2>/dev/null || true
     touch "${CALLS}/order" "${CALLS}/docker"
 }
 
@@ -219,6 +222,25 @@ wait $! || RC=$?
 check "exits non-zero" test "${RC}" -ne 0
 check "endpoint still MinIO" test "$(endpoint)" = "http://minio:9000"
 check "app started again" test "$(tail -n 1 "${CALLS}/order")" = "start-app"
+
+echo "trap_restores_app_when_stopped_mid_stop"
+# Ctrl-C or a dropped ssh session while the app is being stopped (review, Important 2).
+setup
+export TERM_DURING_STOP=1
+RC=0
+bash "${SWITCH}" > "${WORK}/out" 2>&1 &
+echo $! > "${WORK}/switch.pid"
+wait $! || RC=$?
+check "exits non-zero" test "${RC}" -ne 0
+check "app started again" test "$(tail -n 1 "${CALLS}/order")" = "start-app"
+check "says it failed" grep -q "FAILED" "${WORK}/out"
+
+echo "store_wait_is_bounded"
+# A Garage that crash-loops (e.g. a changed secret) must not hang the switch while it
+# holds the lock (review, Minor 5 graded up).
+setup
+run_switch
+check "up --wait has a timeout" grep -q -- "up -d --wait --wait-timeout 120" "${CALLS}/docker"
 
 echo "near_backup_window_refuses_without_flag"
 setup

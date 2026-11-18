@@ -56,5 +56,15 @@ UPDATE="${HERE}/../40-update.sh"
 check "40-update.sh sources the helper" grep -q 'lib/readyz.sh' "${UPDATE}"
 check "40-update.sh requires storage ok" grep -q 'readyz_storage_ok "${HEALTH_URL}"' "${UPDATE}"
 
+echo "deploy_keeps_garage_current"
+# Deploys restart only the app with --no-deps, so a new Garage tag or garage.toml
+# would never reach the NUC (review, Important 4). The deploy pulls Garage and
+# recreates it when its image or config changed, before the storage check.
+check "pulls the Garage image" grep -q 'pull edge garage' "${UPDATE}"
+check "refreshes Garage" grep -qE 'up -d --no-deps --wait --wait-timeout 120 .*garage' "${UPDATE}"
+garage_line="$({ grep -nE 'up -d --no-deps --wait --wait-timeout 120 .*garage' "${UPDATE}" || true; } | head -n 1 | cut -d: -f1)"
+gate_line="$({ grep -n 'readyz_storage_ok "${HEALTH_URL}"' "${UPDATE}" || true; } | head -n 1 | cut -d: -f1)"
+check "before the storage check" test "${garage_line:-999999}" -lt "${gate_line:-0}"
+
 echo ""
 if [ "${FAILS}" -eq 0 ]; then echo "readyz: all passed"; else echo "readyz: ${FAILS} failed"; exit 1; fi

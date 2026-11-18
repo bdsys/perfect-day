@@ -288,6 +288,15 @@ RC=0; OUT=$(bash "${DRILL}" 2>&1) || RC=$?
 check "any other difference still fails" test "${RC}" -ne 0
 check "says app.env differs" grep -q "app.env" <<<"${OUT}"
 
+echo "drill_passes_on_a_night_from_before_the_rpc_secret"
+# The first deploy of release 1 adds GARAGE_RPC_SECRET to app.env, so every older
+# night lacks it; those nights must still drill clean (review, Important 3).
+setup   # the night has no GARAGE_RPC_SECRET
+echo "GARAGE_RPC_SECRET=$(printf 'a%.0s' $(seq 64))" >> "${PD_ETC}/app.env"
+RC=0; OUT=$(bash "${DRILL}" 2>&1) || RC=$?
+check "passes" test "${RC}" -eq 0
+check "says DRILL PASSED" grep -q "DRILL PASSED" <<<"${OUT}"
+
 echo "with_config_keeps_live_endpoint"
 setup   # the night says minio
 printf "MASTER_SECRET=changed\nS3_ENDPOINT_URL=http://garage:3900\n" > "${PD_ETC}/app.env"

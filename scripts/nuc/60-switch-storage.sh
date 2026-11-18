@@ -118,7 +118,7 @@ say "Moving photos from ${SRC} to ${DST}."
 
 # ── 3. both stores up ───────────────────────────────────────────────────────
 python3 "${ENVFILE_PY}" ensure "${ENV_FILE}" GARAGE_RPC_SECRET hex32 | sed 's/^/[switch] /'
-sw_compose up -d --wait "${SRC}" "${DST}" \
+sw_compose up -d --wait --wait-timeout 120 "${SRC}" "${DST}" \
     || refuse "the ${SRC} or ${DST} store did not become healthy (see: docker compose logs ${DST})"
 
 # One-off api container aimed at a store. Values travel by name only.
@@ -182,8 +182,8 @@ trap on_exit EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM HUP
 say "Stopping the app (the site is down from now)..."
+STOPPED=1   # before the stop: an interrupt during it must still restart the app
 sw_compose stop api worker beat
-STOPPED=1
 
 # ── 7. copy and check ───────────────────────────────────────────────────────
 IMPORT_ERR="$(mktemp)"

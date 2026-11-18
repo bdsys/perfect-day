@@ -42,6 +42,26 @@ storage_service_from_env() {
     esac
 }
 
+# compose_serves_store <compose file> <env file>: 0 if that compose file can run the
+# photo store the env file names: it defines that service, and pins no other store's
+# address in the app services. 50-rollback.sh checks the previous release this way,
+# because before row 41 the compose file hard-coded http://minio:9000.
+compose_serves_store() {
+    local store pinned host
+    store="$(storage_service_from_env "$2")" || return 1
+    if ! grep -qE "^  ${store}:" "$1"; then
+        echo "that compose file has no ${store} service, and this machine's photos are in ${store}" >&2
+        return 1
+    fi
+    pinned="$(grep -oE 'S3_ENDPOINT_URL: *http://[A-Za-z0-9_-]+' "$1" | sed -E 's|.*http://||' | sort -u)"
+    for host in ${pinned}; do
+        if [ "${host}" != "${store}" ]; then
+            echo "that compose file points the app at ${host}, and this machine's photos are in ${store}" >&2
+            return 1
+        fi
+    done
+}
+
 # backup_keep_list <today YYYY-MM-DD> <folder names...>
 # Prints the folder names to keep, sorted: the newest 30, plus the earliest of
 # each calendar month among the 12 months ending with today's month. Names that
