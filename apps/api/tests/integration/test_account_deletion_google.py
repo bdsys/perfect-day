@@ -25,7 +25,7 @@ async def test_account_deletion_revokes_at_google_and_forgets_tokens(
     with patch("httpx.AsyncClient.post", post):
         r = await client.delete("/v1/auth/account", headers=auth)
 
-    assert r.status_code == 204
+    assert r.status_code == 200
     assert post.await_count == 1
     assert post.await_args.args[0] == "https://oauth2.googleapis.com/revoke"
     assert post.await_args.kwargs["data"] == {"token": "1//refresh-secret"}
@@ -41,6 +41,6 @@ async def test_account_deletion_forgets_tokens_even_if_google_down(
     with patch("httpx.AsyncClient.post", AsyncMock(side_effect=httpx.ConnectTimeout("slow"))):
         r = await client.delete("/v1/auth/account", headers=auth)
 
-    assert r.status_code == 204
+    assert r.status_code == 200
     assert await _token_count(db_session, "del-down@example.com") == 0
     assert "refresh-secret" not in caplog.text

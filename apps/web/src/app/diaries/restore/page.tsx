@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
+import AppHeader from '@/components/AppHeader'
 import { useRouter } from 'next/navigation'
 import { api, type Diary, ApiError } from '@/lib/api'
 import { useAuth } from '@/lib/auth-context'
@@ -59,11 +60,7 @@ export default function DiaryRestorePage() {
 
   return (
     <>
-      <nav className="nav">
-        <div className="nav-inner">
-          <Link href="/diaries" className="nav-brand">← Perfect Day</Link>
-        </div>
-      </nav>
+      <AppHeader />
       <div className="container" style={{ paddingTop: '1.5rem' }}>
         <div className="page-header">
           <h1 className="page-title">Deleted diaries</h1>

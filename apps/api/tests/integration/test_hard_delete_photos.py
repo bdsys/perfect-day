@@ -35,3 +35,24 @@ async def test_hard_delete_user_removes_tmp_prefix(
         "Contents", []
     )
     assert listed == []
+
+
+@pytest.mark.asyncio
+async def test_hard_delete_removes_avatar(client, db_session, s3_client, photos_bucket):
+    from app.services.avatar import make_avatar_jpeg, store_avatar
+    from app.workers.hard_delete import hard_delete_user
+    from tests.fixtures.factories import make_user
+    from tests.integration.photo_helpers import jpeg_with_exif
+
+    user = await make_user(db_session)
+    key, wrapped = store_avatar(user.id, make_avatar_jpeg(jpeg_with_exif()))
+    user.avatar_s3_key, user.avatar_dek_ciphertext = key, wrapped
+    await db_session.commit()
+    user_id = user.id
+    listed = s3_client.list_objects_v2(Bucket=photos_bucket, Prefix=f"{user_id}/avatar/")
+    assert [o["Key"] for o in listed.get("Contents", [])] == [key]
+
+    await hard_delete_user(user_id)
+
+    listed = s3_client.list_objects_v2(Bucket=photos_bucket, Prefix=f"{user_id}/")
+    assert listed.get("Contents", []) == []

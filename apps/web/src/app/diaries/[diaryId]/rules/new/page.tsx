@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import Link from 'next/link'
+import AppHeader from '@/components/AppHeader'
 import { useParams, useRouter } from 'next/navigation'
 import { api, type RuleCondition, type RuleOptions } from '@/lib/api'
 import { limitMessage } from '@/lib/plan'
@@ -31,11 +31,7 @@ export default function NewRulePage() {
 
   return (
     <>
-      <nav className="nav">
-        <div className="nav-inner">
-          <Link href={`/diaries/${diaryId}/rules`} className="nav-brand">← Rules</Link>
-        </div>
-      </nav>
+      <AppHeader back={{ href: `/diaries/${diaryId}/rules`, label: '← Rules' }} />
       <div className="container" style={{ paddingTop: '1.5rem', maxWidth: 720 }}>
         <h1 className="page-title">New Auto-Creation Rule</h1>
         {error && <p className="error-message" style={{ marginBottom: '1rem' }}>{error}</p>}

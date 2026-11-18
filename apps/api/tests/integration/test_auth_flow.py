@@ -101,11 +101,13 @@ class TestSoftDeleteAccount:
         auth = {"Authorization": f"Bearer {tokens['access_token']}"}
 
         r = await client.delete(ACCOUNT_URL, headers=auth)
-        assert r.status_code == 204
+        assert r.status_code == 200
+        assert r.json()["deletion_scheduled_for"]
 
-        # Can no longer call /me (account_unavailable)
+        # Pending deletion: /me still answers and carries the deadline (C-14)
         me = await client.get(ME_URL, headers=auth)
-        assert me.status_code == 401
+        assert me.status_code == 200
+        assert me.json()["deletion_scheduled_for"] == r.json()["deletion_scheduled_for"]
 
     async def test_restore_account(self, client):
         tokens = await _register(client, "restore@example.com")

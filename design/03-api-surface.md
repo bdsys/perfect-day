@@ -16,12 +16,16 @@ All endpoints prefixed `/v1/`. JSON. Auth via `Authorization: Bearer <jwt>` unle
 | POST | `/v1/auth/refresh` | Rotate refresh token; return new access token. Reuse of a just-rotated token within a 30-second grace window is treated as a client retry (returns the same new token), not a theft signal. Reuse outside the window revokes the entire token family. Revocation rate is recorded for monitoring. |
 | POST | `/v1/auth/logout` | Revoke current refresh token. |
 | POST | `/v1/auth/logout-all` | Revoke all of the user's refresh tokens. |
-| GET | `/v1/auth/me` | Current user profile, tier, OAuth scopes granted. |
+| GET | `/v1/auth/me` | Current user profile: `id`, `email`, `display_name`, `subscription_tier`, `is_admin`, `email_verified_at`, `temperature_unit` (`F`/`C`), `avatar` (`{kind: "photo"}`, `{kind: "icon", name}` or `{kind: "initial"}`) and `deletion_scheduled_for` (the deadline while the account is pending deletion, else null). Also served to an account pending deletion. |
+| PATCH | `/v1/auth/me` | Save profile choices: `temperature_unit` (`F`/`C`, not null) and `avatar_icon` (a preset name; explicit `null` = use my initial, which also removes a photo). Unknown fields are refused. Returns the profile. |
+| PUT | `/v1/auth/me/avatar` | Set the profile photo; the body is the raw image bytes (same types and size cap as `POST /v1/photos`). Replaces any icon. 413 over the cap, 415 `unsupported_mime`. Returns the profile. |
+| GET | `/v1/auth/me/avatar` | The caller's own profile photo as `image/jpeg` (`Cache-Control: private, no-store`); 404 `not_found` without one. |
+| DELETE | `/v1/auth/me/avatar` | Remove the photo or icon and go back to the initial. Returns the profile. |
 | POST | `/v1/auth/password/forgot` | Send password reset email. |
 | POST | `/v1/auth/password/reset` | Reset with email token. |
 | POST | `/v1/auth/reauth` | Confirm password to elevate session for sensitive admin actions (15-min window). |
-| DELETE | `/v1/auth/account` | Mark account for deletion; sets `hard_delete_after = now() + 7 days`. |
-| POST | `/v1/auth/account/restore` | Cancel deletion within grace window. |
+| DELETE | `/v1/auth/account` | Mark account for deletion; sets `hard_delete_after = now() + 7 days`, revokes every refresh token and the Google grant. Returns 200 `{deletion_scheduled_for}` (the deadline). |
+| POST | `/v1/auth/account/restore` | Cancel deletion within grace window (204). Logging in during the window also reaches it: the web app shows one restore screen. Google must be reconnected afterwards. |
 
 ### Account linking rules
 
@@ -210,7 +214,9 @@ Gated by `users.is_admin = true`. Destructive actions require recent re-auth (mu
 Every authenticated request runs middleware that:
 
 1. Verifies the JWT signature and expiry. Returns `401 unauthorized` on failure.
-2. Loads the `users` row. Returns `401 account_unavailable` if `users.deleted_at IS NOT NULL` or `users.hard_delete_after IS NOT NULL`. A valid access token issued before account deletion must not grant further access.
+2. Loads the `users` row. A valid access token issued before account deletion must not grant further access:
+   - **Blocked** (deleted by the admin CLI, or past the 7-day deadline): `401 account_unavailable` everywhere.
+   - **Pending deletion** (inside the 7-day grace): `403 account_pending_deletion` on every authenticated endpoint except `GET /v1/auth/me` and `POST /v1/auth/account/restore`. Login, `POST /v1/auth/refresh` and `POST /v1/auth/logout` do not use this check, so a pending account can log in, refresh and log out. It is 403, not 401, so the web app does not mistake it for an expired session.
 3. For diary-scoped endpoints: returns `404` if `diaries.deleted_at IS NOT NULL`. Callers without any role on the diary also get `404` (existence leak prevention — both cases look the same to the caller).
 
 ## Cross-cutting concerns

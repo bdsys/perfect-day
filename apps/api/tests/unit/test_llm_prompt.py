@@ -439,3 +439,21 @@ class TestDelimiterNeutralisation:
         assert "x" * MAX_DESCRIPTION_CHARS in line
         assert "x" * (MAX_DESCRIPTION_CHARS + 1) not in line
         assert "…" in line
+
+
+def test_prompt_weather_line_in_owner_unit_events_and_hybrid():
+    enrichment = MagicMock()
+    enrichment.kind = "weather"
+    enrichment.payload = {"temperature_max_c": 21.5, "condition": "sunny"}
+    for mode, kwargs in (("events", {}), ("hybrid", {"body_seed": "We went out."})):
+        _, in_c = build_prompt(
+            _diary(), _entry(), [_event("Park visit")], [enrichment],
+            mode=mode, temperature_unit="C", **kwargs,
+        )
+        assert '"temperature_max": 22' in in_c
+        assert "temperature_max_c" not in in_c
+        _, in_f = build_prompt(
+            _diary(), _entry(), [_event("Park visit")], [enrichment], mode=mode, **kwargs
+        )
+        assert '"temperature_max": 71' in in_f
+        assert "temperature_max_c" not in in_f

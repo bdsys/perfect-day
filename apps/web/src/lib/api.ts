@@ -99,6 +99,18 @@ export function refreshAccessToken(): Promise<boolean> {
   return inflightRefresh
 }
 
+let _pendingDeletionHandler: (() => void) | null = null
+
+/** Register what to do when the API says the account is pending deletion (403). */
+export function setPendingDeletionHandler(fn: (() => void) | null): void {
+  _pendingDeletionHandler = fn
+}
+
+function signalIfPendingDeletion(err: ApiError): ApiError {
+  if (err.status === 403 && err.code === 'account_pending_deletion') _pendingDeletionHandler?.()
+  return err
+}
+
 async function apiFetchBlob(path: string, retryOn401 = true): Promise<Blob> {
   const headers: HeadersInit = {}
   if (_accessToken) {
@@ -112,7 +124,7 @@ async function apiFetchBlob(path: string, retryOn401 = true): Promise<Blob> {
     if (await refreshAccessToken()) return apiFetchBlob(path, false)
     throw new ApiError(401, 'unauthorized')
   }
-  if (!res.ok) throw await parseApiError(res)
+  if (!res.ok) throw signalIfPendingDeletion(await parseApiError(res))
   return res.blob()
 }
 
@@ -141,7 +153,7 @@ async function apiFetch<T>(
     throw new Error('unauthorized')
   }
 
-  if (!res.ok) throw await parseApiError(res)
+  if (!res.ok) throw signalIfPendingDeletion(await parseApiError(res))
 
   if (res.status === 204) return undefined as T
   return res.json() as Promise<T>
@@ -150,6 +162,43 @@ async function apiFetch<T>(
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
+
+export type TemperatureUnit = 'F' | 'C'
+
+export type AvatarIconName =
+  | 'cat'
+  | 'dog'
+  | 'bird'
+  | 'fish'
+  | 'rabbit'
+  | 'squirrel'
+  | 'turtle'
+  | 'panda'
+  | 'snail'
+  | 'flower'
+  | 'sun'
+  | 'moon'
+  | 'rocket'
+  | 'rainbow'
+  | 'cake'
+  | 'paw-print'
+
+export type AvatarChoice =
+  | { kind: 'photo' }
+  | { kind: 'icon'; name: AvatarIconName }
+  | { kind: 'initial' }
+
+export interface UserProfile {
+  id: string
+  email: string
+  display_name: string | null
+  subscription_tier: string
+  is_admin: boolean
+  email_verified_at: string | null
+  temperature_unit: TemperatureUnit
+  avatar: AvatarChoice
+  deletion_scheduled_for: string | null
+}
 
 export type Photo = {
   id: string
@@ -327,6 +376,8 @@ export interface Entry {
   body_source: 'llm' | 'fallback' | 'llm_polished' | 'llm_hybrid' | 'user'
   flagged_tokens: string[] | null
   status: 'draft' | 'published'
+  /** The owner's unit for showing this entry's temperature */
+  temperature_unit?: TemperatureUnit | null
   created_by: 'auto' | 'manual'
   creation_source: 'manual' | 'calendar_pick' | 'rule' | 'legacy_auto'
   published_at: string | null
@@ -477,8 +528,36 @@ export const api = {
         body: JSON.stringify({ id_token: idToken }),
       }, false)
     },
-    async me() {
+    async me(): Promise<UserProfile> {
       return apiFetch('/v1/auth/me')
+    },
+    async updateProfile(p: {
+      temperature_unit?: TemperatureUnit
+      avatar_icon?: AvatarIconName | null
+    }): Promise<UserProfile> {
+      return apiFetch('/v1/auth/me', { method: 'PATCH', body: JSON.stringify(p) })
+    },
+    async uploadAvatar(file: Blob): Promise<UserProfile> {
+      return apiFetch('/v1/auth/me/avatar', {
+        method: 'PUT',
+        body: file,
+        headers: { 'Content-Type': file.type || 'application/octet-stream' },
+      })
+    },
+    async avatar(): Promise<Blob> {
+      return apiFetchBlob('/v1/auth/me/avatar')
+    },
+    async deleteAvatar(): Promise<UserProfile> {
+      return apiFetch('/v1/auth/me/avatar', { method: 'DELETE' })
+    },
+    async logoutAll(): Promise<void> {
+      return apiFetch('/v1/auth/logout-all', { method: 'POST' })
+    },
+    async deleteAccount(): Promise<{ deletion_scheduled_for: string }> {
+      return apiFetch('/v1/auth/account', { method: 'DELETE' })
+    },
+    async restoreAccount(): Promise<void> {
+      return apiFetch('/v1/auth/account/restore', { method: 'POST' })
     },
     async myPlan(): Promise<MyPlan> {
       return apiFetch('/v1/auth/me/plan')
@@ -645,6 +724,9 @@ export const api = {
     },
     async list(): Promise<Integration[]> {
       return apiFetch('/v1/integrations')
+    },
+    async disconnectGoogle(): Promise<void> {
+      return apiFetch('/v1/integrations/google', { method: 'DELETE' })
     },
   },
 

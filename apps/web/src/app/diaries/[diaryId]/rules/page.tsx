@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
+import AppHeader from '@/components/AppHeader'
 import { useParams, useRouter } from 'next/navigation'
 import { api, ApiError, type Rule } from '@/lib/api'
 import { limitMessage } from '@/lib/plan'
@@ -84,11 +85,7 @@ export default function RulesListPage() {
   if (notOwner) {
     return (
       <>
-        <nav className="nav">
-          <div className="nav-inner">
-            <Link href={`/diaries/${diaryId}`} className="nav-brand">← Diary</Link>
-          </div>
-        </nav>
+        <AppHeader back={{ href: `/diaries/${diaryId}`, label: '← Diary' }} />
         <div className="container" style={{ paddingTop: '1.5rem', maxWidth: 720 }}>
           <h1 className="page-title">Auto-Creation Rules</h1>
           <p>Only the diary owner can set up auto-creation rules.</p>
@@ -99,11 +96,7 @@ export default function RulesListPage() {
 
   return (
     <>
-      <nav className="nav">
-        <div className="nav-inner">
-          <Link href={`/diaries/${diaryId}`} className="nav-brand">← Diary</Link>
-        </div>
-      </nav>
+      <AppHeader back={{ href: `/diaries/${diaryId}`, label: '← Diary' }} />
       <div className="container" style={{ paddingTop: '1.5rem', maxWidth: 720 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
           <h1 className="page-title" style={{ margin: 0 }}>Auto-Creation Rules</h1>

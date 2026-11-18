@@ -3,7 +3,7 @@ import { ApiError } from '@/lib/api'
 const MESSAGES: Record<string, string> = {
   invalid_credentials: 'Incorrect email or password.',
   email_taken: 'An account with that email already exists. Try signing in instead.',
-  account_unavailable: 'This account is scheduled for deletion and can no longer sign in.',
+  account_unavailable: 'This account is no longer available.',
   link_required:
     'An account with this email already exists. Sign in with your password to use it.',
   invalid_google_token: 'Google sign-in failed. Please try again.',

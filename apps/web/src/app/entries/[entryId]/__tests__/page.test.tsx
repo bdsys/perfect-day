@@ -194,6 +194,18 @@ describe('entry page: plan limits', () => {
     expect(screen.getByRole('button', { name: /create event description with ai/i })).toBeDisabled()
   })
 
+  it('keeps the owner unit after an action response returns temperature_unit null', async () => {
+    const wx = [{ id: 'w1', kind: 'weather', source: 'open_meteo', captured_for_at: '2026-05-16T00:00:00Z', fetched_at: '2026-05-16T01:00:00Z', payload: { weathercode: 0, temperature_min_c: 16, temperature_max_c: 21 } }]
+    get.mockResolvedValue(withPlan(freePlan(), { enrichments: wx as never, temperature_unit: 'C', events: [{ id: 'ev' }] as never }))
+    ;(api.entries.publish as jest.Mock).mockResolvedValue(withPlan(null, { status: 'published', enrichments: wx as never, temperature_unit: null, events: [{ id: 'ev' }] as never }))
+    render(<EntryDetailPage />)
+    expect(await screen.findByText('21°C')).toBeInTheDocument()
+    fireEvent.click(await screen.findByRole('button', { name: 'Publish' }))
+    await screen.findByRole('button', { name: 'Unpublish' })
+    expect(screen.getByText('21°C')).toBeInTheDocument()
+    expect(screen.queryByText('70°F')).toBeNull()
+  })
+
   it('a regenerate refused as diary_read_only shows the read-only copy, not the AI note', async () => {
     get.mockResolvedValue(withPlan(freePlan(), { events: [{ id: 'ev' }] as never }))
     ;(api.entries.regenerate as jest.Mock).mockRejectedValue(

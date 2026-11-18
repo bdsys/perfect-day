@@ -1,0 +1,181 @@
+<title>Profile Icon Picker</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: one column; picker on the left beside live previews of the header on desktop and phone; stacks on narrow screens. Colors follow the Perfect Day web app's own tokens. */
+:root {
+  --bg: #fafaf8; --surface: #ffffff; --border: #e5e5e0; --text: #1a1a1a; --muted: #6b6b6b;
+  --accent: #2563eb; --accent-soft: #dbe6fd; --frame: #f1f1ec;
+  --t1-bg: #fde2d6; --t1-fg: #9a3412; --t2-bg: #dbeafe; --t2-fg: #1e40af;
+  --t3-bg: #dcfce7; --t3-fg: #166534; --t4-bg: #fef3c7; --t4-fg: #92400e;
+  --t5-bg: #ede9fe; --t5-fg: #5b21b6; --t6-bg: #fce7f3; --t6-fg: #9d174d;
+  --t7-bg: #ccfbf1; --t7-fg: #115e59; --t8-bg: #e5e7eb; --t8-fg: #374151;
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #16171a; --surface: #1f2024; --border: #34363c; --text: #ececea; --muted: #a3a39e;
+  --accent: #7aa2ff; --accent-soft: #24304d; --frame: #121315;
+  --t1-bg: #4a2418; --t1-fg: #fdba9a; --t2-bg: #1e2f55; --t2-fg: #a9c5ff;
+  --t3-bg: #173a26; --t3-fg: #9ee6b5; --t4-bg: #45330f; --t4-fg: #fcd98a;
+  --t5-bg: #2f2552; --t5-fg: #c9b8ff; --t6-bg: #4a1f36; --t6-fg: #f9a8d4;
+  --t7-bg: #12403c; --t7-fg: #8ce8dc; --t8-bg: #33363c; --t8-fg: #d1d5db;
+  color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #16171a; --surface: #1f2024; --border: #34363c; --text: #ececea; --muted: #a3a39e;
+  --accent: #7aa2ff; --accent-soft: #24304d; --frame: #121315;
+  --t1-bg: #4a2418; --t1-fg: #fdba9a; --t2-bg: #1e2f55; --t2-fg: #a9c5ff;
+  --t3-bg: #173a26; --t3-fg: #9ee6b5; --t4-bg: #45330f; --t4-fg: #fcd98a;
+  --t5-bg: #2f2552; --t5-fg: #c9b8ff; --t6-bg: #4a1f36; --t6-fg: #f9a8d4;
+  --t7-bg: #12403c; --t7-fg: #8ce8dc; --t8-bg: #33363c; --t8-fg: #d1d5db;
+  color-scheme: dark }
+body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 15px; line-height: 1.5;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 28px 48px; }
+.wrap { max-width: 1040px; margin: 0 auto; display: grid; gap: 28px; }
+h1 { font-size: 1.6rem; margin: 0; text-wrap: balance; }
+h2 { font-size: 1.05rem; margin: 0 0 4px; }
+.lede { margin: 6px 0 0; color: var(--muted); max-width: 65ch; }
+.cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 28px; align-items: start; }
+@media (max-width: 820px) { .cols { grid-template-columns: minmax(0, 1fr); } }
+.panel { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 20px; display: grid; gap: 16px; min-width: 0; }
+.label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); font-weight: 600; }
+.current { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+.btns { display: flex; gap: 8px; flex-wrap: wrap; }
+.btn { font: inherit; font-size: 0.875rem; padding: 7px 14px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; }
+.btn:hover { border-color: var(--accent); }
+.btn:focus-visible, .tile:focus-visible, .avatar-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(56px, 1fr)); gap: 10px; }
+.tile { aspect-ratio: 1; max-width: 100%; border-radius: 50%; border: 2px solid transparent; display: grid; place-items: center; cursor: pointer; padding: 0; }
+.tile[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.tile svg { width: 55%; height: 55%; }
+.avatar { border-radius: 50%; display: grid; place-items: center; flex: none; font-weight: 600; overflow: hidden; }
+.avatar svg { width: 56%; height: 56%; }
+.avatar.photo { background: linear-gradient(135deg, #f5c38b, #d9875a 55%, #8f5a3c); }
+.avatar.photo span { font-size: 0.6em; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,.4); }
+.note { font-size: 0.85rem; color: var(--muted); margin: 0; }
+.mock { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--frame); }
+.mock-cap { font-size: 0.75rem; color: var(--muted); padding: 6px 12px; border-bottom: 1px solid var(--border); }
+.nav { display: flex; justify-content: space-between; align-items: center; padding: 10px 16px; background: var(--surface); border-bottom: 1px solid var(--border); gap: 12px; }
+.brand { font-weight: 700; }
+.avatar-btn { background: none; border: 0; padding: 0; cursor: pointer; border-radius: 50%; position: relative; }
+.page { padding: 16px; display: grid; gap: 8px; }
+.line { height: 10px; border-radius: 5px; background: var(--border); }
+.menu { position: absolute; right: 0; top: calc(100% + 6px); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 18px rgba(0,0,0,.12); min-width: 170px; text-align: left; z-index: 2; padding: 6px; }
+.menu .who { font-size: 0.8rem; color: var(--muted); padding: 6px 10px; border-bottom: 1px solid var(--border); margin-bottom: 4px; }
+.menu div.item { padding: 7px 10px; border-radius: 5px; font-size: 0.9rem; }
+.menu div.item:hover { background: var(--accent-soft); }
+.phone { max-width: 360px; margin: 0 auto; }
+.previews { display: grid; gap: 16px; min-width: 0; }
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+.fact { border-top: 2px solid var(--border); padding-top: 10px; }
+.fact p { margin: 4px 0 0; color: var(--muted); font-size: 0.9rem; }
+code { font-size: 0.85em; }
+@media (prefers-reduced-motion: no-preference) { .tile { transition: transform .12s ease; } .tile:hover { transform: scale(1.06); } }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Profile icon picker</h1>
+    <p class="lede">A mockup for the new Profile screen. Each person either uploads a photo or picks one of 16 icons. Until they choose, they get the first letter of their email. Pick an icon below and the header previews update.</p>
+  </header>
+
+  <div class="cols">
+    <section class="panel" aria-labelledby="pick-h">
+      <div>
+        <h2 id="pick-h">Your icon</h2>
+        <p class="note">This is the icon section of the Profile screen.</p>
+      </div>
+      <div class="current">
+        <div id="big" class="avatar" style="width:72px;height:72px;font-size:1.8rem"></div>
+        <div class="btns">
+          <button class="btn" id="upload" type="button">Upload a photo</button>
+          <button class="btn" id="reset" type="button">Use my initial</button>
+        </div>
+      </div>
+      <div>
+        <div class="label" style="margin-bottom:8px">Or choose an icon</div>
+        <div class="grid" id="grid" role="group" aria-label="Icons"></div>
+      </div>
+      <p class="note" id="status" role="status">Showing the default: your initial.</p>
+    </section>
+
+    <div class="previews">
+      <div class="mock">
+        <div class="mock-cap">Desktop: the top right of every screen</div>
+        <div class="nav">
+          <span class="brand">Perfect Day</span>
+          <button class="avatar-btn" id="deskBtn" type="button" aria-haspopup="menu" aria-expanded="true" aria-label="Your profile">
+            <span id="desk" class="avatar" style="width:34px;height:34px;font-size:0.95rem"></span>
+            <div class="menu" role="menu">
+              <div class="who">andrew@…</div>
+              <div class="item" role="menuitem">Profile</div>
+              <div class="item" role="menuitem">Sign out</div>
+            </div>
+          </button>
+        </div>
+        <div class="page" style="padding-top:96px">
+          <div class="line" style="width:40%"></div><div class="line" style="width:85%"></div><div class="line" style="width:70%"></div>
+        </div>
+      </div>
+
+      <div class="mock phone">
+        <div class="mock-cap">Phone</div>
+        <div class="nav">
+          <span class="brand">Perfect Day</span>
+          <span id="phoneAv" class="avatar" style="width:30px;height:30px;font-size:0.85rem"></span>
+        </div>
+        <div class="page">
+          <div class="line" style="width:55%"></div><div class="line" style="width:90%"></div><div class="line" style="width:75%"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <section class="facts" aria-label="Details">
+    <div class="fact"><strong>Where the icons come from</strong><p>Lucide, the icon set the app already uses for weather and buttons. ISC licence, so there's no new dependency and nothing to credit on screen.</p></div>
+    <div class="fact"><strong>Uploaded photos</strong><p>Cropped to a square and shrunk to 256 × 256. Location and camera data are removed, and the photo is stored encrypted, like entry photos. "Upload a photo" is a stand-in here.</p></div>
+    <div class="fact"><strong>The header</strong><p>The icon takes the place of today's "Sign out" button. Tapping it opens Profile and Sign out.</p></div>
+  </section>
+</div>
+
+<script>
+const ICONS = {"cat": "<path d=\"M12 5c.67 0 1.35.09 2 .26 1.78-2 5.03-2.84 6.42-2.26 1.4.58-.42 7-.42 7 .57 1.07 1 2.24 1 3.44C21 17.9 16.97 21 12 21s-9-3-9-7.56c0-1.25.5-2.4 1-3.44 0 0-1.89-6.42-.5-7 1.39-.58 4.72.23 6.5 2.23A9.04 9.04 0 0 1 12 5Z\"/><path d=\"M8 14v.5\"/><path d=\"M16 14v.5\"/><path d=\"M11.25 16.25h1.5L12 17l-.75-.75Z\"/>", "dog": "<path d=\"M11.25 16.25h1.5L12 17z\"/><path d=\"M16 14v.5\"/><path d=\"M4.42 11.247A13.152 13.152 0 0 0 4 14.556C4 18.728 7.582 21 12 21s8-2.272 8-6.444a11.702 11.702 0 0 0-.493-3.309\"/><path d=\"M8 14v.5\"/><path d=\"M8.5 8.5c-.384 1.05-1.083 2.028-2.344 2.5-1.931.722-3.576-.297-3.656-1-.113-.994 1.177-6.53 4-7 1.923-.321 3.651.845 3.651 2.235A7.497 7.497 0 0 1 14 5.277c0-1.39 1.844-2.598 3.767-2.277 2.823.47 4.113 6.006 4 7-.08.703-1.725 1.722-3.656 1-1.261-.472-1.855-1.45-2.239-2.5\"/>", "bird": "<path d=\"M16 7h.01\"/><path d=\"M3.4 18H12a8 8 0 0 0 8-8V7a4 4 0 0 0-7.28-2.3L2 20\"/><path d=\"m20 7 2 .5-2 .5\"/><path d=\"M10 18v3\"/><path d=\"M14 17.75V21\"/><path d=\"M7 18a6 6 0 0 0 3.84-10.61\"/>", "fish": "<path d=\"M6.5 12c.94-3.46 4.94-6 8.5-6 3.56 0 6.06 2.54 7 6-.94 3.47-3.44 6-7 6s-7.56-2.53-8.5-6Z\"/><path d=\"M18 12v.5\"/><path d=\"M16 17.93a9.77 9.77 0 0 1 0-11.86\"/><path d=\"M7 10.67C7 8 5.58 5.97 2.73 5.5c-1 1.5-1 5 .23 6.5-1.24 1.5-1.24 5-.23 6.5C5.58 18.03 7 16 7 13.33\"/><path d=\"M10.46 7.26C10.2 5.88 9.17 4.24 8 3h5.8a2 2 0 0 1 1.98 1.67l.23 1.4\"/><path d=\"m16.01 17.93-.23 1.4A2 2 0 0 1 13.8 21H9.5a5.96 5.96 0 0 0 1.49-3.98\"/>", "rabbit": "<path d=\"M13 16a3 3 0 0 1 2.24 5\"/><path d=\"M18 12h.01\"/><path d=\"M18 21h-8a4 4 0 0 1-4-4 7 7 0 0 1 7-7h.2L9.6 6.4a1 1 0 1 1 2.8-2.8L15.8 7h.2c3.3 0 6 2.7 6 6v1a2 2 0 0 1-2 2h-1a3 3 0 0 0-3 3\"/><path d=\"M20 8.54V4a2 2 0 1 0-4 0v3\"/><path d=\"M7.612 12.524a3 3 0 1 0-1.6 4.3\"/>", "squirrel": "<path d=\"M15.236 22a3 3 0 0 0-2.2-5\"/><path d=\"M16 20a3 3 0 0 1 3-3h1a2 2 0 0 0 2-2v-2a4 4 0 0 0-4-4V4\"/><path d=\"M18 13h.01\"/><path d=\"M18 6a4 4 0 0 0-4 4 7 7 0 0 0-7 7c0-5 4-5 4-10.5a4.5 4.5 0 1 0-9 0 2.5 2.5 0 0 0 5 0C7 10 3 11 3 17c0 2.8 2.2 5 5 5h10\"/>", "turtle": "<path d=\"m12 10 2 4v3a1 1 0 0 0 1 1h2a1 1 0 0 0 1-1v-3a8 8 0 1 0-16 0v3a1 1 0 0 0 1 1h2a1 1 0 0 0 1-1v-3l2-4h4Z\"/><path d=\"M4.82 7.9 8 10\"/><path d=\"M15.18 7.9 12 10\"/><path d=\"M16.93 10H20a2 2 0 0 1 0 4H2\"/>", "panda": "<path d=\"M11.25 17.25h1.5L12 18z\"/><path d=\"m15 12 2 2\"/><path d=\"M18 6.5a.5.5 0 0 0-.5-.5\"/><path d=\"M20.69 9.67a4.5 4.5 0 1 0-7.04-5.5 8.35 8.35 0 0 0-3.3 0 4.5 4.5 0 1 0-7.04 5.5C2.49 11.2 2 12.88 2 14.5 2 19.47 6.48 22 12 22s10-2.53 10-7.5c0-1.62-.48-3.3-1.3-4.83\"/><path d=\"M6 6.5a.495.495 0 0 1 .5-.5\"/><path d=\"m9 12-2 2\"/>", "snail": "<path d=\"M2 13a6 6 0 1 0 12 0 4 4 0 1 0-8 0 2 2 0 0 0 4 0\"/><circle cx=\"10\" cy=\"13\" r=\"8\"/><path d=\"M2 21h12c4.4 0 8-3.6 8-8V7a2 2 0 1 0-4 0v6\"/><path d=\"M18 3 19.1 5.2\"/><path d=\"M22 3 20.9 5.2\"/>", "flower": "<circle cx=\"12\" cy=\"12\" r=\"3\"/><path d=\"M12 16.5A4.5 4.5 0 1 1 7.5 12 4.5 4.5 0 1 1 12 7.5a4.5 4.5 0 1 1 4.5 4.5 4.5 4.5 0 1 1-4.5 4.5\"/><path d=\"M12 7.5V9\"/><path d=\"M7.5 12H9\"/><path d=\"M16.5 12H15\"/><path d=\"M12 16.5V15\"/><path d=\"m8 8 1.88 1.88\"/><path d=\"M14.12 9.88 16 8\"/><path d=\"m8 16 1.88-1.88\"/><path d=\"M14.12 14.12 16 16\"/>", "sun": "<circle cx=\"12\" cy=\"12\" r=\"4\"/><path d=\"M12 2v2\"/><path d=\"M12 20v2\"/><path d=\"m4.93 4.93 1.41 1.41\"/><path d=\"m17.66 17.66 1.41 1.41\"/><path d=\"M2 12h2\"/><path d=\"M20 12h2\"/><path d=\"m6.34 17.66-1.41 1.41\"/><path d=\"m19.07 4.93-1.41 1.41\"/>", "moon": "<path d=\"M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401\"/>", "rocket": "<path d=\"M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5\"/><path d=\"M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09\"/><path d=\"M9 12a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.4 22.4 0 0 1-4 2z\"/><path d=\"M9 12H4s.55-3.03 2-4c1.62-1.08 5 .05 5 .05\"/>", "rainbow": "<path d=\"M22 17a10 10 0 0 0-20 0\"/><path d=\"M6 17a6 6 0 0 1 12 0\"/><path d=\"M10 17a2 2 0 0 1 4 0\"/>", "cake": "<path d=\"M20 21v-8a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8\"/><path d=\"M4 16s.5-1 2-1 2.5 2 4 2 2.5-2 4-2 2.5 2 4 2 2-1 2-1\"/><path d=\"M2 21h20\"/><path d=\"M7 8v3\"/><path d=\"M12 8v3\"/><path d=\"M17 8v3\"/><path d=\"M7 4h.01\"/><path d=\"M12 4h.01\"/><path d=\"M17 4h.01\"/>", "paw-print": "<circle cx=\"11\" cy=\"4\" r=\"2\"/><circle cx=\"18\" cy=\"8\" r=\"2\"/><circle cx=\"20\" cy=\"16\" r=\"2\"/><path d=\"M9 10a5 5 0 0 1 5 5v3.5a3.5 3.5 0 0 1-6.84 1.045Q6.52 17.48 4.46 16.84A3.5 3.5 0 0 1 5.5 10Z\"/>"};
+const PRESETS = [
+  ["cat",1],["dog",4],["bird",2],["fish",7],["rabbit",6],["squirrel",1],["turtle",3],["panda",8],
+  ["snail",4],["flower",6],["sun",4],["moon",5],["rocket",2],["rainbow",5],["cake",6],["paw-print",3]
+];
+const svg = (name) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]}</svg>`;
+const label = (name) => name.replace("-", " ");
+let choice = { kind: "initial" };
+
+function paint(el) {
+  el.classList.remove("photo");
+  el.style.background = ""; el.style.color = "";
+  if (choice.kind === "icon") {
+    el.style.background = `var(--t${choice.tone}-bg)`; el.style.color = `var(--t${choice.tone}-fg)`;
+    el.innerHTML = svg(choice.name);
+  } else if (choice.kind === "photo") {
+    el.classList.add("photo"); el.innerHTML = "<span>photo</span>";
+  } else {
+    el.style.background = "var(--t2-bg)"; el.style.color = "var(--t2-fg)"; el.textContent = "A";
+  }
+}
+function render() {
+  ["big", "desk", "phoneAv"].forEach((id) => paint(document.getElementById(id)));
+  document.querySelectorAll(".tile").forEach((t) => t.setAttribute("aria-pressed", String(choice.kind === "icon" && t.dataset.name === choice.name)));
+  document.getElementById("status").textContent =
+    choice.kind === "icon" ? `Chosen: the ${label(choice.name)} icon.` :
+    choice.kind === "photo" ? "Chosen: an uploaded photo (a stand-in in this mockup)." : "Showing the default: your initial.";
+}
+const grid = document.getElementById("grid");
+PRESETS.forEach(([name, tone]) => {
+  const b = document.createElement("button");
+  b.type = "button"; b.className = "tile"; b.dataset.name = name;
+  b.style.background = `var(--t${tone}-bg)`; b.style.color = `var(--t${tone}-fg)`;
+  b.setAttribute("aria-label", label(name)); b.title = label(name);
+  b.innerHTML = svg(name);
+  b.addEventListener("click", () => { choice = { kind: "icon", name, tone }; render(); });
+  grid.appendChild(b);
+});
+document.getElementById("upload").addEventListener("click", () => { choice = { kind: "photo" }; render(); });
+document.getElementById("reset").addEventListener("click", () => { choice = { kind: "initial" }; render(); });
+render();
+</script>

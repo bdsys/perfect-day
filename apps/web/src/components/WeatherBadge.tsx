@@ -1,9 +1,11 @@
-import type { Enrichment } from '@/lib/api'
+import type { Enrichment, TemperatureUnit } from '@/lib/api'
 import { weatherIconFor } from '@/lib/weatherIcon'
+import { formatTemp } from '@/lib/temperature'
 import { OpenMeteoCredit } from './OpenMeteoCredit'
 
 interface Props {
   enrichments: Enrichment[]
+  unit: TemperatureUnit
 }
 
 function shortDate(iso: string): string {
@@ -11,12 +13,7 @@ function shortDate(iso: string): string {
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
 
-function roundTemp(v: unknown): string | null {
-  if (typeof v !== 'number' || !Number.isFinite(v)) return null
-  return `${Math.round(v)}°`
-}
-
-export function WeatherBadge({ enrichments }: Props) {
+export function WeatherBadge({ enrichments, unit }: Props) {
   const weather = enrichments
     .filter((e) => e.kind === 'weather')
     .slice()
@@ -42,8 +39,8 @@ export function WeatherBadge({ enrichments }: Props) {
     >
       {weather.map((e) => {
         const code = (e.payload as { weathercode?: number }).weathercode
-        const lo = roundTemp((e.payload as { temperature_min_c?: number }).temperature_min_c)
-        const hi = roundTemp((e.payload as { temperature_max_c?: number }).temperature_max_c)
+        const lo = formatTemp((e.payload as { temperature_min_c?: number }).temperature_min_c, unit)
+        const hi = formatTemp((e.payload as { temperature_max_c?: number }).temperature_max_c, unit)
         const { Icon, label } = weatherIconFor(code)
         const dateLabel = e.captured_for_at ? shortDate(e.captured_for_at) : ''
         return (

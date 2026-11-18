@@ -1,4 +1,4 @@
-import Link from 'next/link'
+import AppHeader from '@/components/AppHeader'
 
 const PLANS = ['Free', 'Plus', 'Family']
 const ROWS: { label: string; values: string[] }[] = [
@@ -12,11 +12,7 @@ const ROWS: { label: string; values: string[] }[] = [
 export default function PlansPage() {
   return (
     <>
-      <nav className="nav">
-        <div className="nav-inner">
-          <Link href="/diaries" className="nav-brand">← Diaries</Link>
-        </div>
-      </nav>
+      <AppHeader back={{ href: '/diaries', label: '← Diaries' }} />
 
       <div className="page-container">
         <div className="page-header">

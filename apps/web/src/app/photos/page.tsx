@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import Link from "next/link";
+import AppHeader from "@/components/AppHeader";
 import { api, Photo } from "@/lib/api";
 import { PhotoThumbnail } from "@/components/PhotoThumbnail";
 import { PhotoUploadButton } from "@/components/PhotoUploadButton";
@@ -39,13 +39,7 @@ export default function UserPhotosPage() {
 
   return (
     <>
-      <nav className="nav">
-        <div className="nav-inner">
-          <Link href="/diaries" className="nav-brand">
-            ← Diaries
-          </Link>
-        </div>
-      </nav>
+      <AppHeader back={{ href: '/diaries', label: '← Diaries' }} />
       <main className="container" style={{ paddingTop: "1.5rem" }}>
         <h1>Photo library</h1>
         {error && <p role="alert">{error}</p>}

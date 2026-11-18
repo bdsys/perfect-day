@@ -139,6 +139,7 @@ def _db_context(entry: MagicMock, diary: MagicMock):
         return result
 
     db = MagicMock()
+    db.get = AsyncMock(return_value=None)  # no owner row: the default unit, F
     db.execute = fake_execute
     db.add = MagicMock()
 
@@ -251,6 +252,42 @@ class TestModeDetection:
         assert mock_bp.called
         _, kwargs = mock_bp.call_args
         assert kwargs.get("mode") == "hybrid"
+
+
+class TestOwnerTemperatureUnit:
+    @pytest.mark.asyncio
+    async def test_owner_celsius_reaches_the_prompt_and_the_fact_check(self):
+        """An owner on °C: the prompt shows °C (22), and validate_citation checks with "C"."""
+        import app.workers.llm as llm
+
+        entry_id, entry, diary = _make_entry(body_markdown=None, events=[_make_event()])
+        weather = MagicMock()
+        weather.kind = "weather"
+        weather.payload = {
+            "temperature_max_c": 21.5, "temperature_min_c": 16.0, "condition": "sunny",
+        }
+        entry.enrichments = [weather]
+        anthropic_p = _make_provider(name="anthropic", result=_llm_result(_EVENTS_OUTPUT))
+        gemini_p = _make_provider(name="gemini", configured=False)
+        ctx, _, _ = _db_context(entry, diary)
+        owner = MagicMock()
+        owner.temperature_unit = "C"
+        db = await ctx.__aenter__()  # the same db mock every entry into ctx returns
+        db.get = AsyncMock(return_value=owner)
+
+        with (
+            patch("app.workers.llm.db_session", return_value=ctx),
+            patch("app.workers.llm.AnthropicProvider", return_value=anthropic_p),
+            patch("app.workers.llm.GeminiProvider", return_value=gemini_p),
+            patch("app.workers.llm.validate_citation", wraps=llm.validate_citation) as mock_vc,
+        ):
+            await llm.generate_draft_for_entry(entry_id)
+
+        sent = anthropic_p.generate.call_args.args[2]
+        assert '"temperature_unit": "°C"' in sent
+        assert '"temperature_max": 22' in sent
+        assert "°F" not in sent
+        assert mock_vc.call_args.kwargs["temperature_unit"] == "C"
 
 
 # ---------------------------------------------------------------------------

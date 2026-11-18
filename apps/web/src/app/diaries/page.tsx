@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { api, type Diary, type MyPlan } from '@/lib/api'
 import { useAuth } from '@/lib/auth-context'
 import { googleStatusMessage } from '@/lib/googleStatus'
+import AppHeader from '@/components/AppHeader'
 import PlanBadge from '@/components/PlanBadge'
 import LimitNote from '@/components/LimitNote'
 import { diaryLimitNote, formatResetDate } from '@/lib/plan'
@@ -45,21 +46,8 @@ function planDetails(plan: MyPlan) {
   return details
 }
 
-function Nav({ onLogout }: { onLogout: () => void }) {
-  return (
-    <nav className="nav">
-      <div className="nav-inner">
-        <Link href="/diaries" className="nav-brand">Perfect Day</Link>
-        <div className="nav-actions">
-          <button className="btn btn-secondary" onClick={onLogout}>Sign out</button>
-        </div>
-      </div>
-    </nav>
-  )
-}
-
 export default function DiariesPage() {
-  const { user, loading: authLoading, logout } = useAuth()
+  const { user, loading: authLoading } = useAuth()
   const router = useRouter()
   const [diaries, setDiaries] = useState<Diary[]>([])
   const [loading, setLoading] = useState(true)
@@ -83,11 +71,6 @@ export default function DiariesPage() {
     }
   }, [user])
 
-  async function handleLogout() {
-    await logout()
-    router.push('/login')
-  }
-
   const atLimit = plan != null && plan.diaries_used >= plan.diaries_limit
 
   if (authLoading) return <div className="loading">Loading…</div>
@@ -95,7 +78,7 @@ export default function DiariesPage() {
 
   return (
     <>
-      <Nav onLogout={handleLogout} />
+      <AppHeader />
       <div className="container" style={{ paddingTop: '1.5rem' }}>
         <div className="page-header">
           <h1 className="page-title">Your diaries</h1>

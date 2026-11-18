@@ -1,7 +1,7 @@
 'use client'
 
 import { Suspense, useEffect, useState } from 'react'
-import Link from 'next/link'
+import AppHeader from '@/components/AppHeader'
 import { useParams, useRouter } from 'next/navigation'
 import { api, type Rule, type RuleCondition, type RuleOptions } from '@/lib/api'
 import { limitMessage } from '@/lib/plan'
@@ -49,11 +49,7 @@ function EditRulePageInner() {
 
   return (
     <>
-      <nav className="nav">
-        <div className="nav-inner">
-          <Link href={`/diaries/${rule.diary_id}/rules`} className="nav-brand">← Rules</Link>
-        </div>
-      </nav>
+      <AppHeader back={{ href: `/diaries/${rule.diary_id}/rules`, label: '← Rules' }} />
       <div className="container" style={{ paddingTop: '1.5rem', maxWidth: 720 }}>
         <h1 className="page-title">Edit Rule</h1>
         {error && <p className="error-message" style={{ marginBottom: '1rem' }}>{error}</p>}

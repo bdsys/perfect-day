@@ -70,6 +70,19 @@ def _photo_out(photo) -> PhotoOut:
     )
 
 
+async def read_capped_body(request: Request) -> bytes:
+    """The raw request body, read in memory only until it passes MAX_BYTES (then 413)."""
+    declared = request.headers.get("content-length")
+    if declared is not None and declared.isdigit() and int(declared) > MAX_BYTES:
+        raise HTTPException(status_code=413, detail="size_exceeds_limit")
+    data = bytearray()
+    async for chunk in request.stream():
+        data += chunk
+        if len(data) > MAX_BYTES:
+            raise HTTPException(status_code=413, detail="size_exceeds_limit")
+    return bytes(data)
+
+
 @router.post("/photos", response_model=PhotoOut, status_code=201)
 async def upload_photo(
     request: Request,
@@ -83,16 +96,9 @@ async def upload_photo(
     before auth or the size cap could run. Here auth runs first, and the body is
     read in memory only until it passes MAX_BYTES.
     """
-    declared = request.headers.get("content-length")
-    if declared is not None and declared.isdigit() and int(declared) > MAX_BYTES:
-        raise HTTPException(status_code=413, detail="size_exceeds_limit")
-    data = bytearray()
-    async for chunk in request.stream():
-        data += chunk
-        if len(data) > MAX_BYTES:
-            raise HTTPException(status_code=413, detail="size_exceeds_limit")
+    data = await read_capped_body(request)
     try:
-        photo = await ingest_photo(db, owner=user, data=bytes(data), source="upload")
+        photo = await ingest_photo(db, owner=user, data=data, source="upload")
     except UnsupportedPhoto:
         raise HTTPException(status_code=415, detail="unsupported_mime") from None
     return _photo_out(photo)
