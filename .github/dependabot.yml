@@ -1,16 +1,8 @@
 version: 2
 updates:
-  # Python (pip) — apps/api
-  - package-ecosystem: "pip"
-    directory: "/apps/api"
-    schedule:
-      interval: "weekly"
-      day: "monday"
-    groups:
-      minor-and-patch:
-        update-types:
-          - "minor"
-          - "patch"
+  # No pip entry: the API installs from apps/api/requirements.lock (pip-compile,
+  # with hashes), which Dependabot does not update, so its pip PRs only raised
+  # floors in pyproject.toml. Python upgrades: `make lock-upgrade` (tracker row 58).
 
   # npm — apps/web
   - package-ecosystem: "npm"
