@@ -13,7 +13,7 @@ import sqlalchemy as sa
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from testcontainers.core.container import DockerContainer
-from testcontainers.core.waiting_utils import wait_for_logs
+from testcontainers.core.wait_strategies import LogMessageWaitStrategy
 from testcontainers.postgres import PostgresContainer
 from testcontainers.redis import RedisContainer
 
@@ -108,9 +108,9 @@ def s3_server():
         .with_env("GARAGE_DEFAULT_SECRET_KEY", S3_TEST_SECRET_KEY)
         .with_env("GARAGE_RPC_SECRET", "0" * 64)
         .with_command("/garage server --single-node --default-access-key")
+        .waiting_for(LogMessageWaitStrategy("S3 API server listening").with_startup_timeout(30))
     )
     with container:
-        wait_for_logs(container, "S3 API server listening", timeout=30)
         yield _S3Server(container)
 
 

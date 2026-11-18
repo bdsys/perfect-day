@@ -445,14 +445,17 @@ def _s3_and_bucket():
     return get_s3(), get_settings().s3_bucket_photos
 
 
-def _echo_stats(stats) -> None:
+def _echo_stats(stats, with_deleted: bool = False) -> None:
     # stdout carries the tar, so the counts go to stderr as one JSON line.
-    click.echo(json.dumps({"objects": stats.objects, "bytes": stats.bytes}), err=True)
+    counts = {"objects": stats.objects, "bytes": stats.bytes}
+    if with_deleted:
+        counts["deleted"] = stats.deleted
+    click.echo(json.dumps(counts), err=True)
 
 
 @cli.group()
 def photos() -> None:
-    """Photo objects in storage: export, import, verify."""
+    """Photo objects in storage: export, import, digest, missing, verify."""
 
 
 @photos.command("export")
@@ -468,13 +471,44 @@ def photos_export() -> None:
 
 
 @photos.command("import")
-def photos_import() -> None:
+@click.option("--exact", is_flag=True, default=False,
+              help="Afterwards delete every object the tar did not hold (an exact copy).")
+def photos_import(exact: bool) -> None:
     """Put every object in the tar on stdin into the photos bucket (creates it if missing)."""
     from app.services.object_backup import import_bucket_tar
 
     s3, bucket = _s3_and_bucket()
-    stats = import_bucket_tar(s3, bucket, sys.stdin.buffer)
-    _echo_stats(stats)
+    stats = import_bucket_tar(s3, bucket, sys.stdin.buffer, exact=exact)
+    _echo_stats(stats, with_deleted=exact)
+
+
+@photos.command("digest")
+def photos_digest() -> None:
+    """Print the bucket's object count, bytes and key/size digest as one JSON line."""
+    from app.services.object_backup import bucket_digest
+
+    s3, bucket = _s3_and_bucket()
+    click.echo(json.dumps(bucket_digest(s3, bucket)))
+
+
+@photos.command("missing")
+def photos_missing() -> None:
+    """Check storage holds every object the database refers to; exit 1 if any is missing.
+
+    Prints missing=<n>, then up to 10 short hints. Keys are never printed whole:
+    they hold user ids.
+    """
+    from app.services.backup_verify import missing_referenced_keys
+
+    s3, bucket = _s3_and_bucket()
+    with _make_session() as db:
+        missing = missing_referenced_keys(db, s3, bucket)
+    click.echo(f"missing={len(missing)}")
+    for key in missing[:10]:
+        kind = "avatar" if "/avatar/" in key else "photo"
+        click.echo(f"  {kind} key {key.rsplit('/', 1)[-1][:8]}…")
+    if missing:
+        sys.exit(1)
 
 
 @photos.command("verify")

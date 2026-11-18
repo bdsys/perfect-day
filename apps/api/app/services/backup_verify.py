@@ -64,6 +64,36 @@ def verify_photo_sample(db: Session, limit: int = 20) -> VerifyReport:
     return report
 
 
+def referenced_keys(db: Session) -> set[str]:
+    """Every object key the live data needs: finalized, not-deleted photos (original,
+    thumbnail, display) and the avatars of users who are not deleted."""
+    keys: set[str] = set()
+    photos = db.execute(
+        select(Photo.s3_key, Photo.thumbnail_s3_key, Photo.display_s3_key).where(
+            Photo.deleted_at.is_(None), Photo.finalized_at.is_not(None)
+        )
+    ).all()
+    for row in photos:
+        keys.update(key for key in row if key)
+    avatars = db.execute(
+        select(User.avatar_s3_key).where(User.avatar_s3_key.is_not(None), User.deleted_at.is_(None))
+    ).scalars()
+    keys.update(key for key in avatars if key)
+    return keys
+
+
+def missing_referenced_keys(db: Session, s3, bucket: str) -> list[str]:
+    """Referenced keys absent from *bucket* (a full listing, not a sample), sorted.
+
+    The storage switch refuses to copy from a store that lacks any of them: copying
+    an incomplete store exactly would delete the photos from the other one (row 41).
+    """
+    present: set[str] = set()
+    for page in s3.get_paginator("list_objects_v2").paginate(Bucket=bucket):
+        present.update(obj["Key"] for obj in page.get("Contents", []))
+    return sorted(referenced_keys(db) - present)
+
+
 def has_photo_or_avatar_rows(db: Session) -> bool:
     """True if any photo row or avatar exists, so checking nothing would be a failure."""
     photo = db.execute(select(Photo.id).limit(1)).first()
