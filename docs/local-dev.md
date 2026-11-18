@@ -12,7 +12,7 @@ Covers: macOS and Linux (x86_64 and ARM). Requires Docker.
 |---|---|---|
 | Docker + Docker Compose | 24+ | https://docs.docker.com/get-docker/ |
 | uv | any | https://docs.astral.sh/uv/getting-started/installation/. uv fetches Python 3.12 itself, so you do not need to install it. After installing uv you may need a new shell, or run `export PATH="$HOME/.local/bin:$PATH"`. |
-| Node.js | 20+ | `brew install node` or `nvm install 20` |
+| Node.js | 24+ | `brew install node` or `nvm install 24` |
 | pnpm | 9+ | `npm install -g pnpm` |
 | jq | any | `brew install jq` or `apt install jq` |
 | mc (MinIO client) | any | Optional. Used by `seed-minio-bucket.sh`. Falls back to Docker if absent. |

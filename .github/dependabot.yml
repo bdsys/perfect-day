@@ -10,6 +10,11 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
+    ignore:
+      # Next 16 type-checks with TypeScript 7 only behind experimental.useTypeScriptCli
+      # (2026-11-18). Drop this once Next supports TS 7 by default.
+      - dependency-name: "typescript"
+        versions: [">=7"]
     groups:
       minor-and-patch:
         update-types:
