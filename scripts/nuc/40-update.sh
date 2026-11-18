@@ -25,6 +25,8 @@ self_update_snapshot
 # (lib/deploy-lock.sh). Waits up to 30 minutes for a running backup.
 # shellcheck source=lib/deploy-lock.sh
 source "$(dirname "$(readlink -f "$0")")/lib/deploy-lock.sh"
+# shellcheck source=lib/readyz.sh
+source "$(dirname "$(readlink -f "$0")")/lib/readyz.sh"
 if ! deploy_lock_take; then
     echo "ERROR: a backup has held the lock for 30 minutes; not deploying." >&2
     exit 1
@@ -155,6 +157,19 @@ until curl -sf --max-time 5 "${HEALTH_URL}" > /dev/null 2>&1; do
     ELAPSED=$(( ELAPSED + 5 ))
     echo "  Waiting... ${ELAPSED}s"
 done
+# /readyz answers 200 even when photo storage is down, so ask about storage itself.
+STORAGE_WAIT=0
+until readyz_storage_ok "${HEALTH_URL}"; do
+    if [ "${STORAGE_WAIT}" -ge 30 ]; then
+        echo "ERROR: the app is up but photo storage is not (see the line above)." >&2
+        echo '  Check the store: docker compose --profile nuc ps; docker compose logs --tail=50 garage (minio before the switch)' >&2
+        echo '  If this deploy caused it: sudo ./scripts/nuc/50-rollback.sh' >&2
+        exit 1
+    fi
+    sleep 5
+    STORAGE_WAIT=$(( STORAGE_WAIT + 5 ))
+done
+echo '  Photo storage: ok'
 
 echo "${NEW_SHA}" > "${DEPLOY_DIR}/last-deployed-sha"
 echo "  Recorded deployed SHA: ${NEW_SHA}"
