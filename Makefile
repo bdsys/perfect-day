@@ -1,5 +1,5 @@
 .PHONY: up down infra api worker beat web migrate lint typecheck \
-        test test-web test-fast test-all test-e2e test-live test-smoke test-coverage \
+        test test-web test-scripts test-fast test-all test-e2e test-live test-smoke test-coverage \
         web-e2e-install seed-bucket bootstrap lock lock-upgrade
 
 API_DIR  := apps/api
@@ -107,6 +107,10 @@ test-fast:
 test:
 	cd $(API_DIR) && $(CURDIR)/$(PYTEST) tests/unit tests/integration -q
 
+# Shell tests for the NUC scripts (no Docker, no root). Part of test-all and CI's Lint job.
+test-scripts:
+	@set -e; for t in scripts/nuc/tests/*.test.sh; do echo "== $$t"; bash "$$t"; done
+
 # Web unit tests (Jest). Part of test-all and of CI's Web build job.
 test-web:
 	cd $(WEB_DIR) && npx jest --ci
@@ -117,6 +121,7 @@ test-all:
 	@echo "TIP: First time on Linux/WSL? See the 'Linux / WSL one-time setup' section in README.md."
 	@echo "TIP: Before the app is usable locally, run: make bootstrap  (or manually: make migrate && make seed-bucket)"
 	@$(MAKE) lint
+	@$(MAKE) test-scripts
 	@$(MAKE) typecheck
 	@$(MAKE) test
 	@$(MAKE) test-web

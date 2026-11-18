@@ -21,6 +21,15 @@ fi
 source "$(dirname "$(readlink -f "$0")")/lib/self-update.sh"
 self_update_snapshot
 
+# Never deploy while the nightly backup runs (or run two deploys at once): the
+# backup's photo export uses a one-off API container and its dump reads Postgres.
+# Same lock as scripts/nuc/backup-run.sh; waits up to 30 minutes for a backup.
+exec 8>"${PD_LOCK:-/run/perfect-day-backup.lock}"
+if ! flock -w 1800 8; then
+    echo "ERROR: a backup has held the lock for 30 minutes; not deploying." >&2
+    exit 1
+fi
+
 TARGET_SHA="${1:-}"
 DEPLOY_DIR="/opt/perfect-day"
 HEALTH_URL="https://perfectday-api.andrewlass.com/readyz"
