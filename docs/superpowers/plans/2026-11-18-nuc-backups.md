@@ -34,7 +34,7 @@
 ## Review Focus
 
 1. **The NAS is unreachable or hangs.** rsync runs with `--timeout=60` and the run takes at most 15 minutes in total. The night's local folder is kept, `result` is `nas_failed`, and the exit code is non-zero. Covered in Task 3 (`nas_unreachable_keeps_local_and_fails`).
-2. **A run that fails part-way deletes good backups.** Nothing is pruned locally or on the NAS unless the night verified, and rsync never runs with `--delete` when the local set has fewer than 2 folders. Covered in Task 3 (`failed_run_prunes_nothing`, `tiny_local_set_never_deletes_on_nas`).
+2. **A run that fails part-way, or a rebuilt machine, deletes good backups.** Nothing is pruned unless the night verified. The NAS copy never deletes; afterwards only the NAS folders the keep rule drops, judged over the NAS history and the local nights together, are removed by name. Covered in Task 3 (`failed_run_prunes_nothing`, `rebuilt_machine_keeps_nas_history`, `tiny_local_set_never_deletes_on_nas`).
 3. **A second run on the same day, or a run overlapping a deploy.** A second run finds the lock held and exits 75 with "already running". `40-update.sh` waits up to 30 minutes for the same lock. A same-day rerun replaces that night's folder atomically. Covered in Task 3 (`lock_held_exits_75`, `same_day_rerun_replaces_atomically`).
 4. **Object keys with spaces, unicode or deep paths, an empty bucket, and more objects than one listing page.** These round-trip exactly. Covered in Task 1.
 5. **The disk is nearly full.** The run refuses to start when less than 2 GB is free on `/var/backups`. Covered in Task 3 (`low_disk_refuses`).

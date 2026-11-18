@@ -123,10 +123,14 @@ hand):
 7. Keep the night's folder locally under `/var/backups/perfect-day/nightly/YYYY-MM-DD/`
    and apply retention locally. Retention keeps the newest 30 nightly
    folders, plus the earliest good folder of each of the last 12 months.
-8. Copy to `rsync://192.168.1.112/Backups/perfect-day/` so the NAS holds
-   exactly the local set. Deletions on the NAS happen only on a run where
-   steps 2–6 succeeded, and never when the local set has fewer folders
-   than it should.
+8. Copy the night's folders to `rsync://192.168.1.112/Backups/perfect-day/nightly/`,
+   adding and updating only. Then apply the same keep rule to **everything the NAS
+   holds**, its own history and the local nights together, and delete only the NAS
+   folders that rule drops. A rebuilt machine with a few nights therefore never trims
+   the NAS's older backups. *(Changed 2026-11-18 after a side agent spotted that an
+   exact mirror would let a rebuilt NUC delete months of NAS history, and with it
+   history on the external drive the next time Andrew refreshes it from the NAS.)*
+   Nothing on the NAS is deleted on a run that failed before this step.
 9. Write the result to `/var/log/perfect-day/backup-status.json` (last
    attempt, last success, sizes, error text on failure) and append a line to
    `/var/log/perfect-day/backup.log`. A failed run exits non-zero, so

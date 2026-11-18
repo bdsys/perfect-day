@@ -58,7 +58,12 @@ EOF
     cat > "${WORK}/bin/rsync" <<'EOF'
 #!/usr/bin/env bash
 echo "rsync $*" >> "${CALLS}/rsync"
-exit "${RSYNC_EXIT:-0}"
+[ "${RSYNC_EXIT:-0}" != 0 ] && exit "${RSYNC_EXIT}"
+if [[ " $* " == *" --list-only "* ]]; then
+    echo "drwx------ 4096 2026/11/18 02:17:00 ."
+    for n in ${NAS_LIST:-}; do echo "drwx------ 4096 2026/11/18 02:17:00 ${n}"; done
+fi
+exit 0
 EOF
     # df -Pk: reports FREE_KB available.
     cat > "${WORK}/bin/df" <<'EOF'
@@ -73,7 +78,7 @@ EOF
         PD_LOG_DIR="${WORK}/log" PD_DEPLOY_DIR="${WORK}/deploy" \
         PD_NAS_URL="rsync://nas.invalid/Backups/perfect-day/nightly/" \
         PD_LOCK="${WORK}/backup.lock" TODAY="2026-11-18"
-    unset FAIL_PGDUMP TRUNCATED_DUMP EXPORT_COUNT RSYNC_EXIT FREE_KB
+    unset FAIL_PGDUMP TRUNCATED_DUMP EXPORT_COUNT RSYNC_EXIT FREE_KB NAS_LIST
     touch "${CALLS}/docker" "${CALLS}/rsync" "${CALLS}/age"
 }
 
@@ -114,7 +119,9 @@ check "encrypts with the public key" grep -q -- "-R ${PD_ETC}/backup.pub" "${CAL
 check "manifest counts the objects" test "$(jq -r .objects "${NIGHT}/manifest.json")" -eq 2
 check "manifest has row counts" test "$(jq -r .rows.photos "${NIGHT}/manifest.json")" -eq 4
 check "manifest has a sha256 per file" test "$(jq -r '.files["db.sql.gz.age"].sha256' "${NIGHT}/manifest.json")" = "$(sha256sum "${NIGHT}/db.sql.gz.age" | cut -d' ' -f1)"
-check "copies nightly/ to the NAS with --delete" grep -q -- "--delete .*${PD_BACKUP_ROOT}/nightly/ ${PD_NAS_URL}" "${CALLS}/rsync"
+check "copies nightly/ to the NAS" grep -q -- "-a --timeout=60 ${PD_BACKUP_ROOT}/nightly/ ${PD_NAS_URL}" "${CALLS}/rsync"
+check "the copy itself never deletes" bash -c '! grep -- "${1}/nightly/ " "$2" | grep -q -- "--delete"' _ "${PD_BACKUP_ROOT}" "${CALLS}/rsync"
+check "an empty NAS needs no deleting" bash -c '! grep -q -- "--delete" "$1"' _ "${CALLS}/rsync"
 check "rsync has a timeout" grep -q -- "--timeout=60" "${CALLS}/rsync"
 check "status_json_fields: every field is there" \
     bash -c 'jq -e "has(\"last_attempt\") and has(\"last_local_success\") and has(\"last_nas_success\") and has(\"result\") and has(\"error\") and has(\"night\") and has(\"sizes\")" "$1" >/dev/null' _ "${PD_LOG_DIR}/backup-status.json"
@@ -174,12 +181,36 @@ check "result nas_failed" test "$(status .result)" = "nas_failed"
 check "last_local_success is set" test "$(status .last_local_success)" != "null"
 check "last_nas_success unchanged" test "$(status .last_nas_success)" = "2026-11-17T02:17:00Z"
 
+echo "rebuilt_machine_keeps_nas_history"
+setup
+# The NAS holds 60 nights from the old machine; the rebuilt one has only 2.
+d="2026-09-18"; NAS_LIST=""
+while [[ "${d}" < "2026-11-17" ]]; do NAS_LIST="${NAS_LIST} ${d}"; d=$(date -d "${d} +1 day" +%F); done
+export NAS_LIST
+old_nights 2026-11-17
+RC=0; bash "${RUN}" >/dev/null 2>&1 || RC=$?
+DEL="$(grep -- "--delete" "${CALLS}/rsync" || true)"
+check "exits 0" test "${RC}" -eq 0
+check "deletes an old nightly the rule drops (2026-09-19)" grep -qF -- "--include=/2026-09-19/***" <<<"${DEL}"
+check "keeps September's monthly (2026-09-18)" bash -c '! grep -q -- "/2026-09-18/" <<<"$1"' _ "${DEL}"
+check "keeps October's monthly (2026-10-01)" bash -c '! grep -q -- "/2026-10-01/" <<<"$1"' _ "${DEL}"
+check "keeps the newest NAS nights (2026-11-16)" bash -c '! grep -q -- "/2026-11-16/" <<<"$1"' _ "${DEL}"
+check "the delete is limited to named folders" grep -qF -- "--exclude=*" <<<"${DEL}"
+check "every --delete call names its folders" bash -c '! grep -- "--delete" "$1" | grep -qv -- "--include="' _ "${CALLS}/rsync"
+
 echo "tiny_local_set_never_deletes_on_nas"
 setup
 RC=0; bash "${RUN}" >/dev/null 2>&1 || RC=$?
 check "first run exits 0" test "${RC}" -eq 0
 check "rsync ran" test -s "${CALLS}/rsync"
 check "without --delete" bash -c '! grep -q -- "--delete" "$1"' _ "${CALLS}/rsync"
+
+echo "NAS listing fails: nothing is deleted"
+setup; old_nights 2026-11-17
+printf '#!/usr/bin/env bash\necho "rsync $*" >> "${CALLS}/rsync"\n[[ " $* " == *" --list-only "* ]] && exit 10\nexit 0\n' > "${WORK}/bin/rsync"
+RC=0; bash "${RUN}" >/dev/null 2>&1 || RC=$?
+check "exits 2" test "${RC}" -eq 2
+check "no delete attempted" bash -c '! grep -q -- "--delete" "$1"' _ "${CALLS}/rsync"
 
 # ── concurrency, reruns, disk ───────────────────────────────────────────────
 echo "lock_held_exits_75"

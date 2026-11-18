@@ -6,7 +6,8 @@
 # Dumps the database, exports the photo objects, saves /etc/perfect-day; encrypts
 # all three with the backup key, checks them, keeps them under
 # /var/backups/perfect-day/nightly/YYYY-MM-DD/ (30 nightly + 12 monthly) and copies
-# that set to the NAS. Result: /var/log/perfect-day/backup-status.json.
+# new nights to the NAS, where the same keep rule is applied to all it holds.
+# Result: /var/log/perfect-day/backup-status.json.
 # Exit codes: 0 ok, 1 failed (nothing pruned or copied), 2 kept locally but the NAS
 # copy failed, 75 another backup (or a deploy) holds the lock.
 set -euo pipefail
@@ -62,7 +63,7 @@ backup_log "night ${NIGHT} written and verified"
 
 backup_prune_local "${NIGHT}"
 
-if backup_sync_nas; then
+if backup_sync_nas "${NIGHT}"; then
     NAS_OK=1
     backup_log "copied to ${PD_NAS_URL}"
     backup_write_status ok

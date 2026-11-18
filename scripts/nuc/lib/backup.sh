@@ -136,14 +136,28 @@ backup_prune_local() {
     done
 }
 
-# backup_sync_nas: makes the NAS hold exactly the local nightly set. With fewer
-# than 2 local folders it copies without --delete, so a wiped local set can
-# never empty the NAS.
+# backup_sync_nas <today>: copies the local nightly folders to the NAS (adding and
+# updating, never deleting), then applies the keep rule to everything the NAS holds,
+# local and NAS nights together, and deletes only the NAS folders that rule drops.
+# So a rebuilt machine with a few nights never trims the NAS's older history.
 backup_sync_nas() {
-    local count; count="$(find "${PD_NIGHTLY}" -mindepth 1 -maxdepth 1 -type d -name '20*' | wc -l)"
-    local -a args=(-a --timeout=60)
-    [ "${count}" -ge 2 ] && args+=(--delete)
-    rsync "${args[@]}" "${PD_NIGHTLY}/" "${PD_NAS_URL}"
+    local today="$1" listing nas keep n rc=0
+    rsync -a --timeout=60 "${PD_NIGHTLY}/" "${PD_NAS_URL}" || return $?
+    listing="$(rsync --list-only --timeout=60 "${PD_NAS_URL}")" || return $?
+    nas="$(awk '{print $NF}' <<<"${listing}" | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' || true)"
+    [ -z "${nas}" ] && return 0
+    # shellcheck disable=SC2046,SC2086  # word splitting of folder names is intended
+    keep="$(backup_keep_list "${today}" ${nas} $(ls -A "${PD_NIGHTLY}"))"
+    local -a drop=()
+    for n in ${nas}; do
+        grep -qx "${n}" <<<"${keep}" || drop+=("--include=/${n}/***")
+    done
+    [ "${#drop[@]}" -eq 0 ] && return 0
+    backup_log "removing ${#drop[@]} folder(s) from the NAS that retention no longer keeps"
+    local empty; empty="$(mktemp -d)"
+    rsync -r --timeout=60 --delete "${drop[@]}" --exclude='*' "${empty}/" "${PD_NAS_URL}" || rc=$?
+    rmdir "${empty}"
+    return "${rc}"
 }
 
 # backup_write_status <result> [error]: updates backup-status.json atomically,
