@@ -68,14 +68,14 @@ For each threat: actors, vectors, mitigations in place, residual risk, and re-ev
 
 ## 4. Photo plaintext leak
 
-**Actors:** attacker who gains read access to the MinIO bucket or the Postgres database (e.g. via a misconfigured MinIO bucket, a SQL injection, or a backup theft).
+**Actors:** attacker who gains read access to the object-store bucket or the Postgres database (e.g. via a misconfigured bucket, a SQL injection, or a backup theft).
 
 **Vectors:**
-- Direct MinIO bucket read (requires `minio_access_key` + `minio_secret_key` or a public bucket).
-- Postgres `photos.dek_ciphertext` + MinIO object together with `master_secret`.
+- Direct bucket read (requires `s3_access_key` + `s3_secret_key` or a public bucket).
+- Postgres `photos.dek_ciphertext` + stored object together with `master_secret`.
 
 **Mitigations in place** (see `08-security-privacy.md` § Photo encryption at rest):
-- No public MinIO buckets. Dedicated app service account with restricted permissions.
+- No public buckets. Dedicated app service account with restricted permissions.
 - Two-layer encryption: DEK per photo, KEK per user derived from `master_secret` via HKDF.
 - `master_secret` loaded from a secret store — not colocated with the ciphertext in the same config file.
 - All downloads proxied through the API; no signed read URLs.
@@ -88,7 +88,7 @@ For each threat: actors, vectors, mitigations in place, residual risk, and re-ev
 
 ## 5. Backup compromise
 
-**Actors:** attacker who obtains the backup storage bucket (MinIO or cloud object store).
+**Actors:** attacker who obtains the backup storage bucket (the NAS share, or a cloud object store).
 
 **Vectors:**
 - Backup bucket credentials stolen → attacker downloads encrypted backups.

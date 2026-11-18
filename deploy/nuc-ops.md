@@ -17,6 +17,7 @@ This document is the **runbook** — step-by-step commands you run to take actio
 | State got messy, need clean rebuild | [B3.5 — Full reinstall](#b35--full-reinstall-when-incremental-cleanup-is-not-working) |
 | Bad deploy, need to revert | [B-Rollback](#b-rollback) |
 | Nightly backup failing, restore, or drill | [B7 — Backups](#b7--backups) |
+| Move photo storage from MinIO to Garage, or back | [B-Storage](#b-storage--switch-photo-storage-to-garage) |
 | Validate prod after deploy | [B8 — Validate production deployment](#b8--validate-production-deployment) |
 
 ---
@@ -181,11 +182,7 @@ cd ~/perfect-day
 sudo ./scripts/nuc/20-deploy.sh
 ```
 
-Clones the repo, renders `Caddyfile` from `Caddyfile.tmpl`, runs migrations, starts all services. If `/readyz` returns 503 afterward:
-
-```bash
-cd /opt/perfect-day && ./scripts/seed-minio-bucket.sh
-```
+Clones the repo, renders `Caddyfile` from `Caddyfile.tmpl`, runs migrations, starts all services. Garage creates the `photos` bucket itself on first start. `curl -s localhost/readyz` (or the public URL) should show `"storage": "ok"`; if not, `docker compose logs --tail=50 garage`.
 
 If you have re-run `10-secrets.sh` (which regenerates `POSTGRES_PASSWORD`), you must wipe the Postgres volume first — otherwise the new password won't match what the DB was initialized with:
 
@@ -337,7 +334,9 @@ sudo /opt/perfect-day/scripts/nuc/drill.sh 2026-11-18
 ```
 
 It must end with `DRILL PASSED`. It always removes the `perfect-day-drill` containers
-and volumes.
+and volumes. It starts postgres and the photo store `S3_ENDPOINT_URL` names (garage, or
+minio before the switch), and nights from before the switch restore unchanged: a
+restore keeps the live storage address.
 
 **Restore production from a night** (replaces the live database and photos). It first checks the whole night decrypts with the key, then asks you to type the date and keeps a safety dump. If a later step fails it starts the app again and prints the exact commands to load the safety dump back:
 
@@ -430,7 +429,7 @@ docker image ls 'perfect-day-*'            # expect perfect-day-api, -worker, -b
 
 Then run [B-Config](#b-config--change-an-existing-nucs-config) if the hostnames or Google client changed, and the update below.
 
-Builds the app images on the NUC from `main` (or a specific SHA), runs migrations and restarts the app services. Infra (Postgres, Redis, MinIO) stays up. CI-built images pulled on a timer are planned (PoC 25.4, finding P-2).
+Builds the app images on the NUC from `main` (or a specific SHA), runs migrations and restarts the app services. Infra (Postgres, Redis, Garage, and MinIO until release 2 of row 41) stays up. CI-built images pulled on a timer are planned (PoC 25.4, finding P-2).
 
 ```bash
 ssh andrew@<NUC_IP>
@@ -447,10 +446,45 @@ The script:
 4. `docker compose build api worker beat web` (the web bakes in `NEXT_PUBLIC_API_URL` and `NEXT_PUBLIC_GOOGLE_CLIENT_ID` from `app.env`), and pulls the Caddy image
 5. `alembic upgrade head` for migrations
 6. Restarts the app services; recreates `edge` and `cloudflare-ddns` so they reread their mounted files
-7. Polls `/readyz` for up to 90s; on failure tells you to run `50-rollback.sh`
+7. Polls `/readyz` for up to 90s, then requires `checks.storage` to be `ok` within 30s more (`/readyz` itself answers 200 with storage down); on failure tells you what to check and to run `50-rollback.sh`. Before that it adds any generated setting a newer release needs (today `GARAGE_RPC_SECRET`) to `app.env`, never printing it
 8. Records the new SHA in `/opt/perfect-day/last-deployed-sha`, then runs `./scripts/smoke-test.sh` against the public API with `SMOKE_CLEANUP=1` (it registers two throwaway users and deletes every smoke-test user when it ends; a failed cleanup only warns)
 
 Update logs land in `/var/log/perfect-day/update-<timestamp>.log`.
+
+## B-Storage — switch photo storage to Garage
+
+Tracker row 41. MinIO's free edition is no longer published or fixed; Garage replaces it.
+Design: [`docs/superpowers/specs/2026-11-18-garage-design.md`](../docs/superpowers/specs/2026-11-18-garage-design.md).
+
+**When:** after the release that adds Garage is deployed (nothing changes for users until
+this step). Pick a time; **not within 30 minutes of the 02:17 backup** (the script refuses
+then). The whole site is down for a few minutes.
+
+```bash
+cd /opt/perfect-day
+sudo ./scripts/nuc/60-switch-storage.sh
+```
+
+It refuses, changing nothing, if: the app already uses Garage; a store isn't healthy;
+MinIO lacks any photo the database refers to; there isn't room for a second copy. Then it
+dumps the database, stops the app, copies every photo into Garage as an exact copy,
+compares the two stores and decrypts a sample from Garage, points `S3_ENDPOINT_URL` at
+`http://garage:3900`, restarts, and checks `/readyz` says `storage: ok`, the sample
+decrypts through the app, and the smoke test passes. Any failure puts the app back on
+MinIO. Then it stops MinIO (its data stays) and takes a backup straight away. It ends
+with a summary: objects, the dump's path, the backup result, and the way back.
+
+**Afterwards:** open a few photos on the phone; check the next morning's backup
+(`sudo cat /var/log/perfect-day/backup-status.json`) and run the drill.
+
+**Going back** (until release 2 removes MinIO): `sudo ./scripts/nuc/60-switch-storage.sh --back`.
+It copies Garage into MinIO the same careful way, so photos added or deleted since the
+switch are carried over. It refuses if Garage lacks anything the database needs, so an
+empty store can never be copied over the good one.
+
+**Release 2** (later, Andrew's OK, after backups and a drill have passed from Garage)
+removes MinIO from the compose file. The `perfect-day_minio_data` volume and the MinIO
+image stay on the NUC until Andrew decides; from then on, going back means a restore.
 
 ## B-Rollback
 

@@ -2,7 +2,7 @@
 
 ## Photo encryption at rest
 
-Two-layer key hierarchy, app-level. All downloads proxied through the API (no MinIO signed URLs for reads).
+Two-layer key hierarchy, app-level. All downloads proxied through the API (no signed URLs).
 
 ```
 master_secret   = loaded at process start from a secret store (see below)
@@ -16,12 +16,12 @@ On ingest:
     ciphertext_chunk = AES-256-GCM(key=DEK, nonce=chunk_nonce(i), plaintext=chunk)
   full_ciphertext = [chunk_count(4 bytes) || chunk_size(4 bytes) || ciphertext_chunks...]
   wrapped_DEK = AES-256-GCM(KEK, DEK)  [nonce prepended]
-  MinIO: store full_ciphertext at {user_id}/{photo_uuid}.enc
+  Object store (Garage): store full_ciphertext at {user_id}/{photo_uuid}.enc
   Postgres: photos.dek_ciphertext = [key_version_byte || nonce || wrapped_DEK]
 
 On download:
   GET /v1/photos/{id}
-  → backend retrieves full_ciphertext from MinIO
+  → backend retrieves full_ciphertext from the object store
   → unwraps DEK with KEK
   → for each chunk: verify GCM tag, then stream verified plaintext to client
   (memory use is bounded to one chunk at a time regardless of photo size)
@@ -35,9 +35,9 @@ On download:
 
 The runtime never persists the unwrapped secret to disk.
 
-- Signed MinIO URLs used only for uploads (direct client-to-MinIO PUT). Downloads always through the API.
+- No signed URLs: uploads and downloads both go through the API (row 43 removed the unused public endpoint).
 - Thumbnails encrypted with the same DEK; served via `/v1/photos/{id}/thumbnail` with same decrypt-and-stream path.
-- Key version prefix in `dek_ciphertext` supports future master_secret rotation (re-wrap DEKs in Postgres; ciphertext in MinIO unchanged).
+- Key version prefix in `dek_ciphertext` supports future master_secret rotation (re-wrap DEKs in Postgres; ciphertext in the object store unchanged).
 - OAuth tokens use a **separate** `master_secret` (different secret store entry) and the same AES-256-GCM pattern.
 
 ## Hybrid deployment: secret and DEK boundaries
@@ -98,7 +98,7 @@ Day 30:  Celery process_hard_deletes():
            delete entry_photos, enrichments, events, llm_generations,
            entries, entry_edit_diffs, scan_runs, backfill_runs,
            diary_permissions, invitations, diary_calendar_filters.
-           Photos deleted from MinIO + photos table only if no other diary
+           Photos deleted from the object store + photos table only if no other diary
            links them (cross-diary check: an entry_photos row on an
            entry in another diary keeps the photo).
            Hard delete diaries row. Write audit_log.
@@ -118,12 +118,12 @@ Day 7:   Celery process_hard_deletes():
            Hard delete all owned diaries (cascade per diary flow above).
            Delete notifications, notification_preferences, social_identities,
            oauth_tokens, magic_link_tokens, refresh_tokens.
-           Scrub MinIO: delete everything under {user_id}/* prefix.
+           Scrub the object store: delete everything under {user_id}/* prefix.
            Anonymize audit_log rows (null user_id, preserve action/timestamp).
            Hard delete users row.
 ```
 
-Cross-diary photo check: the `photos` row and MinIO objects are deleted only when no entry in another diary still links the photo through `entry_photos` (`apps/api/app/workers/hard_delete.py`). The `diary_photos` table is not consulted.
+Cross-diary photo check: the `photos` row and its stored objects are deleted only when no entry in another diary still links the photo through `entry_photos` (`apps/api/app/workers/hard_delete.py`). The `diary_photos` table is not consulted.
 
 ## GDPR/CCPA posture
 
@@ -153,7 +153,7 @@ Cross-diary photo check: the `photos` row and MinIO objects are deleted only whe
 
 **`/v1/auth/refresh` CSRF protection:** this endpoint accepts the refresh token from the HttpOnly cookie without an Authorization header. The `SameSite=Strict` attribute prevents cross-origin POSTs from including the cookie, which is the primary defense. As an additional layer, the endpoint also validates an `Origin` header check — requests must originate from `perfectday.andrewlass.com` or `perfectday-api.andrewlass.com`. Requests with an absent or mismatched Origin header (that are not from the same origin) are rejected with `403 forbidden_origin`. This defense-in-depth covers browsers that do not yet fully enforce SameSite=Strict.
 
-## MinIO access controls
+## Object store access controls (Garage; MinIO until row 41)
 
 - Dedicated app service account. No public buckets.
 - Non-guessable object keys: `{user_id}/{uuid}.enc`.

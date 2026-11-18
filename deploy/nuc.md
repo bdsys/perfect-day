@@ -28,7 +28,7 @@ This document captures guidance specific to deploying Perfect Day on the home-la
 | FastAPI (2 workers) | 100–150 MB |
 | Celery worker (2 processes) | 150–250 MB |
 | Celery beat | 50 MB |
-| MinIO | 100–200 MB |
+| Garage (photo store) | ~15 MB idle (11 MiB measured, 2026-11-18) |
 | Next.js SSR (Node) | 150–300 MB |
 | **Total** | **~720 MB – 1.3 GB** |
 
@@ -40,7 +40,7 @@ Cap Celery worker concurrency at 2 for PoC. If memory pressure appears, switchin
 
 ## Storage
 
-MinIO for photo storage. Storage path (`/data/minio` or similar) can be bind-mounted to a larger drive without application changes — update the Docker Compose volume mount.
+Garage for photo storage (the `garage_data` volume, `/var/lib/garage` in the container; config `deploy/garage/garage.toml`). It can be bind-mounted to a larger drive without application changes — update the Docker Compose volume mount. MinIO, the old store, stays until row 41's release 2; the switch is [`nuc-ops.md` § B-Storage](nuc-ops.md#b-storage--switch-photo-storage-to-garage).
 
 ## Secrets
 
@@ -51,7 +51,7 @@ sops -d secrets.enc.yaml > /run/secrets/app.env
 # process reads /run/secrets/app.env; file exists only in tmpfs
 ```
 
-This is a **documented compromise** — the decrypted value lives in process memory on the same host as the database and MinIO. It is acceptable for a personal/family-only deployment where physical access to the host is controlled. It is **not** acceptable for any multi-user or cloud deployment — use a managed secret manager there.
+This is a **documented compromise** — the decrypted value lives in process memory on the same host as the database and the photo store. It is acceptable for a personal/family-only deployment where physical access to the host is controlled. It is **not** acceptable for any multi-user or cloud deployment — use a managed secret manager there.
 
 Backup private key (`age` keypair for `age`-encrypted `pg_dump`) is stored on a **separate device** (USB key, second machine, or password manager export), not on the NUC.
 
@@ -63,7 +63,7 @@ Commands: [`nuc-ops.md` § B7](nuc-ops.md#b7--backups).
 
 - **What:** every night at 02:17 (`perfect-day-backup.timer`), the database
   (`pg_dump`), every photo object (exported through the S3 interface, so the backup
-  doesn't depend on MinIO's on-disk format) and `/etc/perfect-day/` (including
+  doesn't depend on the store's on-disk format, and works the same with MinIO or Garage) and `/etc/perfect-day/` (including
   `MASTER_SECRET`, without which photos and Google tokens can't be decrypted).
 - **Encrypted on the NUC** with `age` to `/etc/perfect-day/backup.pub` before anything
   is written. The private key is in Andrew's password manager and in
@@ -85,7 +85,7 @@ Commands: [`nuc-ops.md` § B7](nuc-ops.md#b7--backups).
 - **Result:** `/var/log/perfect-day/backup-status.json` and `backup.log`. There is no
   alert yet; an admin panel card is tracker row 62.
 - **Restore drill:** `scripts/nuc/drill.sh` restores the newest NAS night into a
-  throwaway `perfect-day-drill` project (postgres and minio only) and checks it.
+  throwaway `perfect-day-drill` project (postgres and the photo store the app uses only) and checks it.
   Repeat it whenever the backup or restore changes. A full rebuild on a second
   machine is tracker row 63.
 

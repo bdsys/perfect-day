@@ -24,7 +24,7 @@ What to test at unit level:
 
 ### Integration tests (pytest + testcontainers)
 
-Real Postgres, Redis, and MinIO via testcontainers. No mocks for these services — mock/prod divergence has caused production incidents in analogous projects.
+Real Postgres, Redis, and Garage (the S3 store; MinIO until row 41) via testcontainers. No mocks for these services — mock/prod divergence has caused production incidents in analogous projects.
 
 Target: most **behaviour** coverage here.
 
@@ -64,7 +64,7 @@ Deferred. Stub the directory now: `apps/mobile/e2e/placeholder.test.ts`. Add one
 |---|---|---|
 | Postgres | Real (testcontainers) | Not used |
 | Redis | Real (testcontainers) | Not used |
-| MinIO | Real (testcontainers, `minio/minio` image) | Not used |
+| Garage (S3) | Real (testcontainers, the image pinned in `docker-compose.yml`) | Not used |
 | Google Calendar / Photos API | `responses` library (HTTP mock) | `responses` or pure stubs |
 | Anthropic API | `vcrpy` cassette or custom HTTP mock | Inline stub |
 | SendGrid | `responses` library | Inline stub |
