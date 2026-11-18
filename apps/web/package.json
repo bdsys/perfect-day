@@ -12,11 +12,11 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
-    "lucide-react": "^1.17.0",
+    "lucide-react": "^1.73.0",
     "next": "15.5.29",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "swr": "^2.3.0"
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "swr": "^2.5.1"
   },
   "devDependencies": {
     "@babel/core": "^7.29.7",
@@ -24,18 +24,18 @@
     "@babel/preset-react": "^7.29.7",
     "@babel/preset-typescript": "^7.29.7",
     "@eslint/eslintrc": "^3",
-    "@playwright/test": "^1.60.0",
+    "@playwright/test": "^1.65.1",
     "@testing-library/jest-dom": "^6.9.1",
-    "@testing-library/react": "^16.3.2",
+    "@testing-library/react": "^16.3.3",
     "@types/jest": "^30.0.0",
     "@types/node": "^22",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "babel-jest": "^30.4.1",
+    "babel-jest": "^30.5.2",
     "eslint": "^9",
     "eslint-config-next": "15.5.29",
-    "jest": "^30.4.2",
-    "jest-environment-jsdom": "^30.4.1",
+    "jest": "^30.5.2",
+    "jest-environment-jsdom": "^30.5.2",
     "typescript": "^5"
   }
 }
