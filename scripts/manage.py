@@ -5,6 +5,7 @@ Run via: ./scripts/admin.sh <command> [options]
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import sys
@@ -429,6 +430,51 @@ def entries_delete(entry_id: str, hard: bool) -> None:
             entry.deleted_at = datetime.now(UTC)
         db.commit()
     click.echo(f"{'Hard-deleted' if hard else 'Soft-deleted'} entry {entry_id}.")
+
+
+# ---------------------------------------------------------------------------
+# photos: the photo objects, for backups and restores (tracker row 36)
+# ---------------------------------------------------------------------------
+
+
+def _s3_and_bucket():
+    """The app's S3 client and photos bucket, from the same settings the API uses."""
+    from app.core.config import get_settings
+    from app.core.dependencies import get_s3
+
+    return get_s3(), get_settings().s3_bucket_photos
+
+
+def _echo_stats(stats) -> None:
+    # stdout carries the tar, so the counts go to stderr as one JSON line.
+    click.echo(json.dumps({"objects": stats.objects, "bytes": stats.bytes}), err=True)
+
+
+@cli.group()
+def photos() -> None:
+    """Photo objects in storage: export, import, verify."""
+
+
+@photos.command("export")
+def photos_export() -> None:
+    """Write every object in the photos bucket to stdout as a tar."""
+    from app.services.object_backup import export_bucket_tar
+
+    s3, bucket = _s3_and_bucket()
+    out = sys.stdout.buffer
+    stats = export_bucket_tar(s3, bucket, out)
+    out.flush()
+    _echo_stats(stats)
+
+
+@photos.command("import")
+def photos_import() -> None:
+    """Put every object in the tar on stdin into the photos bucket (creates it if missing)."""
+    from app.services.object_backup import import_bucket_tar
+
+    s3, bucket = _s3_and_bucket()
+    stats = import_bucket_tar(s3, bucket, sys.stdin.buffer)
+    _echo_stats(stats)
 
 
 if __name__ == "__main__":
