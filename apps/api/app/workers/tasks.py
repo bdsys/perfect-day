@@ -525,11 +525,16 @@ async def _release_from_untouched_draft(db, event) -> uuid.UUID | None:
 
 
 async def _edit_should_redraft(db, entry_id: uuid.UUID) -> bool:
-    """True when an edited event's entry is a live draft whose diary owner is active."""
+    """True when an edited event's entry is a live draft whose diary owner is active.
+
+    Only an entry the AI has already drafted successfully: that is what makes a
+    background redraft free (generate_draft_for_entry). Any other redraft would
+    spend one of the owner's monthly drafts, and an edit must never do that.
+    """
     from sqlalchemy import select
 
     from app.core.auth import deletion_state
-    from app.models import Diary, Entry, User
+    from app.models import Diary, Entry, LLMGeneration, User
 
     row = (
         await db.execute(
@@ -542,11 +547,18 @@ async def _edit_should_redraft(db, entry_id: uuid.UUID) -> bool:
     if row is None:
         return False
     entry, owner = row
-    return (
-        entry.status == "draft"
-        and entry.deleted_at is None
-        and deletion_state(owner) == "active"
-    )
+    if entry.status != "draft" or entry.deleted_at is not None:
+        return False
+    if deletion_state(owner) != "active":
+        return False
+    drafted = (
+        await db.execute(
+            select(LLMGeneration.id)
+            .where(LLMGeneration.entry_id == entry_id, LLMGeneration.status == "success")
+            .limit(1)
+        )
+    ).first()
+    return drafted is not None
 
 
 def _has_ended(ends_at: datetime | None) -> bool:

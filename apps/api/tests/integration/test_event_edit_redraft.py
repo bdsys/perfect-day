@@ -18,7 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog.testing import capture_logs
 
-from app.models import Diary, Entry, Event, User
+from app.models import Diary, Entry, Event, LLMGeneration, User
 from tests.fixtures.factories import make_diary, make_event, make_user
 
 STORED = {
@@ -74,6 +74,7 @@ async def _entry_with_event(
     body_source: str = "llm",
     deleted: bool = False,
     external_ids: tuple[str, ...] = ("evt-1",),
+    ai_drafted: bool = True,
 ) -> Entry:
     entry = Entry(
         diary_id=diary.id,
@@ -88,6 +89,14 @@ async def _entry_with_event(
     )
     db.add(entry)
     await db.commit()
+    if ai_drafted:
+        # A successful AI draft is what makes a background redraft free (llm.py).
+        db.add(
+            LLMGeneration(
+                entry_id=entry.id, model="test", prompt_hash="", status="success", mode="events"
+            )
+        )
+        await db.commit()
     for external_id in external_ids:
         await make_event(
             db,
@@ -295,6 +304,20 @@ class TestEditRedraft:
         _, lines = await _ingest(diary, _google(start=later, summary="Soccer final"), redraft)
 
         # The draft would describe an event that hasn't happened yet.
+        redraft.assert_not_awaited()
+        assert lines == []
+
+    async def test_draft_never_written_by_the_ai_queues_nothing(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
+        # E.g. the plain event list written when the owner was out of AI drafts. Its
+        # redraft would not be free (llm.py charges one), and edit redrafts must be.
+        diary = await _diary(db_session)
+        await _entry_with_event(db_session, diary, body_source="fallback", ai_drafted=False)
+        redraft = AsyncMock()
+
+        _, lines = await _ingest(diary, _google(summary="Soccer final"), redraft)
+
         redraft.assert_not_awaited()
         assert lines == []
 

@@ -57,6 +57,7 @@ How to handle row 33's "it's a new LLM cost path, so measure on the NUC first" (
 - **Only events that have happened:** an edit redrafts only when the event has ended (its new time is in the past). A move to the future belongs to the move rule alone, which leaves calendar-pick drafts attached; redrafting them would describe something that hasn't happened. (Added while building, 2026-11-18.)
 - **A move to the future and an edit at once:** the existing move path wins (it may release the event from an
   untouched draft). Don't queue a second redraft for the same entry; `queue_redraft` would coalesce it anyway.
+- **Only entries the AI has drafted successfully:** a background redraft is free only when the entry already has a successful AI draft (`apps/api/app/workers/llm.py:643-651`); any other would spend one of the owner's monthly drafts. So an edit doesn't redraft a plain event list written when the owner was out of AI drafts, or a draft whose first AI try failed. (Added after the final review, 2026-11-18.)
 - **Accounts waiting for deletion:** don't queue for an entry whose diary owner isn't active (`deletion_state()` in
   `apps/api/app/core/auth.py`). My call: cheap here, and it keeps this new path out of backlog row 53.
 - **Log:** one structlog line per queued redraft, `event_edit_redraft_queued`, with `entry_id`, `event_id` and
