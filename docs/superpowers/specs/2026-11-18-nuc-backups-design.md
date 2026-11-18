@@ -150,11 +150,11 @@ hand):
 (`/var/backups/perfect-day/pre-*.sql.gz`) are unencrypted, so they stay on the
 NUC and are never copied. *(My call.)*
 
-Those ad-hoc dumps are currently readable by every user on the shared NUC
-(`-rw-r--r-- root`, seen 2026-11-18). The install script sets
-`/var/backups/perfect-day` to mode 700 and the existing dumps to 600, and the
-runbook's dump command writes them as 600. *(My call; found while writing
-this.)*
+The folder is mode 700, so the ad-hoc dumps were never readable by other
+users on the shared NUC. One dump, made 2026-11-18 with `sudo tee`, was
+written as `-rw-r--r--` because of the default umask; it's 600 now. The
+install script keeps the folder at 700, and the backup job and the runbook's
+dump command write under `umask 077`. *(My call.)*
 
 **What counts as success:** a run succeeds only if the backup is made,
 verified and copied to the NAS. If the NAS copy fails, the night's local
