@@ -104,7 +104,7 @@ Defer:
 
 - Runbook: `deploy/nuc-ops.md`. Edge (Cloudflare, FortiGate): `deploy/cloudflare.md`, `deploy/nuc.md`.
 - Deploy `main`: on the NUC, `cd /opt/perfect-day && sudo ./scripts/nuc/40-update.sh`. It builds the images on the NUC (there is no registry yet, PoC 25.4), keeps the running ones as `:previous`, migrates, restarts and smoke-tests. `sudo ./scripts/nuc/50-rollback.sh` goes back one deploy.
-- Change hostnames, the Google client or the DDNS token in place with `sudo ./scripts/nuc/15-update-config.sh` (`--google-client <json>`, `--ddns-credentials`). **Never re-run `10-secrets.sh` on a NUC with data:** it regenerates `MASTER_SECRET`, which encrypts stored photos and Google tokens.
+- Change hostnames, the Google client or the DDNS token in place with `sudo ./scripts/nuc/15-update-config.sh` (`--google-client <json>`, `--ddns-credentials`). **Never re-run `10-secrets.sh` on a NUC with data:** it rewrites the whole `app.env` from its template, so hostnames, the Google client and every setting changed in place since go back to the template. It keeps the generated secrets (`MASTER_SECRET`, which encrypts stored photos and Google tokens, among them) and the storage address. A setting a newer release needs is added by `40-update.sh` through `scripts/nuc/lib/envfile.py ensure`.
 - Admin commands against production: `sudo ./scripts/admin.sh …` on the NUC (`scripts/ADMIN_CLI.md`).
 - Nightly encrypted backups (database, photos, `/etc/perfect-day/`) go to the NAS at 02:17; status in `/var/log/perfect-day/backup-status.json`, restore and drill in `deploy/nuc-ops.md` § B7 (tracker row 36). Before a big change, still dump the database to `/var/backups/perfect-day/` with `umask 077`.
 

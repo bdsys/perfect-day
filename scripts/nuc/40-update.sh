@@ -82,6 +82,12 @@ else
     echo "  WARNING: ${ENV_FILE} not found — Caddyfile will use private_ranges fallback." >&2
 fi
 ./scripts/nuc/render-caddyfile.sh
+if [ -f "${ENV_FILE}" ]; then
+    # Settings a newer release needs that an older install lacks (10-secrets.sh must
+    # never be re-run on a NUC with data). Generated once, kept after, never printed.
+    # Garage cannot start without its RPC secret (tracker row 41).
+    python3 "${DEPLOY_DIR}/scripts/nuc/lib/envfile.py" ensure "${ENV_FILE}" GARAGE_RPC_SECRET hex32
+fi
 
 echo '[3/8] Keeping the running images for rollback...'
 previous_complete() {
