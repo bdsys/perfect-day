@@ -287,8 +287,8 @@ def build_prompt(
     enrichment_lines = []
     for enrichment in enrichments:
         enrichment_lines.append(
-                enrichment_line(enrichment.kind, enrichment.payload, temperature_unit)
-            )
+            enrichment_line(enrichment.kind, enrichment.payload, temperature_unit)
+        )
 
     entry_parts = [date_str, "", "EVENTS:"] + event_lines
     if enrichment_lines:
