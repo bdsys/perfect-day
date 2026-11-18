@@ -105,6 +105,15 @@ make web         # Next.js dev server on :3000
 
 ---
 
+### Start over (`make nuke-dev`)
+
+`make nuke-dev` wipes the local dev stack: the `perfect-day` containers and volumes
+on this machine (database, Garage photo store, pgAdmin) and the e2e scratch folders
+`/tmp/pd-test-*`. It lists what it will delete and asks you to type `nuke`. Images
+are never removed. It refuses on the NUC (where `/etc/perfect-day` exists) and when
+Docker points anywhere but this machine. Then `make up && make migrate` starts empty;
+sign in again locally.
+
 ## Running the Test Suite
 
 ### Run everything at once (`make test-all`)

@@ -1,4 +1,4 @@
-.PHONY: up down infra api worker beat web migrate lint typecheck \
+.PHONY: nuke-dev up down infra api worker beat web migrate lint typecheck \
         test test-web test-scripts test-fast test-all test-e2e test-live test-smoke test-coverage \
         web-e2e-install bootstrap lock lock-upgrade
 
@@ -42,6 +42,11 @@ up:
 
 down:
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile dev down
+
+# Wipe the local dev stack (containers, volumes, e2e scratch folders; never images).
+# Refuses on the NUC and asks you to type "nuke". See scripts/nuke-dev.sh.
+nuke-dev:
+	./scripts/nuke-dev.sh
 
 logs:
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile dev logs -f
