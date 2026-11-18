@@ -16,7 +16,7 @@ This document is the **runbook** — step-by-step commands you run to take actio
 | Push new code already on `main` | [B-Update — routine update](#b-update--routine-update) |
 | State got messy, need clean rebuild | [B3.5 — Full reinstall](#b35--full-reinstall-when-incremental-cleanup-is-not-working) |
 | Bad deploy, need to revert | [B-Rollback](#b-rollback) |
-| Daily DB backup failing | [B7 — Backups](#b7--backups) |
+| Nightly backup failing, restore, or drill | [B7 — Backups](#b7--backups) |
 | Validate prod after deploy | [B8 — Validate production deployment](#b8--validate-production-deployment) |
 
 ---
@@ -295,14 +295,81 @@ Then put the client into `app.env` with [B-Config](#b-config--change-an-existing
 
 ### B7 — Backups
 
+Nightly encrypted backups of the database, the photos and `/etc/perfect-day/` to the
+NAS (`Backups/perfect-day/nightly/`). How it works and why: [`nuc.md` § Backup](nuc.md#backup).
+
+**Install (once, in your own terminal, not through an assistant; it shows the private key):**
+
 ```bash
-cd ~/perfect-day
-sudo ./scripts/nuc/30-backup.sh
+sudo /opt/perfect-day/scripts/nuc/30-backup.sh
 ```
 
-Configure rclone for Backblaze B2 when prompted. Sets up daily encrypted `pg_dump` backups (~$5/mo storage cost).
+Save the private key it prints in the password manager, and `MASTER_SECRET` from
+`/etc/perfect-day/app.env` as a second entry. Then type `saved`. Running it again is
+safe: an existing key is kept and not shown.
 
-The `age` private key for decryption lives **off-NUC** (USB key, password manager). Without it, the backup is unreadable even if an attacker gets the bucket. See [`deploy/nuc.md` § Backup](nuc.md#backup) for the architecture and quarterly DR-drill procedure.
+**Run one now, and read the result:**
+
+```bash
+sudo systemctl start perfect-day-backup.service      # takes about a minute
+sudo cat /var/log/perfect-day/backup-status.json      # "result": "ok"
+sudo tail -n 20 /var/log/perfect-day/backup.log
+rsync --list-only rsync://192.168.1.112/Backups/perfect-day/nightly/
+systemctl list-timers perfect-day-backup.timer         # next run
+```
+
+| `result` | Meaning | What to do |
+|---|---|---|
+| `ok` | Made, checked, on the NUC and on the NAS | Nothing |
+| `nas_failed` | Kept on the NUC, but the NAS copy failed | Check the NAS is up; the next good run copies what's missing |
+| `failed` | Nothing new kept, and nothing deleted | Read `error` and `backup.log` |
+
+Exit 75 in the log means a deploy (or another backup) held the lock. `40-update.sh`
+waits up to 30 minutes for a running backup.
+
+**Prove it restores (the drill).** It doesn't touch production; run it after any change
+to the backup scripts:
+
+```bash
+sudo /opt/perfect-day/scripts/nuc/drill.sh          # newest night on the NAS
+sudo /opt/perfect-day/scripts/nuc/drill.sh 2026-11-18
+```
+
+It must end with `DRILL PASSED`. It always removes the `perfect-day-drill` containers
+and volumes.
+
+**Restore production from a night** (replaces the live database and photos; asks you
+to type the date, and keeps a safety dump first):
+
+```bash
+sudo /opt/perfect-day/scripts/nuc/restore.sh 2026-11-18 --from-nas
+```
+
+**Ad-hoc dump before a big change** (stays on the NUC, never copied to the NAS):
+
+```bash
+f=/var/backups/perfect-day/pre-<change>-$(date +%Y%m%d-%H%M%S).sql.gz
+sudo sh -c "umask 077; docker exec perfect-day-postgres-1 sh -c 'pg_dump -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\"' | gzip > $f"
+```
+
+**Losing the NUC: rebuild on a new machine.** The order matters.
+
+1. Install the OS and run `sudo ./scripts/nuc/00-bootstrap.sh`. **Do not run
+   `10-secrets.sh`**, even though bootstrap names it as the next step: it would make
+   a new `MASTER_SECRET`, and Postgres only reads its password the first time it
+   starts.
+2. Put the private key from the password manager in `/etc/perfect-day/backup.key`
+   (`sudo install -m 600 /dev/stdin /etc/perfect-day/backup.key`, paste, Ctrl-D).
+3. Restore the config from the newest NAS night (or from the external drive, copied
+   into `/var/backups/perfect-day/nightly/`):
+   `sudo ./scripts/nuc/restore.sh <date> --from-nas --config-only`
+4. Deploy: `sudo ./scripts/nuc/20-deploy.sh`. It only needs `/etc/perfect-day/app.env`
+   to exist and never makes new secrets.
+5. Restore the data: `sudo ./scripts/nuc/restore.sh <date> --from-nas`
+6. Reinstall the nightly backup: `sudo ./scripts/nuc/30-backup.sh`. The key already
+   exists, so it isn't regenerated.
+
+Tracker row 63 is a real run of this on a second machine.
 
 ### B8 — Validate production deployment
 

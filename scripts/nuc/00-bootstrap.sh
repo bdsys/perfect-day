@@ -33,7 +33,7 @@ apt-get install -y \
     ufw \
     unattended-upgrades \
     fail2ban \
-    rclone \
+    rsync \
     age \
     openssl \
     curl \

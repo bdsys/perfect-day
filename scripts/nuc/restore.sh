@@ -85,7 +85,7 @@ if [ "${CONFIG_ONLY}" = 1 ] || [ "${WITH_CONFIG}" = 1 ]; then
     [ "${CONFIG_ONLY}" = 1 ] && exit 0
 fi
 
-PSQL_RESTORE='psql -q -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+PSQL_RESTORE='psql -q -o /dev/null -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
 IMPORT=(run --rm --no-deps -T -v "${PD_DEPLOY_DIR}/scripts:/scripts:ro" -e PYTHONPATH=/app
         api python /scripts/manage.py photos import)
 

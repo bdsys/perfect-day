@@ -1,155 +1,109 @@
 #!/usr/bin/env bash
-# scripts/nuc/30-backup.sh — Provision daily encrypted backup with rclone → B2
+# scripts/nuc/30-backup.sh — install the nightly backup (tracker row 36).
+# Run on the NUC, in your own terminal (it shows the backup's private key once):
+#   sudo /opt/perfect-day/scripts/nuc/30-backup.sh
 #
-# SCOPE: this backs up the Postgres database only. Photo objects in MinIO are
-# NOT backed up. A restore from this backup alone brings back photo rows whose
-# files are gone. See design/code-review-2026-11.md, finding D-6.
-# Run on the NUC as: sudo ./scripts/nuc/30-backup.sh
-# Creates an age keypair, backup service + systemd timer.
+# - Makes the backup keypair (/etc/perfect-day/backup.key + backup.pub) if there is
+#   none, shows the private key once, and asks you to type "saved" once it is in your
+#   password manager. Store MASTER_SECRET from /etc/perfect-day/app.env there too.
+# - Locks down /var/backups/perfect-day (700, files 600).
+# - Installs perfect-day-backup.service (runs scripts/nuc/backup-run.sh) and
+#   perfect-day-backup.timer (daily 02:17), and enables the timer. It never starts a
+#   backup itself: run one with `sudo systemctl start perfect-day-backup.service`.
+# Safe to run again: an existing key is kept and not shown.
+# Design: docs/superpowers/specs/2026-11-18-nuc-backups-design.md
 set -euo pipefail
+umask 077
 
-if [ "$(id -u)" -ne 0 ]; then
-    echo "ERROR: This script must be run as root (use sudo)." >&2
+if [ "$(id -u)" -ne 0 ] && [ -z "${PD_INSTALL_ALLOW_NONROOT:-}" ]; then
+    echo "ERROR: run as root (use sudo)." >&2
     exit 1
 fi
 
-SECRETS_DIR=/etc/perfect-day
-AGE_KEY="${SECRETS_DIR}/backup.key"
-AGE_PUB="${SECRETS_DIR}/backup.pub"
-BACKUP_DIR=/var/backups/perfect-day
-DEPLOY_DIR=/opt/perfect-day
-LOG_DIR=/var/log/perfect-day
-KEEP_DAYS=7
-TIMER_HOUR=2
-TIMER_MIN=17  # off the :00 mark
+# shellcheck source=lib/backup.sh
+source "$(dirname "$(readlink -f "$0")")/lib/backup.sh"
+PD_SYSTEMD_DIR="${PD_SYSTEMD_DIR:-/etc/systemd/system}"
 
-echo "=== Perfect Day Backup Provisioning ==="
-echo ""
+echo "=== Perfect Day backup install ==="
 
-# ── 1. Generate age keypair if not present ────────────────────────────────────
-if [ -f "${AGE_KEY}" ]; then
-    echo "[1/4] Age keypair already exists — skipping generation"
+echo "[1/4] Locking down ${PD_BACKUP_ROOT}"
+mkdir -p "${PD_NIGHTLY}" "${PD_LOG_DIR}"
+chmod 700 "${PD_BACKUP_ROOT}" "${PD_NIGHTLY}"
+find "${PD_BACKUP_ROOT}" -maxdepth 1 -type f -exec chmod 600 {} +
+
+echo "[2/4] Backup key"
+if [ -f "${PD_KEY}" ]; then
+    echo "  Keeping the existing key (${PD_KEY}); it is not shown again."
+    age-keygen -y "${PD_KEY}" > "${PD_PUB}"
 else
-    echo "[1/4] Generating age keypair..."
-    age-keygen -o "${AGE_KEY}" 2>/dev/null
-    # Extract public key line from the key file
-    grep "^# public key:" "${AGE_KEY}" | awk '{print $NF}' > "${AGE_PUB}"
-    chmod 600 "${AGE_KEY}"
-    chmod 644 "${AGE_PUB}"
-    chown root:docker "${AGE_KEY}" "${AGE_PUB}"
-    echo "  Private key: ${AGE_KEY} (chmod 600)"
-    echo "  Public key:  ${AGE_PUB}"
-    echo ""
-    echo "╔══════════════════════════════════════════════════════════════════╗"
-    echo "║  CRITICAL: BACK UP THE PRIVATE KEY NOW                          ║"
-    echo "║                                                                  ║"
-    echo "║  ${AGE_KEY}                          ║"
-    echo "║                                                                  ║"
-    echo "║  Without this key, encrypted backups are unreadable.            ║"
-    echo "║  Copy it to a password manager or offline device.               ║"
-    echo "╚══════════════════════════════════════════════════════════════════╝"
-    echo ""
+    age-keygen -o "${PD_KEY}" 2>/dev/null
+    chmod 600 "${PD_KEY}"
+    age-keygen -y "${PD_KEY}" > "${PD_PUB}"
+    cat <<MSG
+
+  ┌──────────────────────────────────────────────────────────────────────┐
+  │ SAVE THIS PRIVATE KEY IN YOUR PASSWORD MANAGER NOW.                  │
+  │ Every backup is encrypted to it; without it no backup can be read.   │
+  │ It is shown only this once.                                          │
+  └──────────────────────────────────────────────────────────────────────┘
+
+$(grep '^AGE-SECRET-KEY-' "${PD_KEY}")
+
+  Also save MASTER_SECRET from ${PD_ETC}/app.env as a second entry: photos and
+  Google tokens are encrypted with it. (The backups contain it too, but a
+  separate copy is the safety net.)
+
+MSG
+    printf 'Type "saved" once both are in your password manager: '
+    read -r answer || true
+    if [ "${answer:-}" != "saved" ]; then
+        rm -f "${PD_KEY}" "${PD_PUB}"
+        echo ""
+        echo "Not confirmed. The key was removed; run this again to make and show a new one."
+        exit 1
+    fi
 fi
+chmod 600 "${PD_KEY}"
+chmod 644 "${PD_PUB}"
 
-# ── 2. Configure rclone (interactive) ─────────────────────────────────────────
-echo "[2/4] Checking rclone B2 configuration..."
-if rclone listremotes | grep -q "b2:"; then
-    echo "  rclone B2 remote already configured"
-else
-    echo "  No B2 remote found. Starting interactive rclone config..."
-    echo "  Select 'b' for Backblaze B2, then enter your account ID and application key."
-    echo "  Name the remote 'b2' when prompted."
-    echo ""
-    rclone config
-fi
-
-mkdir -p "${BACKUP_DIR}"
-chown perfectday:docker "${BACKUP_DIR}"
-
-# ── 3. Write backup script ────────────────────────────────────────────────────
-echo "[3/4] Installing backup script..."
-cat > /usr/local/bin/perfect-day-backup <<SCRIPT
-#!/usr/bin/env bash
-set -euo pipefail
-
-BACKUP_DIR='${BACKUP_DIR}'
-AGE_PUB='${AGE_PUB}'
-KEEP_DAYS='${KEEP_DAYS}'
-DATE=\$(date +%F)
-OUTFILE="\${BACKUP_DIR}/backup-\${DATE}.sql.gz.age"
-
-source /etc/perfect-day/app.env
-
-echo "[backup] Starting backup: \${DATE}"
-
-# pg_dump → gzip → age encrypt
-# pg_dump runs inside the postgres container: Postgres publishes no port on the
-# host and the host has no Postgres client installed. The dump is written to a
-# .partial file first so a failed run never leaves a truncated file that looks
-# like a backup (and gets uploaded as one).
-PARTIAL="\${OUTFILE}.partial"
-trap 'rm -f "\${PARTIAL}"' EXIT
-docker compose --project-directory '${DEPLOY_DIR}' exec -T postgres \
-    pg_dump -U "\${POSTGRES_USER:-perfectday}" "\${POSTGRES_DB:-perfectday}" \
-    | gzip \
-    | age --recipients-file "\${AGE_PUB}" \
-    > "\${PARTIAL}"
-mv "\${PARTIAL}" "\${OUTFILE}"
-
-echo "[backup] Encrypted backup written: \${OUTFILE}"
-echo "[backup] Size: \$(du -sh \${OUTFILE} | cut -f1)"
-
-# Upload to B2
-rclone sync "\${BACKUP_DIR}/" b2:perfect-day-backups/
-echo "[backup] Uploaded to B2"
-
-# Remove old local backups
-find "\${BACKUP_DIR}" -name "backup-*.sql.gz.age" -mtime "+\${KEEP_DAYS}" -delete
-echo "[backup] Pruned local backups older than \${KEEP_DAYS} days"
-
-echo "[backup] Done"
-SCRIPT
-
-chmod 755 /usr/local/bin/perfect-day-backup
-
-# ── 4. Install systemd service + timer ────────────────────────────────────────
-echo "[4/4] Installing systemd timer..."
-
-cat > /etc/systemd/system/perfect-day-backup.service <<EOF
+echo "[3/4] Installing the service and timer"
+cat > "${PD_SYSTEMD_DIR}/perfect-day-backup.service" <<UNIT
 [Unit]
-Description=Perfect Day encrypted database backup
-After=docker.service
+Description=Perfect Day nightly backup (database, photos, config) to the NAS
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/perfect-day-backup
-StandardOutput=append:${LOG_DIR}/backup.log
-StandardError=append:${LOG_DIR}/backup.log
-User=root
-EOF
+ExecStart=${PD_DEPLOY_DIR}/scripts/nuc/backup-run.sh
+TimeoutStartSec=15min
+Nice=10
+IOSchedulingClass=idle
+UNIT
 
-cat > /etc/systemd/system/perfect-day-backup.timer <<EOF
+cat > "${PD_SYSTEMD_DIR}/perfect-day-backup.timer" <<UNIT
 [Unit]
-Description=Perfect Day daily backup timer
+Description=Perfect Day nightly backup at 02:17
 
 [Timer]
-OnCalendar=*-*-* ${TIMER_HOUR}:${TIMER_MIN}:00
+OnCalendar=*-*-* 02:17:00
 Persistent=true
+Unit=perfect-day-backup.service
 
 [Install]
 WantedBy=timers.target
-EOF
+UNIT
 
+echo "[4/4] Enabling the timer"
 systemctl daemon-reload
 systemctl enable --now perfect-day-backup.timer
 
-echo ""
-echo "Backup provisioning complete."
-echo ""
-echo "Timer schedule: daily at ${TIMER_HOUR}:$(printf '%02d' ${TIMER_MIN})"
-echo ""
-echo "Verify with:"
-echo "  systemctl status perfect-day-backup.timer"
-echo "  systemctl start perfect-day-backup.service   # manual test run"
-echo "  ls ${BACKUP_DIR}/"
-echo "  rclone ls b2:perfect-day-backups"
+cat <<MSG
+
+Backup installed. The first run is at 02:17, or start one now:
+  sudo systemctl start perfect-day-backup.service
+  cat ${PD_LOG_DIR}/backup-status.json
+Then prove it restores (deploy/nuc-ops.md § B7):
+  sudo ${PD_DEPLOY_DIR}/scripts/nuc/drill.sh
+MSG
