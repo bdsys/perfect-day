@@ -21,6 +21,15 @@ fi
 source "$(dirname "$(readlink -f "$0")")/lib/self-update.sh"
 self_update_snapshot
 
+# Never deploy while the nightly backup runs, or run two deploys at once
+# (lib/deploy-lock.sh). Waits up to 30 minutes for a running backup.
+# shellcheck source=lib/deploy-lock.sh
+source "$(dirname "$(readlink -f "$0")")/lib/deploy-lock.sh"
+if ! deploy_lock_take; then
+    echo "ERROR: a backup has held the lock for 30 minutes; not deploying." >&2
+    exit 1
+fi
+
 TARGET_SHA="${1:-}"
 DEPLOY_DIR="/opt/perfect-day"
 HEALTH_URL="https://perfectday-api.andrewlass.com/readyz"
@@ -31,7 +40,7 @@ LOG_DIR=/var/log/perfect-day
 LOG_FILE="${LOG_DIR}/update-$(date +%Y%m%d-%H%M%S).log"
 
 mkdir -p "${LOG_DIR}"
-exec > >(tee -a "${LOG_FILE}") 2>&1
+exec > >(tee -a "${LOG_FILE}" 8>&-) 2>&1  # tee must not hold the deploy lock
 
 echo "=== Perfect Day Update ==="
 [ -n "${TARGET_SHA}" ] && echo "SHA:    ${TARGET_SHA}" || echo "SHA:    HEAD (latest)"

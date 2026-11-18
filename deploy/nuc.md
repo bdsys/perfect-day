@@ -57,15 +57,37 @@ Backup private key (`age` keypair for `age`-encrypted `pg_dump`) is stored on a 
 
 ## Backup
 
-Celery beat task daily:
+Built 2026-11-18 (tracker row 36). Design:
+[`docs/superpowers/specs/2026-11-18-nuc-backups-design.md`](../docs/superpowers/specs/2026-11-18-nuc-backups-design.md).
+Commands: [`nuc-ops.md` § B7](nuc-ops.md#b7--backups).
 
-1. `pg_dump | age --recipients-file /path/to/backup.pub > backup-$(date +%F).sql.gz.age`
-2. Upload to local MinIO bucket `backups/`
-3. `rclone sync` to Backblaze B2 (cost ~$5/mo for typical diary data volume)
-
-The `age` private key for decryption lives off-NUC. Without it the backup is unreadable even if an attacker gets the bucket.
-
-**Quarterly DR drill:** restore the most recent backup to a clean Docker Compose stack on a separate machine. Verify diary timeline, photos, and auth all work before declaring the backup valid.
+- **What:** every night at 02:17 (`perfect-day-backup.timer`), the database
+  (`pg_dump`), every photo object (exported through the S3 interface, so the backup
+  doesn't depend on MinIO's on-disk format) and `/etc/perfect-day/` (including
+  `MASTER_SECRET`, without which photos and Google tokens can't be decrypted).
+- **Encrypted on the NUC** with `age` to `/etc/perfect-day/backup.pub` before anything
+  is written. The private key is in Andrew's password manager and in
+  `/etc/perfect-day/backup.key` (root, 600, used by the nightly check). It is never
+  inside a backup.
+- **Checked before it's kept:** each file is decrypted and checked (the dump's
+  completion marker, the object count, `app.env` present). Only then does the night
+  replace anything.
+- **Where:** `/var/backups/perfect-day/nightly/YYYY-MM-DD/` on the NUC, copied to
+  the NAS at `rsync://192.168.1.112/Backups/perfect-day/nightly/`. Andrew copies the
+  whole `Backups` share to an external drive kept 30 miles away; that is the offsite
+  copy.
+- **Retention:** the newest 30 nights, plus the earliest night of each of the last
+  12 months. On the NAS the rule is applied to everything the NAS holds, so a
+  rebuilt machine never trims its history.
+- **Known limit (Andrew's call, 2026-11-18):** the NAS's rsync service has no password.
+  Anyone on the home network can delete the backups, though not read them. The
+  external drive is the cover.
+- **Result:** `/var/log/perfect-day/backup-status.json` and `backup.log`. There is no
+  alert yet; an admin panel card is tracker row 62.
+- **Restore drill:** `scripts/nuc/drill.sh` restores the newest NAS night into a
+  throwaway `perfect-day-drill` project (postgres and minio only) and checks it.
+  Repeat it whenever the backup or restore changes. A full rebuild on a second
+  machine is tracker row 63.
 
 ## Email deliverability
 

@@ -60,6 +60,9 @@ jobs:
         working-directory: apps/web
         run: npx eslint src --max-warnings 0
 
+      - name: NUC script tests
+        run: make test-scripts
+
       - name: TypeScript check
         working-directory: apps/web
         run: npx tsc --noEmit

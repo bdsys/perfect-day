@@ -106,7 +106,7 @@ Defer:
 - Deploy `main`: on the NUC, `cd /opt/perfect-day && sudo ./scripts/nuc/40-update.sh`. It builds the images on the NUC (there is no registry yet, PoC 25.4), keeps the running ones as `:previous`, migrates, restarts and smoke-tests. `sudo ./scripts/nuc/50-rollback.sh` goes back one deploy.
 - Change hostnames, the Google client or the DDNS token in place with `sudo ./scripts/nuc/15-update-config.sh` (`--google-client <json>`, `--ddns-credentials`). **Never re-run `10-secrets.sh` on a NUC with data:** it regenerates `MASTER_SECRET`, which encrypts stored photos and Google tokens.
 - Admin commands against production: `sudo ./scripts/admin.sh …` on the NUC (`scripts/ADMIN_CLI.md`).
-- Before a big change, dump the database to `/var/backups/perfect-day/`. Nothing is backed up automatically yet (tracker row 36).
+- Nightly encrypted backups (database, photos, `/etc/perfect-day/`) go to the NAS at 02:17; status in `/var/log/perfect-day/backup-status.json`, restore and drill in `deploy/nuc-ops.md` § B7 (tracker row 36). Before a big change, still dump the database to `/var/backups/perfect-day/` with `umask 077`.
 
 ## Development Notes
 
