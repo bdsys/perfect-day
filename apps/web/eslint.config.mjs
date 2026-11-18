@@ -1,14 +1,20 @@
-import { FlatCompat } from "@eslint/eslintrc";
-import { dirname } from "path";
-import { fileURLToPath } from "url";
+import nextCoreWebVitals from "eslint-config-next/core-web-vitals";
+import nextTypescript from "eslint-config-next/typescript";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-const compat = new FlatCompat({
-  baseDirectory: __dirname,
-});
-
+// eslint-config-next 16 ships flat configs, so no FlatCompat layer is needed.
 export default [
-  ...compat.extends("next/core-web-vitals", "next/typescript"),
+  ...nextCoreWebVitals,
+  ...nextTypescript,
+  {
+    // React Compiler readiness rules, new in eslint-plugin-react-hooks 7. They flag
+    // patterns that are correct without the compiler (which this app does not use),
+    // such as the latest-value ref. 67 hits on 2026-11-18; adopting them, e.g. with
+    // useEffectEvent, is tracker row 61.
+    rules: {
+      "react-hooks/refs": "off",
+      "react-hooks/set-state-in-effect": "off",
+      "react-hooks/preserve-manual-memoization": "off",
+      "react-hooks/globals": "off",
+    },
+  },
 ];
