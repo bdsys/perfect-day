@@ -68,6 +68,10 @@ for f in db.sql.gz.age photos.tar.age config.tar.age; do
     [ -n "${got}" ] && [ "${got}" = "${want}" ] || die "${f} does not match its checksum in manifest.json; not restoring"
 done
 
+# Prove the whole night decrypts and is complete before anything is changed: a
+# wrong or mis-pasted key must fail here, not after production's database is gone.
+backup_check_files "${SRC}" "${KEY}" || die "not restoring: the backup for ${DATE} is not usable (see above)"
+
 decrypt() { age -d -i "${KEY}" < "${SRC}/$1"; }
 
 # ── config ──────────────────────────────────────────────────────────────────
@@ -112,10 +116,30 @@ safety="${PD_BACKUP_ROOT}/pre-restore-$(date +%Y%m%d-%H%M%S).sql.gz"
 pd_compose exec -T postgres sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB"' | gzip > "${safety}"
 echo "Safety dump of the current database: ${safety}"
 
+# From here on production is being changed. If any step fails, start the app again
+# and say exactly how to put the database back as it was.
+PROD_DONE=0
+on_prod_exit() {
+    local rc=$?
+    cleanup
+    [ "${PROD_DONE}" = 1 ] && return
+    set +e
+    echo "" >&2
+    echo "restore: FAILED (exit ${rc}). Production may be half-restored." >&2
+    echo "  To put the database back as it was before this restore:" >&2
+    echo "    cd ${PD_DEPLOY_DIR} && sudo docker compose --profile nuc stop api worker beat" >&2
+    echo "    sudo docker compose --profile nuc exec -T postgres sh -c 'psql -U \"\$POSTGRES_USER\" -d postgres -c \"DROP DATABASE IF EXISTS \\\"\$POSTGRES_DB\\\" WITH (FORCE)\" -c \"CREATE DATABASE \\\"\$POSTGRES_DB\\\" OWNER \\\"\$POSTGRES_USER\\\"\"'" >&2
+    echo "    sudo gunzip -c ${safety} | sudo docker compose --profile nuc exec -T postgres sh -c 'psql -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\"'" >&2
+    echo "  Starting api, worker and beat again now." >&2
+    pd_compose up -d api worker beat
+}
+trap on_prod_exit EXIT
+
 pd_compose stop api worker beat
 pd_compose exec -T postgres sh -c 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d postgres -c "DROP DATABASE IF EXISTS \"$POSTGRES_DB\" WITH (FORCE)" -c "CREATE DATABASE \"$POSTGRES_DB\" OWNER \"$POSTGRES_USER\""'
 decrypt db.sql.gz.age | gunzip | pd_compose exec -T postgres sh -c "${PSQL_RESTORE}"
 decrypt photos.tar.age | pd_compose "${IMPORT[@]}"
 pd_compose up -d api worker beat
 SMOKE_CLEANUP=1 "${PD_DEPLOY_DIR}/scripts/smoke-test.sh" "${PD_SMOKE_URL:-https://perfectday-api.andrewlass.com}"
+PROD_DONE=1
 echo "Production restored from ${DATE}."

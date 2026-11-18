@@ -32,6 +32,12 @@ setup() {
     cat > "${WORK}/bin/age" <<'EOF'
 #!/usr/bin/env bash
 echo "age $*" >> "${CALLS}/age"
+if [ "$1" = "-d" ]; then
+    n=$(( $(cat "${CALLS}/age.n" 2>/dev/null || echo 0) + 1 )); echo "${n}" > "${CALLS}/age.n"
+    cat
+    [ "${AGE_FAIL_NTH:-0}" = "${n}" ] && exit 1
+    exit 0
+fi
 cat
 EOF
     # docker: pg_dump, psql row counts and photos export, each failable by env.
@@ -42,6 +48,7 @@ args="$*"
 case "${args}" in
     *pg_dump*)
         [ -n "${FAIL_PGDUMP:-}" ] && { echo "pg_dump: connection refused" >&2; exit 1; }
+        [ -n "${SLEEP_PGDUMP:-}" ] && sleep "${SLEEP_PGDUMP}"
         printf -- '-- dump\nCREATE TABLE t();\n'
         [ -z "${TRUNCATED_DUMP:-}" ] && printf -- '--\n-- PostgreSQL database dump complete\n--\n\n\\unrestrict abc\n'
         exit 0 ;;
@@ -78,7 +85,7 @@ EOF
         PD_LOG_DIR="${WORK}/log" PD_DEPLOY_DIR="${WORK}/deploy" \
         PD_NAS_URL="rsync://nas.invalid/Backups/perfect-day/nightly/" \
         PD_LOCK="${WORK}/backup.lock" TODAY="2026-11-18"
-    unset FAIL_PGDUMP TRUNCATED_DUMP EXPORT_COUNT RSYNC_EXIT FREE_KB NAS_LIST
+    unset FAIL_PGDUMP TRUNCATED_DUMP EXPORT_COUNT RSYNC_EXIT FREE_KB NAS_LIST AGE_FAIL_NTH SLEEP_PGDUMP
     touch "${CALLS}/docker" "${CALLS}/rsync" "${CALLS}/age"
 }
 
@@ -237,6 +244,61 @@ RC=0; bash "${RUN}" >/dev/null 2>&1 || RC=$?
 check "exits 1" test "${RC}" -eq 1
 check "never dumped" bash -c '! grep -q pg_dump "$1"' _ "${CALLS}/docker"
 check "error mentions disk" bash -c 'jq -r .error "$1" | grep -qi disk' _ "${PD_LOG_DIR}/backup-status.json"
+
+echo "nas_parent_created_first"
+setup
+bash "${RUN}" >/dev/null 2>&1
+check "makes Backups/perfect-day/ on the NAS before copying" \
+    bash -c 'head -n 1 "$1" | grep -q -- " rsync://nas.invalid/Backups/perfect-day/$"' _ "${CALLS}/rsync"
+
+echo "photos_decrypt_failure_detected"
+setup
+export AGE_FAIL_NTH=3   # verify decrypts db twice (key check, marker), then photos
+RC=0; bash "${RUN}" >/dev/null 2>&1 || RC=$?
+check "exits 1" test "${RC}" -eq 1
+check "no night kept" test ! -e "${PD_BACKUP_ROOT}/nightly/2026-11-18"
+check "says the photo backup is unreadable" bash -c 'jq -r .error "$1" | grep -qi "photo backup"' _ "${PD_LOG_DIR}/backup-status.json"
+
+echo "term_writes_failed_status"
+setup
+echo '{"result":"ok","last_attempt":"2026-11-17T02:17:00Z"}' > "${PD_LOG_DIR}/backup-status.json"
+export SLEEP_PGDUMP=5
+setsid bash "${RUN}" >/dev/null 2>&1 &
+PID=$!
+sleep 1
+kill -TERM -- "-${PID}" 2>/dev/null || true
+wait "${PID}" 2>/dev/null || true
+check "status no longer says ok" test "$(status .result)" = "failed"
+check "says it was stopped" bash -c 'jq -r .error "$1" | grep -qi "stopped"' _ "${PD_LOG_DIR}/backup-status.json"
+check "no half-made night left" test -z "$(find "${PD_BACKUP_ROOT}/nightly" -mindepth 1 -maxdepth 1)"
+
+echo "clock_in_past_keeps_everything"
+setup
+for i in $(seq 1 40); do old_nights "$(date -d "2026-11-18 -${i} day" +%F)"; done
+export NAS_LIST="2025-12-01 2026-01-01 2026-06-01"
+export TODAY="2026-03-01"
+RC=0; bash "${RUN}" >/dev/null 2>&1 || RC=$?
+check "exits 4 (warning)" test "${RC}" -eq 4
+check "every old night is kept" test "$(find "${PD_BACKUP_ROOT}/nightly" -mindepth 1 -maxdepth 1 -name '2026-1*' | wc -l)" -eq 40
+check "tonight's backup is kept" test -f "${PD_BACKUP_ROOT}/nightly/2026-03-01/manifest.json"
+check "still copied to the NAS" grep -q -- "nightly/ rsync://nas.invalid" "${CALLS}/rsync"
+check "nothing deleted on the NAS" bash -c '! grep -q -- "--delete" "$1"' _ "${CALLS}/rsync"
+check "result warning, says the clock" bash -c '[ "$(jq -r .result "$1")" = warning ] && jq -r .error "$1" | grep -qi clock' _ "${PD_LOG_DIR}/backup-status.json"
+
+echo "clock_far_future_keeps_everything"
+setup
+for i in $(seq 1 40); do old_nights "$(date -d "2026-11-18 -${i} day" +%F)"; done
+export TODAY="2027-06-01"
+RC=0; bash "${RUN}" >/dev/null 2>&1 || RC=$?
+check "exits 4 (warning)" test "${RC}" -eq 4
+check "every old night is kept" test "$(find "${PD_BACKUP_ROOT}/nightly" -mindepth 1 -maxdepth 1 -name '2026-1*' | wc -l)" -eq 40
+
+echo "ten_day_gap_still_prunes"
+setup
+for i in $(seq 10 55); do old_nights "$(date -d "2026-11-18 -${i} day" +%F)"; done
+RC=0; bash "${RUN}" >/dev/null 2>&1 || RC=$?
+check "exits 0" test "${RC}" -eq 0
+check "an old non-monthly night is pruned (2026-10-02)" test ! -e "${PD_BACKUP_ROOT}/nightly/2026-10-02"
 
 echo "retention applied after a good run"
 setup

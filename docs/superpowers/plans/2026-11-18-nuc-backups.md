@@ -21,7 +21,7 @@
 - Schedule: daily at 02:17 (`OnCalendar=*-*-* 02:17:00`, `Persistent=true`).
 - Local folder: `/var/backups/perfect-day/nightly/YYYY-MM-DD/`. `/var/backups/perfect-day` is mode 700, and everything is written under `umask 077`.
 - Each night's files: `db.sql.gz.age`, `photos.tar.age`, `config.tar.age` and `manifest.json`. Files are written as `*.partial` and renamed only after verification.
-- Status: `/var/log/perfect-day/backup-status.json` with `last_attempt`, `last_local_success`, `last_nas_success`, `result` (`ok` | `nas_failed` | `failed`), `error`, `night` and `sizes`. The log is `/var/log/perfect-day/backup.log`.
+- Status: `/var/log/perfect-day/backup-status.json` with `last_attempt`, `last_local_success`, `last_nas_success`, `result` (`ok` | `nas_failed` | `failed` | `warning`: made and copied, retention skipped because the clock looks wrong), `error`, `night` and `sizes`. The log is `/var/log/perfect-day/backup.log`.
 - Keys:
   - the public key is `/etc/perfect-day/backup.pub`;
   - the private key is `/etc/perfect-day/backup.key` (root, mode 600);

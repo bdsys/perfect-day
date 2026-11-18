@@ -30,6 +30,10 @@ setup() {
     cat > "${WORK}/bin/age" <<'EOF'
 #!/usr/bin/env bash
 echo "age $*" >> "${CALLS}/age"
+# A key file holding WRONG cannot decrypt anything, like a mis-pasted key.
+if [ "$1" = "-d" ] && [ "$(cat "$3" 2>/dev/null)" = "WRONG" ]; then
+    echo "age: error: no identity matched any of the recipients" >&2; exit 1
+fi
 cat
 EOF
     # docker: logs every call and a one-word step to calls/order.
@@ -45,7 +49,7 @@ case "${a}" in
     *pg_dump*) step dump; printf -- '-- dump\n'; exit 0 ;;
     *"DROP DATABASE"*) step drop; exit 0 ;;
     *"-At -c"*) echo "${ROWS:-1|2|3|4}"; exit 0 ;;
-    *psql*) step restore; cat > /dev/null; exit 0 ;;
+    *psql*) step restore; cat > /dev/null; [ -n "${RESTORE_FAIL:-}" ] && { echo "psql: ERROR" >&2; exit 3; }; exit 0 ;;
     *"photos import"*) step import; cat > /dev/null; echo '{"objects": 2, "bytes": 7}' >&2; exit 0 ;;
     *"photos export"*) tar -C "${OBJECTS}" -cf - a.bin b.bin; exit 0 ;;
     *"photos verify"*) step verify; echo "checked=3 failures=0"; exit "${VERIFY_EXIT:-0}" ;;
@@ -73,7 +77,7 @@ EOF
     export PD_BACKUP_ROOT="${WORK}/backups" PD_ETC="${WORK}/etc/perfect-day" \
         PD_LOG_DIR="${WORK}/log" PD_DEPLOY_DIR="${WORK}/deploy" \
         PD_NAS_URL="rsync://nas.invalid/Backups/perfect-day/nightly/"
-    unset PS_SERVICES PORTS ROWS VERIFY_EXIT
+    unset PS_SERVICES PORTS ROWS VERIFY_EXIT RESTORE_FAIL
     touch "${CALLS}/docker" "${CALLS}/order" "${CALLS}/rsync" "${CALLS}/age"
     make_night 2026-11-18 "${WORK}/backups/nightly/2026-11-18"
     mkdir -p "${NAS}/Backups/perfect-day/nightly"
@@ -126,6 +130,24 @@ check "stops only api, worker and beat" grep -q "stop api worker beat" "${CALLS}
 check "the safety dump is kept and private" \
     bash -c 'f=$(ls "$1"/pre-restore-*.sql.gz) && [ "$(stat -c %a "$f")" = 600 ]' _ "${PD_BACKUP_ROOT}"
 check "decrypts with the backup key" grep -q -- "-d -i ${PD_ETC}/backup.key" "${CALLS}/age"
+
+echo "wrong_key_changes_nothing"
+setup
+echo "WRONG" > "${WORK}/wrong.key"
+RC=0; OUT=$(bash "${RESTORE}" 2026-11-18 --key "${WORK}/wrong.key" <<<"2026-11-18" 2>&1) || RC=$?
+check "exits 1" test "${RC}" -eq 1
+check "says the backup could not be decrypted" grep -qi "decrypt" <<<"${OUT}"
+check "never asked to confirm" bash -c '! grep -q "Type the date" <<<"$1"' _ "${OUT}"
+check "no docker calls: production untouched" test ! -s "${CALLS}/docker"
+
+echo "restore_failure_tells_how_to_recover"
+setup
+export RESTORE_FAIL=1
+RC=0; OUT=$(bash "${RESTORE}" 2026-11-18 <<<"2026-11-18" 2>&1) || RC=$?
+check "fails" test "${RC}" -ne 0
+check "names the safety dump" grep -q "pre-restore-" <<<"${OUT}"
+check "shows how to load it back" grep -q "gunzip -c" <<<"${OUT}"
+check "starts the app again" test "$(order)" = "dump stop drop restore up"
 
 echo "--key overrides the key"
 setup

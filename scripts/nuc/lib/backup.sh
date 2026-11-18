@@ -49,6 +49,27 @@ backup_keep_list() {
     } | sort -u
 }
 
+# backup_clock_check <today> <folder names...>: succeeds if today's date can be
+# trusted for retention: on or after the newest earlier night, and at most 35 days
+# after it. Retention's monthly rule depends on today's date, so a wrong clock (an
+# RTC reset, a new machine before time sync) would otherwise delete real backups.
+# Prints the reason when it fails.
+backup_clock_check() {
+    local today="$1"; shift
+    local newest
+    newest="$(printf '%s\n' "$@" | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' | grep -vx "${today}" | sort | tail -n 1 || true)"
+    [ -z "${newest}" ] && return 0
+    if [[ "${today}" < "${newest}" ]]; then
+        echo "the clock says ${today}, but a backup from ${newest} already exists"
+        return 1
+    fi
+    local gap=$(( ( $(date -d "${today}" +%s) - $(date -d "${newest}" +%s) ) / 86400 ))
+    if [ "${gap}" -gt 35 ]; then
+        echo "the clock says ${today}, ${gap} days after the newest backup (${newest})"
+        return 1
+    fi
+}
+
 # backup_make_night <dir>: writes db.sql.gz.age.partial, photos.tar.age.partial,
 # config.tar.age.partial and manifest.json.partial into <dir>. Returns non-zero
 # with a reason on stderr if any step fails.
@@ -99,26 +120,38 @@ backup_make_night() {
         > "${dir}/manifest.json.partial"
 }
 
-# backup_verify_night <dir>: decrypts each .partial file and checks it is whole;
-# only then renames the .partial files into place.
-backup_verify_night() {
-    local dir="$1"
+# backup_check_files <dir> <key> [suffix]: decrypts each file of a night (with
+# <suffix> appended to the names, e.g. ".partial") and checks it is whole: the
+# dump ends with pg_dump's completion marker, the photo tar has the manifest's
+# object count, and the config tar holds app.env. Prints the reason on failure.
+backup_check_files() {
+    local dir="$1" key="$2" sfx="${3:-}"
     set -o pipefail
 
-    age -d -i "${PD_KEY}" < "${dir}/db.sql.gz.age.partial" | gunzip | grep -v '^[[:space:]]*$' \
+    age -d -i "${key}" < "${dir}/db.sql.gz.age${sfx}" > /dev/null \
+        || { echo "the backup could not be decrypted with ${key}" >&2; return 1; }
+
+    age -d -i "${key}" < "${dir}/db.sql.gz.age${sfx}" | gunzip | grep -v '^[[:space:]]*$' \
         | tail -n 5 | grep -q '^-- PostgreSQL database dump complete' \
         || { echo "database dump is incomplete (no completion marker)" >&2; return 1; }
 
-    local want got
-    want="$(jq -r .objects "${dir}/manifest.json.partial")"
-    got="$(age -d -i "${PD_KEY}" < "${dir}/photos.tar.age.partial" | tar -tvf - | grep -c '^-' || true)"
+    local want got listing
+    want="$(jq -r .objects "${dir}/manifest.json${sfx}")"
+    listing="$(age -d -i "${key}" < "${dir}/photos.tar.age${sfx}" | tar -tvf -)" \
+        || { echo "photo backup does not decrypt or unpack" >&2; return 1; }
+    got="$(grep -c '^-' <<<"${listing}" || true)"
     [ "${got}" = "${want}" ] \
         || { echo "photo backup has ${got} objects, the export reported ${want}" >&2; return 1; }
 
-    age -d -i "${PD_KEY}" < "${dir}/config.tar.age.partial" | tar -tf - | grep -qx "${PD_ETC#/}/app.env" \
+    age -d -i "${key}" < "${dir}/config.tar.age${sfx}" | tar -tf - | grep -qx "${PD_ETC#/}/app.env" \
         || { echo "config backup has no app.env" >&2; return 1; }
+}
 
-    local f
+# backup_verify_night <dir>: checks the night's .partial files with the backup key,
+# and only then renames them into place.
+backup_verify_night() {
+    local dir="$1" f
+    backup_check_files "${dir}" "${PD_KEY}" .partial || return 1
     for f in db.sql.gz.age photos.tar.age config.tar.age manifest.json; do
         mv "${dir}/${f}.partial" "${dir}/${f}"
     done
@@ -136,26 +169,42 @@ backup_prune_local() {
     done
 }
 
-# backup_sync_nas <today>: copies the local nightly folders to the NAS (adding and
-# updating, never deleting), then applies the keep rule to everything the NAS holds,
-# local and NAS nights together, and deletes only the NAS folders that rule drops.
-# So a rebuilt machine with a few nights never trims the NAS's older history.
+# backup_sync_nas <today> [--no-delete]: copies the local nightly folders to the NAS
+# (adding and updating, never deleting), then applies the keep rule to everything
+# the NAS holds, local and NAS nights together, and deletes only the NAS folders
+# that rule drops. So a rebuilt machine with a few nights never trims the NAS's
+# older history. Deletes nothing with --no-delete, or when the clock looks wrong
+# against the NAS's nights (then RETENTION_SKIP says why).
 backup_sync_nas() {
-    local today="$1" listing nas keep n rc=0
-    rsync -a --timeout=60 "${PD_NIGHTLY}/" "${PD_NAS_URL}" || return $?
-    listing="$(rsync --list-only --timeout=60 "${PD_NAS_URL}")" || return $?
+    local today="$1" no_delete="${2:-}" listing nas keep n rc=0 parent empty
+    empty="$(mktemp -d)"
+    # The copy below creates nightly/ but not its parent; make that first (once).
+    parent="${PD_NAS_URL%/}"; parent="${parent%/*}/"
+    rsync -r --timeout=60 "${empty}/" "${parent}" || rc=$?
+    [ "${rc}" -eq 0 ] && { rsync -a --timeout=60 "${PD_NIGHTLY}/" "${PD_NAS_URL}" || rc=$?; }
+    [ "${rc}" -eq 0 ] && { listing="$(rsync --list-only --timeout=60 "${PD_NAS_URL}")" || rc=$?; }
+    if [ "${rc}" -ne 0 ] || [ "${no_delete}" = "--no-delete" ]; then
+        rmdir "${empty}"; return "${rc}"
+    fi
     nas="$(awk '{print $NF}' <<<"${listing}" | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' || true)"
-    [ -z "${nas}" ] && return 0
-    # shellcheck disable=SC2046,SC2086  # word splitting of folder names is intended
-    keep="$(backup_keep_list "${today}" ${nas} $(ls -A "${PD_NIGHTLY}"))"
-    local -a drop=()
-    for n in ${nas}; do
-        grep -qx "${n}" <<<"${keep}" || drop+=("--include=/${n}/***")
-    done
-    [ "${#drop[@]}" -eq 0 ] && return 0
-    backup_log "removing ${#drop[@]} folder(s) from the NAS that retention no longer keeps"
-    local empty; empty="$(mktemp -d)"
-    rsync -r --timeout=60 --delete "${drop[@]}" --exclude='*' "${empty}/" "${PD_NAS_URL}" || rc=$?
+    if [ -n "${nas}" ]; then
+        local why
+        # shellcheck disable=SC2086  # word splitting of folder names is intended
+        if ! why="$(backup_clock_check "${today}" ${nas})"; then
+            RETENTION_SKIP="${why}"
+            rmdir "${empty}"; return 0
+        fi
+        # shellcheck disable=SC2046,SC2086
+        keep="$(backup_keep_list "${today}" ${nas} $(ls -A "${PD_NIGHTLY}"))"
+        local -a drop=()
+        for n in ${nas}; do
+            grep -qx "${n}" <<<"${keep}" || drop+=("--include=/${n}/***")
+        done
+        if [ "${#drop[@]}" -gt 0 ]; then
+            backup_log "removing ${#drop[@]} folder(s) from the NAS that retention no longer keeps"
+            rsync -r --timeout=60 --delete "${drop[@]}" --exclude='*' "${empty}/" "${PD_NAS_URL}" || rc=$?
+        fi
+    fi
     rmdir "${empty}"
     return "${rc}"
 }

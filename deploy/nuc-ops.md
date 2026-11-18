@@ -323,8 +323,9 @@ systemctl list-timers perfect-day-backup.timer         # next run
 | `ok` | Made, checked, on the NUC and on the NAS | Nothing |
 | `nas_failed` | Kept on the NUC, but the NAS copy failed | Check the NAS is up; the next good run copies what's missing |
 | `failed` | Nothing new kept, and nothing deleted | Read `error` and `backup.log` |
+| `warning` | Made and copied, but **nothing was pruned anywhere** because the clock looked wrong (a date before the newest backup, or more than 35 days after it) | Fix the date and time (`timedatectl`); the next run prunes normally |
 
-Exit 75 in the log means a deploy (or another backup) held the lock. `40-update.sh`
+A run stopped part-way (by the 15-minute cap, a reboot or an error) leaves `failed` with "stopped before finishing". Exit 75 in the log means a deploy (or another backup) held the lock. `40-update.sh`
 waits up to 30 minutes for a running backup.
 
 **Prove it restores (the drill).** It doesn't touch production; run it after any change
@@ -338,8 +339,7 @@ sudo /opt/perfect-day/scripts/nuc/drill.sh 2026-11-18
 It must end with `DRILL PASSED`. It always removes the `perfect-day-drill` containers
 and volumes.
 
-**Restore production from a night** (replaces the live database and photos; asks you
-to type the date, and keeps a safety dump first):
+**Restore production from a night** (replaces the live database and photos). It first checks the whole night decrypts with the key, then asks you to type the date and keeps a safety dump. If a later step fails it starts the app again and prints the exact commands to load the safety dump back:
 
 ```bash
 sudo /opt/perfect-day/scripts/nuc/restore.sh 2026-11-18 --from-nas
