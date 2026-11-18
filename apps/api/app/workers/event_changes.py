@@ -21,6 +21,35 @@ log = structlog.get_logger()
 # body_source values that mean no person has edited the text.
 MACHINE_ONLY_BODY_SOURCES = frozenset({"llm", "fallback"})
 
+_EDIT_TEXT_FIELDS = ("summary", "location", "description")
+
+
+def _guests(payload: dict) -> frozenset[tuple[str, str]]:
+    return frozenset(
+        (str(a.get("displayName") or ""), str(a.get("email") or ""))
+        for a in payload.get("attendees") or []
+        if isinstance(a, dict)
+    )
+
+
+def event_edit_changes(old: dict | None, new: dict) -> list[str]:
+    """The fields of a stored event that *new* changes, of those the drafting prompt reads.
+
+    Returns a subset of ``["summary", "location", "description", "guests"]`` in that
+    order. Guests compare by name and email only, so an RSVP is not an edit; a missing
+    or null value equals an empty one, so payloads stored by older code don't look edited.
+    """
+    if old is None:
+        return []
+    changed = [
+        field
+        for field in _EDIT_TEXT_FIELDS
+        if str(old.get(field) or "") != str(new.get(field) or "")
+    ]
+    if _guests(old) != _guests(new):
+        changed.append("guests")
+    return changed
+
 
 def is_untouched_rule_draft(entry: Entry) -> bool:
     """True for a draft a rule created whose text is still exactly what the AI wrote."""

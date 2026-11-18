@@ -337,6 +337,7 @@ async def _ingest_calendar_event(
     from sqlalchemy import select
 
     from app.models import Event
+    from app.workers.event_changes import event_edit_changes
     from app.workers.tz_utils import google_event_times, google_event_to_entry_date
     from app.workers.utils import db_session
 
@@ -378,7 +379,9 @@ async def _ingest_calendar_event(
         event = existing_result.scalar_one_or_none()
         is_new = event is None
         entry_to_redraft: uuid.UUID | None = None
+        edit_redraft: tuple[uuid.UUID, list[str]] | None = None
         if event is not None:
+            changed = event_edit_changes(event.payload, payload)
             event.payload = payload
             event.occurred_at = occurred_at
             event.ends_at = ends_at
@@ -389,6 +392,17 @@ async def _ingest_calendar_event(
                 entry_to_redraft = await _release_from_untouched_draft(db, event)
                 if event.entry_id is None:
                     event.rules_evaluated_at = None  # evaluate after the new end
+            if (
+                changed
+                and _has_ended(ends_at)
+                and entry_to_redraft is None
+                and event.entry_id is not None
+            ):
+                # Row 33: the title, place, notes or guests of an event that has happened
+                # changed. A draft catches up; the drafting code keeps a parent's own text
+                # and makes it a suggestion. A move to the future is the move rule's alone.
+                if await _edit_should_redraft(db, event.entry_id):
+                    edit_redraft = (event.entry_id, changed)
         else:
             event = Event(
                 diary_id=diary_id,
@@ -412,6 +426,21 @@ async def _ingest_calendar_event(
             await queue_redraft(entry_to_redraft)
         except Exception:
             log.exception("reschedule_redraft_queue_failed", entry_id=str(entry_to_redraft))
+
+    if edit_redraft is not None:
+        edited_entry_id, changed_fields = edit_redraft
+        try:
+            await queue_redraft(edited_entry_id)
+        except Exception:
+            log.exception("edit_redraft_queue_failed", entry_id=str(edited_entry_id))
+        else:
+            # Field names only: the event text can carry family details.
+            log.info(
+                "event_edit_redraft_queued",
+                entry_id=str(edited_entry_id),
+                event_id=str(event_id),
+                changed=changed_fields,
+            )
 
     if due:
         # Best-effort: a broker hiccup must not undo a successful ingest. The
@@ -493,6 +522,43 @@ async def _release_from_untouched_draft(db, event) -> uuid.UUID | None:
     if entry is None or not is_untouched_rule_draft(entry):
         return None
     return await release_event_from_entry(db, event, photos_count_as_touched=True)
+
+
+async def _edit_should_redraft(db, entry_id: uuid.UUID) -> bool:
+    """True when an edited event's entry is a live draft whose diary owner is active.
+
+    Only an entry the AI has already drafted successfully: that is what makes a
+    background redraft free (generate_draft_for_entry). Any other redraft would
+    spend one of the owner's monthly drafts, and an edit must never do that.
+    """
+    from sqlalchemy import select
+
+    from app.core.auth import deletion_state
+    from app.models import Diary, Entry, LLMGeneration, User
+
+    row = (
+        await db.execute(
+            select(Entry, User)
+            .join(Diary, Diary.id == Entry.diary_id)
+            .join(User, User.id == Diary.owner_user_id)
+            .where(Entry.id == entry_id)
+        )
+    ).one_or_none()
+    if row is None:
+        return False
+    entry, owner = row
+    if entry.status != "draft" or entry.deleted_at is not None:
+        return False
+    if deletion_state(owner) != "active":
+        return False
+    drafted = (
+        await db.execute(
+            select(LLMGeneration.id)
+            .where(LLMGeneration.entry_id == entry_id, LLMGeneration.status == "success")
+            .limit(1)
+        )
+    ).first()
+    return drafted is not None
 
 
 def _has_ended(ends_at: datetime | None) -> bool:
