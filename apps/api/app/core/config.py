@@ -27,12 +27,11 @@ class Settings(BaseSettings):
     celery_broker_url: str = "redis://localhost:6379/0"
     celery_result_backend: str = "redis://localhost:6379/1"
 
-    # MinIO / S3
-    s3_endpoint_url: str = "http://localhost:9000"
-    # public-facing URL for presigned URLs; defaults to s3_endpoint_url behavior when empty
-    s3_public_endpoint_url: str = ""
-    s3_access_key: str = "minioadmin"
-    s3_secret_key: str = "minioadmin"  # noqa: S105
+    # Photo storage: any S3-compatible server (Garage since tracker row 41). These
+    # defaults match the dev Garage in docker-compose.yml, reached from the host.
+    s3_endpoint_url: str = "http://localhost:3900"
+    s3_access_key: str = "perfectday-dev"
+    s3_secret_key: str = "perfectday-dev-secret-0001"  # noqa: S105  # dev only
     s3_bucket_photos: str = "photos"
     s3_region: str = "us-east-1"
 

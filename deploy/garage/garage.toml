@@ -1,0 +1,29 @@
+# Garage, the S3-compatible photo store (tracker row 41; design:
+# docs/superpowers/specs/2026-11-18-garage-design.md). Mounted read-only at
+# /etc/garage.toml by docker-compose.yml and the integration test fixture.
+#
+# No secrets here: the RPC secret comes from GARAGE_RPC_SECRET, and the S3 key and
+# bucket from GARAGE_DEFAULT_* (`garage server --single-node --default-bucket`).
+
+metadata_dir = "/var/lib/garage/meta"
+data_dir = "/var/lib/garage/data"
+
+# LMDB (the default) "is prone to database corruption after an unclean shutdown";
+# SQLite is the robust choice for one small node. Both fsyncs: we write little.
+db_engine = "sqlite"
+metadata_fsync = true
+data_fsync = true
+
+# Every object is encrypted by the app before it arrives, so it will not compress.
+compression_level = "none"
+
+# One node, one disk, as MinIO was. The nightly NAS backup (row 36) is the copy.
+replication_factor = 1
+
+rpc_bind_addr = "[::]:3901"
+rpc_public_addr = "127.0.0.1:3901"
+
+[s3_api]
+# The region the app signs requests with (S3_REGION), so the app needs no change.
+s3_region = "us-east-1"
+api_bind_addr = "[::]:3900"

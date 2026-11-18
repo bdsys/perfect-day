@@ -43,7 +43,7 @@ async def readiness() -> JSONResponse:
         checks["redis"] = "error"
         healthy = False
 
-    # MinIO / S3
+    # Photo storage (any S3 server; Garage since tracker row 41)
     try:
         import asyncio
         import concurrent.futures
@@ -58,12 +58,13 @@ async def readiness() -> JSONResponse:
                 pool,
                 lambda: get_s3().head_bucket(Bucket=settings.s3_bucket_photos),
             )
-        checks["minio"] = "ok"
+        checks["storage"] = "ok"
     except Exception as e:
-        log.warning("readiness_check_failed", check="minio", error=str(e))
-        checks["minio"] = "error"
-        # MinIO failure is warning-level — don't fail readiness for photo storage unavailability
-        # on startup (bucket may not exist yet before first upload)
+        log.warning("readiness_check_failed", check="storage", error=str(e))
+        checks["storage"] = "error"
+        # Storage failure is warning-level: readiness does not fail on it, so a store
+        # problem never takes the API off the network. Anything that must know (the
+        # storage switch) reads checks.storage itself.
 
     status_code = 200 if healthy else 503
     return JSONResponse(

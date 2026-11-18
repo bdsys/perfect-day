@@ -1,3 +1,12 @@
+# Photo storage settings, shared by the app services and Garage so they can never
+# disagree (tracker row 41). Compose fills them from ./.env, which on the NUC is a
+# symlink to /etc/perfect-day/app.env; the defaults are for dev and CI only.
+x-storage-env: &storage-env
+  S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-http://garage:3900}
+  S3_ACCESS_KEY: ${S3_ACCESS_KEY:-perfectday-dev}
+  S3_SECRET_KEY: ${S3_SECRET_KEY:-perfectday-dev-secret-0001}
+  S3_BUCKET_PHOTOS: ${S3_BUCKET_PHOTOS:-photos}
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -23,6 +32,8 @@ services:
       timeout: 3s
       retries: 5
 
+  # MinIO stays until the NUC has switched (scripts/nuc/60-switch-storage.sh) and
+  # release 2 removes it (tracker row 41).
   minio:
     image: minio/minio:latest
     restart: unless-stopped
@@ -34,6 +45,28 @@ services:
       - minio_data:/data
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  garage:
+    # Pinned: this is the one place the version is written (tests read it from here).
+    image: dxflrs/garage:v2.5.0
+    restart: unless-stopped
+    command: ["/garage", "server", "--single-node", "--default-bucket"]
+    environment:
+      GARAGE_DEFAULT_ACCESS_KEY: ${S3_ACCESS_KEY:-perfectday-dev}
+      GARAGE_DEFAULT_SECRET_KEY: ${S3_SECRET_KEY:-perfectday-dev-secret-0001}
+      GARAGE_DEFAULT_BUCKET: ${S3_BUCKET_PHOTOS:-photos}
+      # Dev and CI only. On the NUC, 40-update.sh and 60-switch-storage.sh make sure
+      # app.env has a generated one before Garage starts.
+      GARAGE_RPC_SECRET: ${GARAGE_RPC_SECRET:-0000000000000000000000000000000000000000000000000000000000000000}
+    volumes:
+      - garage_data:/var/lib/garage
+      - ./deploy/garage/garage.toml:/etc/garage.toml:ro
+    healthcheck:
+      # The image has no shell, so no curl: ask Garage itself.
+      test: ["CMD", "/garage", "status"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -67,14 +100,13 @@ services:
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/1
-      S3_ENDPOINT_URL: http://minio:9000
-      S3_PUBLIC_ENDPOINT_URL: http://localhost:9000
+      <<: *storage-env
+    # No dependency on the photo store: /readyz reports it, and a dependency would
+    # let a plain `up` block the app on a store it is not using (tracker row 41).
     depends_on:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_healthy
-      minio:
         condition: service_healthy
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
 
@@ -89,7 +121,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/1
-      S3_ENDPOINT_URL: http://minio:9000
+      <<: *storage-env
     depends_on:
       postgres:
         condition: service_healthy
@@ -108,7 +140,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/1
-      S3_ENDPOINT_URL: http://minio:9000
+      <<: *storage-env
     depends_on:
       postgres:
         condition: service_healthy
@@ -159,4 +191,5 @@ services:
 volumes:
   postgres_data:
   minio_data:
+  garage_data:
   pgadmin_data:
