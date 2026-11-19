@@ -1,6 +1,6 @@
 "use client";
-import { useEffect, useState } from "react";
-import { api } from "../lib/api";
+import { useEffect } from "react";
+import { usePhotoBlob } from "../lib/usePhotoBlob";
 
 interface PhotoLightboxProps {
   photoIds: string[];
@@ -10,27 +10,8 @@ interface PhotoLightboxProps {
 }
 
 export function PhotoLightbox({ photoIds, index, onIndexChange, onClose }: PhotoLightboxProps) {
-  const [src, setSrc] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const currentPhotoId = photoIds[index];
-
-  useEffect(() => {
-    let url: string | null = null;
-    let cancelled = false;
-    setSrc(null);
-    setError(null);
-    api.photos.get(currentPhotoId, "full").then((blob) => {
-      if (cancelled) return;
-      url = URL.createObjectURL(blob);
-      setSrc(url);
-    }).catch(() => {
-      if (!cancelled) setError("failed to load photo");
-    });
-    return () => {
-      cancelled = true;
-      if (url) URL.revokeObjectURL(url);
-    };
-  }, [currentPhotoId]);
+  const { src, error } = usePhotoBlob(currentPhotoId, "full");
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -57,7 +38,7 @@ export function PhotoLightbox({ photoIds, index, onIndexChange, onClose }: Photo
         zIndex: 9999,
       }}
     >
-      {error && <p role="alert" style={{ color: "white" }}>{error}</p>}
+      {error && <p role="alert" style={{ color: "white" }}>failed to load photo</p>}
       {src && (
         // eslint-disable-next-line @next/next/no-img-element -- blob: URL from encrypted storage
         <img

@@ -1,6 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
-import { api } from "../lib/api";
+import { usePhotoBlob } from "../lib/usePhotoBlob";
 
 interface PhotoThumbnailProps {
   photoId: string;
@@ -10,25 +9,7 @@ interface PhotoThumbnailProps {
 }
 
 export function PhotoThumbnail({ photoId, alt, onClick, className }: PhotoThumbnailProps) {
-  const [src, setSrc] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let url: string | null = null;
-    let cancelled = false;
-    setError(null);
-    api.photos.get(photoId, "thumb").then((blob) => {
-      if (cancelled) return;
-      url = URL.createObjectURL(blob);
-      setSrc(url);
-    }).catch(() => {
-      if (!cancelled) setError("failed");
-    });
-    return () => {
-      cancelled = true;
-      if (url) URL.revokeObjectURL(url);
-    };
-  }, [photoId]);
+  const { src, error } = usePhotoBlob(photoId, "thumb");
 
   if (error) return <div className={className} aria-label="failed to load" />;
   if (!src) return <div className={className} aria-busy="true" />;

@@ -19,3 +19,16 @@ it("fetches blob and renders img with src", async () => {
   unmount();
   expect(revokeSpy).toHaveBeenCalled();
 });
+
+it("row 61: switching photos shows the loading box, never the previous photo's revoked URL", async () => {
+  (api.photos.get as jest.Mock).mockReset()
+    .mockResolvedValueOnce(new Blob(["a"]))
+    .mockReturnValueOnce(new Promise(() => {}));
+  jest.spyOn(URL, "createObjectURL").mockReturnValue("blob:first");
+  jest.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+  const { rerender, container } = render(<PhotoThumbnail photoId="a" alt="a" />);
+  await waitFor(() => expect(screen.getByRole("img")).toHaveAttribute("src", "blob:first"));
+  rerender(<PhotoThumbnail photoId="b" alt="b" />);
+  expect(screen.queryByRole("img")).toBeNull();
+  expect(container.querySelector('[aria-busy="true"]')).not.toBeNull();
+});

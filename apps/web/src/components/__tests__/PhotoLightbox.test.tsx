@@ -38,3 +38,14 @@ it("navigates with ArrowRight and closes on Escape", () => {
   });
   expect(onClose).toHaveBeenCalled();
 });
+
+it("row 61: after a photo fails, moving to the next hides the error at once", async () => {
+  (api.photos.get as jest.Mock).mockReset()
+    .mockRejectedValueOnce(new Error("nope"))
+    .mockReturnValueOnce(new Promise(() => {}));
+  const props = { photoIds: ["a", "b"], onIndexChange: jest.fn(), onClose: jest.fn() };
+  const { rerender, findByRole, queryByRole } = render(<PhotoLightbox {...props} index={0} />);
+  expect(await findByRole("alert")).toHaveTextContent("failed to load photo");
+  rerender(<PhotoLightbox {...props} index={1} />);
+  expect(queryByRole("alert")).toBeNull();
+});
