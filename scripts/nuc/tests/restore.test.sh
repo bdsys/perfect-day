@@ -246,7 +246,7 @@ echo "MASTER_SECRET=different" > "${PD_ETC}/app.env"
 RC=0; OUT=$(bash "${DRILL}" 2>&1) || RC=$?
 check "fails" test "${RC}" -ne 0
 check "says app.env differs" grep -q "app.env" <<<"${OUT}"
-check "never prints a secret" bash -c '! grep -q "MASTER_SECRET" <<<"$1"' _ "${OUT}"
+check "never prints a secret's value" bash -c '! grep -q "different\|=live" <<<"$1"' _ "${OUT}"
 
 # ── row 41: the store follows S3_ENDPOINT_URL; every night stays restorable ──
 set_live_endpoint() { python3 "${HERE}/../lib/envfile.py" set "${PD_ETC}/app.env" S3_ENDPOINT_URL "$1" >/dev/null; }
@@ -296,6 +296,31 @@ echo "GARAGE_RPC_SECRET=$(printf 'a%.0s' $(seq 64))" >> "${PD_ETC}/app.env"
 RC=0; OUT=$(bash "${DRILL}" 2>&1) || RC=$?
 check "passes" test "${RC}" -eq 0
 check "says DRILL PASSED" grep -q "DRILL PASSED" <<<"${OUT}"
+
+echo "drill_passes_when_only_settings_that_hold_no_key_differ"
+# A setting removed after the night was taken (the MINIO_* lines, 2026-11-19) or added
+# since must not fail the drill of an older night; only the keys data is encrypted
+# under decide it (MASTER_SECRET, OAUTH_TOKEN_SECRET).
+setup   # the night has MASTER_SECRET=live and the minio address
+printf "MINIO_ROOT_PASSWORD=dead\n" >> "${PD_ETC}/app.env"      # in the night, then removed live:
+make_night 2026-11-18 "${NAS}/Backups/perfect-day/nightly/2026-11-18"
+python3 "${HERE}/../lib/envfile.py" unset "${PD_ETC}/app.env" MINIO_ROOT_PASSWORD >/dev/null
+echo "SOMETHING_NEW=1" >> "${PD_ETC}/app.env"
+RC=0; OUT=$(bash "${DRILL}" 2>&1) || RC=$?
+check "passes" test "${RC}" -eq 0
+check "names the settings that differ" grep -q "MINIO_ROOT_PASSWORD" <<<"${OUT}"
+check "and the new one" grep -q "SOMETHING_NEW" <<<"${OUT}"
+check "never prints a value" bash -c '! grep -q "dead" <<<"$1"' _ "${OUT}"
+
+echo "drill_fails_when_a_data_key_differs_or_is_missing"
+setup
+python3 "${HERE}/../lib/envfile.py" set "${PD_ETC}/app.env" OAUTH_TOKEN_SECRET live-oauth >/dev/null
+make_night 2026-11-18 "${NAS}/Backups/perfect-day/nightly/2026-11-18"
+python3 "${HERE}/../lib/envfile.py" set "${PD_ETC}/app.env" OAUTH_TOKEN_SECRET other-oauth >/dev/null
+RC=0; OUT=$(bash "${DRILL}" 2>&1) || RC=$?
+check "fails on a different OAUTH_TOKEN_SECRET" test "${RC}" -ne 0
+check "names it" grep -q "OAUTH_TOKEN_SECRET" <<<"${OUT}"
+check "never prints a value" bash -c '! grep -q "other-oauth\|live-oauth" <<<"$1"' _ "${OUT}"
 
 echo "with_config_keeps_live_endpoint"
 setup   # the night says minio
