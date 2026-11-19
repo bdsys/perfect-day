@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # scripts/nuc/backup-run.sh — one nightly backup (tracker row 36).
-# Run by perfect-day-backup.service (02:17 daily, installed by 30-backup.sh), or by
+# Run by perfect-day-backup.service (03:00 Pacific daily, installed by 30-backup.sh), or by
 # hand: sudo systemctl start perfect-day-backup.service
 #
 # Dumps the database, exports the photo objects, saves /etc/perfect-day; encrypts

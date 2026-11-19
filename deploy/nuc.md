@@ -61,7 +61,8 @@ Built 2026-11-18 (tracker row 36). Design:
 [`docs/superpowers/specs/2026-11-18-nuc-backups-design.md`](../docs/superpowers/specs/2026-11-18-nuc-backups-design.md).
 Commands: [`nuc-ops.md` § B7](nuc-ops.md#b7--backups).
 
-- **What:** every night at 02:17 (`perfect-day-backup.timer`), the database
+- **What:** every night at 03:00 Pacific (`perfect-day-backup.timer`, `America/Los_Angeles`, so it
+  follows daylight saving; 02:17 UTC until 2026-11-19), the database
   (`pg_dump`), every photo object (exported through the S3 interface, so the backup
   doesn't depend on the store's on-disk format, so it survived the move from MinIO to Garage unchanged) and `/etc/perfect-day/` (including
   `MASTER_SECRET`, without which photos and Google tokens can't be decrypted).

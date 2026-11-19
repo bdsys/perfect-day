@@ -107,7 +107,7 @@ Defer:
 - Change hostnames, the Google client or the DDNS token in place with `sudo ./scripts/nuc/15-update-config.sh` (`--google-client <json>`, `--ddns-credentials`). **Never re-run `10-secrets.sh` on a NUC with data:** it rewrites the whole `app.env` from its template, so hostnames, the Google client and every setting changed in place since go back to the template. It keeps the generated secrets (`MASTER_SECRET`, which encrypts stored photos and Google tokens, among them) and the storage address. A setting a newer release needs is added by `40-update.sh` through `scripts/nuc/lib/envfile.py ensure`.
 - Admin commands against production: `sudo ./scripts/admin.sh …` on the NUC (`scripts/ADMIN_CLI.md`).
 - Photos are in Garage; `S3_ENDPOINT_URL` in `app.env` names the store, and deploys fail if `/readyz` does not report `storage: ok`. The move from MinIO (2026-11-18) and how to move again: `deploy/nuc-ops.md` § B-Storage.
-- Nightly encrypted backups (database, photos, `/etc/perfect-day/`) go to the NAS at 02:17; status in `/var/log/perfect-day/backup-status.json`, restore and drill in `deploy/nuc-ops.md` § B7 (tracker row 36). Before a big change, still dump the database to `/var/backups/perfect-day/` with `umask 077`.
+- Nightly encrypted backups (database, photos, `/etc/perfect-day/`) go to the NAS at 03:00 Pacific (11:00 UTC in winter, 10:00 in summer); status in `/var/log/perfect-day/backup-status.json`, restore and drill in `deploy/nuc-ops.md` § B7 (tracker row 36). Before a big change, still dump the database to `/var/backups/perfect-day/` with `umask 077`.
 
 ## Development Notes
 

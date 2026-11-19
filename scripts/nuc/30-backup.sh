@@ -8,7 +8,7 @@
 #   password manager. Store MASTER_SECRET from /etc/perfect-day/app.env there too.
 # - Locks down /var/backups/perfect-day (700, files 600).
 # - Installs perfect-day-backup.service (runs scripts/nuc/backup-run.sh) and
-#   perfect-day-backup.timer (daily 02:17), and enables the timer. It never starts a
+#   perfect-day-backup.timer (daily 03:00 Pacific), and enables the timer. It never starts a
 #   backup itself: run one with `sudo systemctl start perfect-day-backup.service`.
 # Safe to run again: an existing key is kept and not shown.
 # Design: docs/superpowers/specs/2026-11-18-nuc-backups-design.md
@@ -84,10 +84,11 @@ UNIT
 
 cat > "${PD_SYSTEMD_DIR}/perfect-day-backup.timer" <<UNIT
 [Unit]
-Description=Perfect Day nightly backup at 02:17
+Description=Perfect Day nightly backup at 03:00 Pacific
 
 [Timer]
-OnCalendar=*-*-* 02:17:00
+# Andrew's local time (2026-11-19); systemd follows daylight saving.
+OnCalendar=*-*-* 03:00:00 America/Los_Angeles
 Persistent=true
 Unit=perfect-day-backup.service
 
@@ -101,7 +102,7 @@ systemctl enable --now perfect-day-backup.timer
 
 cat <<MSG
 
-Backup installed. The first run is at 02:17, or start one now:
+Backup installed. The first run is at 03:00 Pacific, or start one now:
   sudo systemctl start perfect-day-backup.service
   cat ${PD_LOG_DIR}/backup-status.json
 Then prove it restores (deploy/nuc-ops.md § B7):
