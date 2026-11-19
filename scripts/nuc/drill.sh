@@ -6,8 +6,8 @@
 # Fetches the night from the NAS, restores it into a throwaway compose project
 # (perfect-day-drill: postgres and the photo store only, nothing published, so nothing scans
 # Google, calls Anthropic, sends email or touches DNS), then checks that:
-#   - the restored app.env matches the live one (apart from S3_ENDPOINT_URL and
-#     GARAGE_RPC_SECRET, which nights from before row 41 lack or name differently),
+#   - the backup's MASTER_SECRET and OAUTH_TOKEN_SECRET are the live ones (other
+#     settings that differ are named, not failed on),
 #   - row and object counts match the backup's manifest,
 #   - photos and avatars decrypt (manage.py photos verify),
 #   - only postgres and the store S3_ENDPOINT_URL names ran, with no published ports.
@@ -46,16 +46,24 @@ rsync -a --timeout=60 "${PD_NAS_URL}${DATE}/" "${TMP}/night/" \
     || { echo "DRILL FAILED: could not fetch ${DATE} from the NAS"; exit 1; }
 MANIFEST="${TMP}/night/manifest.json"
 
-# The compose file reads the live /etc/perfect-day/app.env, so the restored one
-# must be identical for this drill to have tested the backup's keys. The storage
-# address is left out: it names the store, not a key, and changes at the switch.
+# The drill restores with the live /etc/perfect-day/app.env, so it has only tested the
+# backup if the keys the data is encrypted under are the live ones: MASTER_SECRET
+# (photos, avatars) and OAUTH_TOKEN_SECRET (Google tokens). Other settings come and go
+# over the year a night is kept (GARAGE_RPC_SECRET was added, the MINIO_* lines removed,
+# row 41), so they are named, never failed on. Values are never printed.
 age -d -i "${PD_KEY}" < "${TMP}/night/config.tar.age" | tar -xOf - "${PD_ETC#/}/app.env" > "${TMP}/app.env" \
     || REASONS+=("the config backup has no app.env")
-# GARAGE_RPC_SECRET is left out too: the first deploy of row 41 adds it, so every
-# older night lacks it, and nothing the restore reads depends on it.
-NOT_KEYS='^(S3_ENDPOINT_URL|GARAGE_RPC_SECRET)='
-cmp -s <(grep -Ev "${NOT_KEYS}" "${TMP}/app.env") <(grep -Ev "${NOT_KEYS}" "${PD_ETC}/app.env") \
-    || REASONS+=("the restored app.env differs from the live one")
+for key in MASTER_SECRET OAUTH_TOKEN_SECRET; do
+    was="$(python3 "${PD_ENVFILE_PY}" get "${TMP}/app.env" "${key}" 2>/dev/null || echo "<absent>")"
+    now="$(python3 "${PD_ENVFILE_PY}" get "${PD_ETC}/app.env" "${key}" 2>/dev/null || echo "<absent>")"
+    [ "${was}" = "${now}" ] || REASONS+=("${key} in the backup's app.env is not the live one")
+done
+unset was now
+others="$(diff <(grep -E '^[A-Za-z_][A-Za-z0-9_]*=' "${TMP}/app.env" | sort) \
+               <(grep -E '^[A-Za-z_][A-Za-z0-9_]*=' "${PD_ETC}/app.env" | sort) \
+          | sed -nE 's/^[<>] ([A-Za-z_][A-Za-z0-9_]*)=.*/\1/p' \
+          | grep -vxE 'MASTER_SECRET|OAUTH_TOKEN_SECRET' | sort -u | tr '\n' ' ')" || true
+[ -n "${others}" ] && echo "Drill: note: these settings differ from the live config (no key; the live ones are used): ${others}"
 STORE="$(storage_service_from_env "${PD_ETC}/app.env")" || { echo "DRILL FAILED: unknown photo store"; exit 1; }
 
 if "${HERE}/restore.sh" "${DATE}" --source-dir "${TMP}/night" --into "${PROJECT}" </dev/null; then
