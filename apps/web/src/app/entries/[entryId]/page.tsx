@@ -1,6 +1,6 @@
 'use client'
 
-import { Suspense, useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
+import { Suspense, useCallback, useEffect, useEffectEvent, useRef, useState, type CSSProperties } from 'react'
 import AppHeader from '@/components/AppHeader'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import { api, type Entry, type OwnerPlan, type TemperatureUnit } from '@/lib/api'
@@ -11,6 +11,7 @@ import { AddPhotos } from '@/components/AddPhotos'
 import { useAuth } from '@/lib/auth-context'
 import { StatusPanel } from '@/components/StatusPanel'
 import { usePolling } from '@/lib/usePolling'
+import { useLatest } from '@/lib/useLatest'
 import { formatDateRange } from '@/lib/date'
 import { WeatherBadge } from '@/components/WeatherBadge'
 import { SuggestionBox } from '@/components/SuggestionBox'
@@ -76,13 +77,17 @@ function EntryDetailPageInner() {
   const [entry, setEntry] = useState<Entry | null>(null)
   // Only GET /entries/{id} carries the plan; action responses have plan: null.
   // Keep the last real one so an action never blanks the badge or re-enables a grayed control.
-  const planRef = useRef<OwnerPlan | null>(null)
-  if (entry?.plan) planRef.current = entry.plan
-  const plan = planRef.current
   // Same for the owner's temperature unit: action responses carry temperature_unit: null,
-  // so keep the last real one rather than falling back to °F.
-  const unitRef = useRef<TemperatureUnit>('F')
-  if (entry?.temperature_unit) unitRef.current = entry.temperature_unit
+  // so keep the last real one rather than falling back to °F. Taken in the render that
+  // sees a new entry (row 61: state, not a ref written during render).
+  const [plan, setPlan] = useState<OwnerPlan | null>(null)
+  const [unit, setUnit] = useState<TemperatureUnit>('F')
+  const [seenEntry, setSeenEntry] = useState<Entry | null>(null)
+  if (entry !== seenEntry) {
+    setSeenEntry(entry)
+    if (entry?.plan) setPlan(entry.plan)
+    if (entry?.temperature_unit) setUnit(entry.temperature_unit)
+  }
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
@@ -109,10 +114,7 @@ function EntryDetailPageInner() {
   // What the entry held when Edit was clicked, and the latest server copy seen mid-edit.
   const [editBase, setEditBase] = useState<{ title: string; body: string } | null>(null)
   const [serverEntry, setServerEntry] = useState<Entry | null>(null)
-  const editingRef = useRef(false)
-  editingRef.current = editing
-  const entryRef = useRef<Entry | null>(null)
-  entryRef.current = entry
+  const editingRef = useLatest(editing)
   const [answeringSuggestion, setAnsweringSuggestion] = useState(false)
 
   const [noticeKey, setNoticeKey] = useState(0)
@@ -317,25 +319,27 @@ function EntryDetailPageInner() {
     } finally {
       aiInFlightRef.current = false
     }
-  }, [entry])
+  }, [entry, editingRef])
 
   usePolling(pollAi, AI_STATUS_POLL_MS, aiPending && aiFailures < MAX_POLL_FAILURES)
+
+  const regenTimedOut = useEffectEvent(() => {
+    setPollingRegen(false)
+    setRegenSlow(false)
+    if (entry?.ai_status) {
+      // Still queued or being written: end the panel and let the AI notice
+      // and its polling show the draft when it lands.
+      setRegenResult(null)
+      setRegenStartTime(null)
+    } else {
+      setRegenResult('failed')
+    }
+  })
 
   useEffect(() => {
     if (!pollingRegen) return
     const slowTimer = setTimeout(() => setRegenSlow(true), 9 * 1000)
-    const failTimer = setTimeout(() => {
-      setPollingRegen(false)
-      setRegenSlow(false)
-      if (entryRef.current?.ai_status) {
-        // Still queued or being written: end the panel and let the AI notice
-        // and its polling show the draft when it lands.
-        setRegenResult(null)
-        setRegenStartTime(null)
-      } else {
-        setRegenResult('failed')
-      }
-    }, 60 * 1000)
+    const failTimer = setTimeout(regenTimedOut, 60 * 1000)
     return () => {
       clearTimeout(slowTimer)
       clearTimeout(failTimer)
@@ -426,7 +430,7 @@ function EntryDetailPageInner() {
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.25rem', flexWrap: 'wrap' }}>
           <span className={`status-badge status-${entry.status}`}>{entry.status}</span>
           <span style={{ fontSize: '0.875rem', color: 'var(--text-muted)' }}>{formatDateRange(entry.entry_date, entry.entry_end_date)}</span>
-          <WeatherBadge enrichments={entry.enrichments ?? []} unit={unitRef.current} />
+          <WeatherBadge enrichments={entry.enrichments ?? []} unit={unit} />
         </div>
         {!editing && <EntryPlace entry={entry} onUpdated={setEntry} readOnly={readOnly} />}
         {!editing && entry.can_edit && (
