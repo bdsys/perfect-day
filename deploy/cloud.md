@@ -15,7 +15,7 @@ This document describes the decision criteria and preparation for deploying Perf
 | Criterion | Why it matters |
 |---|---|
 | Managed Postgres | PITR (point-in-time recovery) replaces the manual `pg_dump` + `age` backup strategy. Required before any commercial launch. |
-| S3-compatible object store | The app uses `boto3`; switching from MinIO to any S3-compatible provider (S3, R2, B2, GCS) is a config change. |
+| S3-compatible object store | The app uses `boto3`; switching from Garage to any S3-compatible provider (S3, R2, B2, GCS) is a config change. |
 | Total cost < $30/mo for PoC scale | Small personal/family diary. Postgres + Redis + compute on a single VPS is enough. |
 | EU data residency option | Required for GDPR compliance if users are in the EU. Verify before EU launch. |
 | FastAPI / Docker Compose deploy story | App runs as containers; the target must support either Docker Compose directly or equivalent (ECS task definitions, Fly Machines, etc.). |
@@ -26,7 +26,7 @@ This document describes the decision criteria and preparation for deploying Perf
 | Target | Model | Est. cost/mo | Notes |
 |---|---|---|---|
 | **Hetzner Cloud CX21** | Single VPS, Docker Compose | ~€6 | Cheapest; same ops model as NUC. Manual Postgres backup via `pg_dump`. |
-| **Fly.io** | App platform (Machines) | ~$10–20 | Managed Postgres add-on (PITR). Fly Volumes for MinIO. Easy deploy with `flyctl`. |
+| **Fly.io** | App platform (Machines) | ~$10–20 | Managed Postgres add-on (PITR). Fly Volumes for Garage. Easy deploy with `flyctl`. |
 | **Railway** | Managed containers | ~$10–20 | Postgres + Redis built-in. Simple CI/CD integration. Less control. |
 | **Render** | Managed containers | ~$15–25 | Managed Postgres. Good Docker Compose → Render migration story. |
 | **AWS (ECS Fargate + RDS + S3)** | Fully managed | ~$50–100+ | Most powerful; overkill for PoC. Consider post-Series-A. |
@@ -44,7 +44,7 @@ When filling in this doc, cover each of the following topics:
 | Secrets | sops + YubiKey at boot | Managed secret manager (AWS Secrets Manager, GCP Secret Manager, 1Password Connect, Fly secrets) |
 | Database | Self-hosted Postgres + pg_dump + age encryption | Managed Postgres with PITR (no `age` layer needed — PITR covers point-in-time restore) |
 | Redis | Self-hosted | Managed (Upstash free tier, Fly Redis, ElastiCache) |
-| Object storage | Self-hosted MinIO | S3 / Cloudflare R2 / Backblaze B2 — `boto3` client is config-only change |
+| Object storage | Self-hosted Garage | S3 / Cloudflare R2 / Backblaze B2 — `boto3` client is config-only change |
 | Backup strategy | age-encrypted pg_dump → external bucket | Provider PITR + cross-region object replication |
 | Celery concurrency | Capped at 2 (NUC RAM constraint) | Scale to match workload |
 | Email deliverability | Residential IP → must use SendGrid relay | Datacenter IP → SendGrid relay still recommended but deliverability is better |
@@ -54,7 +54,7 @@ When filling in this doc, cover each of the following topics:
 
 ## Verification (when target is chosen)
 
-1. Provision the target with a minimal stack (Postgres + Redis + MinIO/S3).
+1. Provision the target with a minimal stack (Postgres + Redis + Garage/S3).
 2. Deploy the API and run `GET /readyz` — all dependencies must pass.
 3. Run the full integration test suite against the provisioned environment: `make test-integration-env TARGET=cloud`.
 4. Perform a backup + restore drill: dump → encrypt → restore to a clean Postgres instance → verify `SELECT count(*) FROM users`.

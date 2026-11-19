@@ -118,7 +118,7 @@ The named slot `cx21_replica` prevents the NUC from vacuuming WAL files that the
 
 ## R2 photo storage
 
-Cloudflare R2 replaces MinIO for photo storage in hybrid mode. R2 is S3-compatible; the application code uses `boto3` and the change is a config-only endpoint swap.
+Cloudflare R2 replaces Garage for photo storage in hybrid mode. R2 is S3-compatible; the application code uses `boto3` and the change is a config-only endpoint swap.
 
 ### boto3 config
 
@@ -145,9 +145,9 @@ Object key format is unchanged: `{user_id}/{uuid}.enc`.
 
 R2 charges $0 egress; storage is $0.015/GB/mo with 10 GB free. A personal diary with ~500 photos at ~4 MB average = ~2 GB. Monthly cost: effectively $0 for storage at PoC scale; $0 for bandwidth regardless of scale.
 
-### MinIO (NUC)
+### Garage (NUC)
 
-In hybrid mode, MinIO is retired from the production photo path. Keep it running for local development (`ENV=development`). The `S3_ENDPOINT_URL` environment variable switches between MinIO (dev) and R2 (hybrid/cloud).
+In hybrid mode, Garage is retired from the production photo path. Keep it running for local development (`ENV=development`). The `S3_ENDPOINT_URL` environment variable switches between MinIO (dev) and R2 (hybrid/cloud).
 
 ---
 

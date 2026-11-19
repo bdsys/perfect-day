@@ -127,7 +127,7 @@ INDEX on (`diary_id`, `entry_date` DESC) for timeline. Timeline order: `entry_da
 *(per-user library — read authorization rules are defined in [03-api-surface.md](03-api-surface.md) § Photo authorization)*
 - `id` UUID PK
 - `user_id` UUID FK → users  *(photo belongs to the user, not a specific diary)*
-- `s3_key` text NOT NULL UNIQUE  *(MinIO object key — ciphertext stored at this key)*
+- `s3_key` text NOT NULL UNIQUE  *(object key in Garage — ciphertext stored at this key)*
 - `mime_type` text
 - `bytes` bigint
 - `taken_at` timestamptz NULL  *(EXIF)*

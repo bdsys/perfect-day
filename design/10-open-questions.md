@@ -100,4 +100,4 @@ Two supported deployment targets are documented in [`deploy/nuc.md`](../deploy/n
 
 ## OQ-11: Photo storage ✅
 
-Photo storage scales with object-store capacity. Single-host deployments use MinIO; cloud deployments use S3 / R2 / B2 directly. The `boto3` S3 client makes the swap a config change — no application code changes needed.
+Photo storage scales with object-store capacity. Single-host deployments use Garage; cloud deployments use S3 / R2 / B2 directly. The `boto3` S3 client makes the swap a config change — no application code changes needed.

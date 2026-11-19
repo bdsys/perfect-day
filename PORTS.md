@@ -9,7 +9,6 @@
 | 5432 | PostgreSQL | localhost:5432 | DB: `perfectday`, user: `perfectday` |
 | 6379 | Redis | localhost:6379 | Celery broker + result backend |
 | 3900 | Garage S3 API | http://localhost:3900 | S3-compatible photo store (tracker row 41); no web console |
-| 9000 / 9001 | MinIO (old store) | — | Only with `--profile minio`; nothing starts it in dev. Removed in row 41's release 2 |
 | 5050 | pgAdmin 4 | http://localhost:5050 | Postgres web GUI; user: `admin@perfectday.local` / `admin` |
 
 ## Server (NUC, production-like)

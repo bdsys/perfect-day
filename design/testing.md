@@ -24,7 +24,7 @@ What to test at unit level:
 
 ### Integration tests (pytest + testcontainers)
 
-Real Postgres, Redis, and Garage (the S3 store; MinIO until row 41) via testcontainers. No mocks for these services — mock/prod divergence has caused production incidents in analogous projects.
+Real Postgres, Redis, and Garage (the S3 store) via testcontainers. No mocks for these services — mock/prod divergence has caused production incidents in analogous projects.
 
 Target: most **behaviour** coverage here.
 
@@ -34,7 +34,7 @@ What to test at integration level:
 - Photo upload + download round-trip (upload → finalize → decrypt-and-stream)
 - AES-256-GCM round-trip with every chunk-size boundary (see below)
 - Account-linking `link_required` flow (social login against existing email)
-- Soft-delete → restore → hard-delete cascade (diary + entries + photos + MinIO objects)
+- Soft-delete → restore → hard-delete cascade (diary + entries + photos + stored objects)
 - Refresh-token family revocation: normal rotation, grace-window retry, theft-signal revocation
 - Auth middleware rejection of soft-deleted accounts
 - Tier enforcement end-to-end (create diary, hit limit, get 403)
@@ -88,7 +88,7 @@ def make_calendar_event(diary: Diary, title="Test event", **kwargs) -> Event: ..
 
 **Database reset between tests:** `TRUNCATE users, diaries, ... CASCADE` (in reverse FK order) at the start of each test via a pytest autouse fixture. Faster than dropping and recreating the schema.
 
-**MinIO isolation:** each test that touches MinIO uses a unique bucket prefix (`test-{uuid4()}`). Cleanup on teardown.
+**Object-store isolation:** each test that touches Garage uses a unique bucket prefix (`test-{uuid4()}`). Cleanup on teardown.
 
 **Timezone fixture:** at least one `make_diary(timezone="America/Los_Angeles")` variant is used in all scan + date-assignment tests to catch the off-by-a-day regressions identified in `design/time-and-tz.md`.
 

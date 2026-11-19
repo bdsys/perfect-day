@@ -43,7 +43,7 @@ scan_diary(diary_id):
           success. Filtered by diary_calendar_filters.
        b. Photos via Google Photos API mediaItems list, date-range + metadata-first
           filter. New photos: insert photos row + queue ingest_photo
-          (download bytes, thumbnail, MinIO upload). Update last_photos_cursor.
+          (download bytes, thumbnail, upload to Garage). Update last_photos_cursor.
   5. group_events_into_entries(diary_id, scan_run_id).
   6. For each new/updated draft Entry: queue generate_entry_draft(entry_id).
   7. Update scan_jobs.last_scan_*; close scan_runs row.
@@ -168,7 +168,7 @@ Scans run on schedule regardless of quiet hours — data freshness matters. Only
 | LLM generation fails for one Entry | Logged in `llm_generations`. Entry stays draft empty-body. Notification fires. Other entries unaffected. |
 | Worker crash mid-scan | Celery retries (max 3). Redis lock 30-min TTL self-releases. Idempotency prevents duplicate ingestion. |
 | Token refresh fails | `ensure_fresh_access_token` takes a per-`(user_id, provider)` Redis advisory lock (`oauth_refresh:{user_id}:{provider}`, 30-second TTL). The second concurrent worker waits, then re-reads `oauth_tokens` and uses the freshly-stored access token. Without this lock, Google rotates the refresh token on the first call; the second call gets `invalid_grant` and mistakenly marks the integration revoked. If the refresh call itself fails (token expired or revoked at Google), `oauth_tokens.revoked_at` is set, the source is skipped, and a "reconnect Google" notification fires. |
-| MinIO unreachable for upload | `photos.finalized_at IS NULL`; orphan sweeper cleans after 24h. |
+| Photo store (Garage) unreachable for upload | `photos.finalized_at IS NULL`; orphan sweeper cleans after 24h. |
 | User hit tier limit during auto-generation | Events still ingest. `generate_entry_draft` returns early without an LLM call and records an `llm_generations` row with `error='ai_draft_limit'`. An entry with no text, or with machine-only text a background redraft would have replaced, gets the plain event list (`body_source='fallback'`); a person's own text is left alone. The entry page shows the "Out of AI drafts" note: write it yourself, or generate it when the month resets. |
 
 ## Observability

@@ -129,13 +129,13 @@ is unreachable (error 521/522). See `design/observability.md` for the IP-mismatc
 ## Section 3 — R2 photo storage (hybrid deployment only)
 
 R2 is only used in the [hybrid deployment](hybrid.md) (NUC + Hetzner CX21).
-In NUC-only mode, photos are stored in local MinIO. Skip this section unless
+In NUC-only mode, photos are stored in local Garage. Skip this section unless
 you are setting up the hybrid topology.
 
 ### Background
 
 In hybrid mode, the Hetzner CX21 cloud edge serves photos to end users.
-MinIO on the NUC is not publicly reachable in hybrid mode (only accessible
+Garage on the NUC is not publicly reachable in hybrid mode (only accessible
 over WireGuard). Cloudflare R2 is S3-compatible object storage with **$0
 egress fees**, which makes it the right choice for photo serving from a
 cloud edge. See [`deploy/hybrid.md`](hybrid.md) § R2 photo storage for the
@@ -149,7 +149,7 @@ In the Cloudflare dashboard:
 2. Name: `perfectday-photos` (or similar)
 3. Location: Auto (or pick a region closest to your users)
 4. Public access: **Disabled** (all reads are proxied through the API —
-   see `design/08-security-privacy.md` § MinIO access controls)
+   see `design/08-security-privacy.md` § Object store access controls)
 
 ### Step 3.2 — Create an R2 API token
 

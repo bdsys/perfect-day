@@ -151,8 +151,8 @@ Status key: `—` not started · `🗺` planned / in backlog · `🔨` in progre
 | # | Feature | Status | Notes |
 |---|---|---|---|
 | C-1 | Audio recording + transcription | 🗺 | Whisper or AWS Transcribe. Prerequisite for AI-4. |
-| C-2 | Handwriting / drawing entries | 🗺 | Mobile-first; canvas widget; store as MinIO image. |
-| C-3 | Document / PDF embedding | 🗺 | Treat like photos in MinIO; render as link in entry body. |
+| C-2 | Handwriting / drawing entries | 🗺 | Mobile-first; canvas widget; store as an image in the photo store (Garage). |
+| C-3 | Document / PDF embedding | 🗺 | Treat like photos in the photo store (Garage); render as link in entry body. |
 | C-4 | Apple Watch app | 🗺 | Dictation-only; queues to backend for AI-4 processing. |
 
 ### Ambient capture & integrations (Day One Silver)

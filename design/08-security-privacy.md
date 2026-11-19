@@ -153,7 +153,7 @@ Cross-diary photo check: the `photos` row and its stored objects are deleted onl
 
 **`/v1/auth/refresh` CSRF protection:** this endpoint accepts the refresh token from the HttpOnly cookie without an Authorization header. The `SameSite=Strict` attribute prevents cross-origin POSTs from including the cookie, which is the primary defense. As an additional layer, the endpoint also validates an `Origin` header check — requests must originate from `perfectday.andrewlass.com` or `perfectday-api.andrewlass.com`. Requests with an absent or mismatched Origin header (that are not from the same origin) are rejected with `403 forbidden_origin`. This defense-in-depth covers browsers that do not yet fully enforce SameSite=Strict.
 
-## Object store access controls (Garage; MinIO until row 41)
+## Object store access controls (Garage)
 
 - Dedicated app service account. No public buckets.
 - Non-guessable object keys: `{user_id}/{uuid}.enc`.
@@ -165,7 +165,7 @@ Cross-diary photo check: the `photos` row and its stored objects are deleted onl
 Celery beat task daily:
 
 1. `pg_dump` is **encrypted with `age`** using a backup public key before it leaves the host. The corresponding private key is stored **separately from `master_secret`** — ideally on a different device or in a different secret store managed by a different operator. Without this separation, anyone who obtains both the backup bucket and `master_secret` can decrypt every historical photo and OAuth token.
-2. The encrypted dump is synced to a local MinIO object and to an external cloud bucket (S3 or Backblaze B2).
+2. (Superseded: backups are the nightly encrypted NAS copies of tracker row 36; see `deploy/nuc.md` § Backup.)
 
 Backup destinations and operator-separation specifics are deployment concerns — see [`deploy/nuc.md`](../deploy/nuc.md) and `deploy/cloud.md`. This is irreplaceable family data.
 

@@ -56,9 +56,9 @@ Day One Silver features. Full context in `COMPETITION.md` § Premium content typ
 
 - **C-1: Audio recording + transcription.** Record audio in-app or upload a file; transcribe via Whisper (self-hosted or OpenAI API) or AWS Transcribe. Store audio as a MinIO object; store transcript as `entries.body_markdown` (manual) or as an event for LLM synthesis. Prerequisite for AI-4. Likely files: new `workers/transcription.py`, `routers/voice.py`, Alembic migration (`audio_recordings` table or `events.payload` extension).
 
-- **C-2: Handwriting / drawing entries.** Canvas widget (mobile-first; Expo Skia or React Native SVG). Export as PNG → store in MinIO like a photo. Likely files: Expo canvas component, `routers/photos.py` (reuse upload flow), frontend viewer.
+- **C-2: Handwriting / drawing entries.** Canvas widget (mobile-first; Expo Skia or React Native SVG). Export as PNG → store in Garage like a photo. Likely files: Expo canvas component, `routers/photos.py` (reuse upload flow), frontend viewer.
 
-- **C-3: Document / PDF embedding.** Upload PDFs or images of documents; stored in MinIO under a `documents/` prefix; rendered as a link or inline preview in the entry body. Reuses the photo upload/finalize flow. Likely files: minimal — new `document_type` flag in `photos` table or a separate `documents` table.
+- **C-3: Document / PDF embedding.** Upload PDFs or images of documents; stored in Garage under a `documents/` prefix; rendered as a link or inline preview in the entry body. Reuses the photo upload/finalize flow. Likely files: minimal — new `document_type` flag in `photos` table or a separate `documents` table.
 
 - **C-4: Apple Watch app.** Dictation-only: tap to record a voice note on the Watch; syncs to phone via WatchConnectivity; uploads to backend as a C-1 audio recording. Depends on: Expo mobile app, C-1. Entirely mobile scope.
 

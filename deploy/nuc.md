@@ -63,7 +63,7 @@ Commands: [`nuc-ops.md` § B7](nuc-ops.md#b7--backups).
 
 - **What:** every night at 02:17 (`perfect-day-backup.timer`), the database
   (`pg_dump`), every photo object (exported through the S3 interface, so the backup
-  doesn't depend on the store's on-disk format, and works the same with MinIO or Garage) and `/etc/perfect-day/` (including
+  doesn't depend on the store's on-disk format, so it survived the move from MinIO to Garage unchanged) and `/etc/perfect-day/` (including
   `MASTER_SECRET`, without which photos and Google tokens can't be decrypted).
 - **Encrypted on the NUC** with `age` to `/etc/perfect-day/backup.pub` before anything
   is written. The private key is in Andrew's password manager and in
