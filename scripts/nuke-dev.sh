@@ -39,7 +39,7 @@ read -r answer || true
 [ "${answer:-}" = nuke ] || { echo "Nothing removed."; exit 1; }
 
 (cd "${REPO_ROOT}" && docker compose -p "${PROJECT}" -f docker-compose.yml -f docker-compose.dev.yml \
-    --profile dev --profile minio down -v --remove-orphans)
+    --profile dev down -v --remove-orphans)
 for v in "${volumes[@]}"; do
     docker volume rm "${v}" >/dev/null 2>&1 || true   # down -v already took most
 done

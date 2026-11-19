@@ -48,7 +48,6 @@ deploy/caddy/Caddyfile
 # Docker volumes (local bind mounts)
 data/
 postgres_data/
-minio_data/
 redis_data/
 
 # Celery beat runtime state — never commit or copy into images

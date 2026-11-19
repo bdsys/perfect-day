@@ -81,7 +81,7 @@ ufw default allow outgoing
 ufw allow 22/tcp comment "SSH"
 ufw allow 80/tcp comment "HTTP"
 ufw allow 443/tcp comment "HTTPS"
-# Postgres (5432), Redis (6379), Garage (3900) and MinIO (9000/9001) are NOT opened — internal only
+# Postgres (5432), Redis (6379) and Garage (3900) are NOT opened — internal only
 ufw --force enable
 echo "UFW status:"
 ufw status verbose

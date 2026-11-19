@@ -29,7 +29,7 @@ pd_compose() { (cd "${PD_DEPLOY_DIR}" && docker compose --profile nuc "$@"); }
 PD_ENVFILE_PY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/envfile.py"
 
 # storage_service_from_env <env file>: the compose service the app's photo store is,
-# from the host in S3_ENDPOINT_URL (garage or minio; garage when unset, as compose's
+# from the host in S3_ENDPOINT_URL (garage; garage when unset, as compose's
 # default). Returns 1 for anything else. Tracker row 41.
 storage_service_from_env() {
     local url
@@ -37,6 +37,8 @@ storage_service_from_env() {
     case "${url}" in
         "") echo garage ;;
         http://garage:*) echo garage ;;
+        # Nights from before the move to Garage (2026-11-18) name the old store; the
+        # restore then finds no such service here and points the app at Garage.
         http://minio:*) echo minio ;;
         *) echo "unknown photo store in S3_ENDPOINT_URL: ${url}" >&2; return 1 ;;
     esac

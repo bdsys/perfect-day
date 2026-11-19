@@ -57,17 +57,16 @@ done
 echo "Rolling back to ${PREV_SHA} (currently $(cat "${DEPLOY_DIR}/last-deployed-sha" 2>/dev/null || echo unknown))"
 
 # The previous release must be able to use the photo store this machine runs. Before
-# row 41 the compose file pinned MinIO; after the switch to Garage, going back to it
-# would break every photo while /readyz still answered 200.
+# row 41 the compose file pinned the old store; going back to such a release would
+# break every photo while /readyz still answered 200.
 PREV_COMPOSE="$(mktemp)"
 git show "${PREV_SHA}:docker-compose.yml" > "${PREV_COMPOSE}"
 if ! why="$(compose_serves_store "${PREV_COMPOSE}" /etc/perfect-day/app.env 2>&1)"; then
     rm -f "${PREV_COMPOSE}"
     echo "ERROR: cannot roll back to ${PREV_SHA}: ${why}." >&2
-    echo "  Move the photos back to MinIO first, then roll back:" >&2
-    echo "    sudo ./scripts/nuc/60-switch-storage.sh --back" >&2
-    echo "    sudo ./scripts/nuc/50-rollback.sh" >&2
-    echo "  Nothing changed." >&2
+    echo "  Releases before row 41 need MinIO, which this machine no longer has (photos" >&2
+    echo "  moved to Garage on 2026-11-18). Fix forward instead: revert the bad change on" >&2
+    echo "  main and run sudo ./scripts/nuc/40-update.sh. Nothing changed." >&2
     exit 1
 fi
 rm -f "${PREV_COMPOSE}"
@@ -100,7 +99,7 @@ echo "${PREV_SHA}" > "${DEPLOY_DIR}/last-deployed-sha"
 # /readyz answers 200 even with photo storage down, so ask about storage itself.
 if ! readyz_storage_ok "${HEALTH_URL}"; then
     echo "WARNING: rolled back, but photo storage is not ok (see the line above)." >&2
-    echo '  Check the store: docker compose --profile nuc ps; docker compose logs --tail=50 garage (minio before the switch)' >&2
+    echo '  Check the store: docker compose --profile nuc ps; docker compose logs --tail=50 garage' >&2
 fi
 
 echo "[4/4] Rollback complete: ${PREV_SHA}"
