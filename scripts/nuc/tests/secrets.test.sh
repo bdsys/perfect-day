@@ -33,6 +33,13 @@ check "S3 secret long enough for Garage (>=16)" test "$(val S3_SECRET_KEY | wc -
 check "RPC secret never printed" bash -c '! grep -q "$1" <<<"$2"' _ "$(val GARAGE_RPC_SECRET)" "${OUT}"
 check "one S3_ENDPOINT_URL line" test "$(grep -c '^S3_ENDPOINT_URL=' "${ENV_FILE}")" -eq 1
 
+echo "no_minio_settings"
+check "fresh install writes no MINIO_ settings" bash -c '! grep -q "^MINIO_" "$1"' _ "${ENV_FILE}"
+check "S3 secret is generated, 48 hex" bash -c '[[ "$1" =~ ^[0-9a-f]{48}$ ]]' _ "$(val S3_SECRET_KEY)"
+S3SEC="$(val S3_SECRET_KEY)"
+RC=0; bash "${SECRETS}" <<<"${KEEP_ANSWERS}" >/dev/null 2>&1 || RC=$?
+check "a re-run keeps the S3 secret (Garage refuses a changed one)" test "$(val S3_SECRET_KEY)" = "${S3SEC}"
+
 echo "rerun_keeps_minio_address_and_rpc_secret"
 # An install from before the switch: its storage is still MinIO.
 python3 "${HERE}/../lib/envfile.py" set "${ENV_FILE}" S3_ENDPOINT_URL http://minio:9000 >/dev/null
@@ -60,6 +67,14 @@ ensure_line="$({ grep -n 'envfile.py" ensure "${ENV_FILE}" GARAGE_RPC_SECRET hex
 restart_line="$({ grep -n "\[6/8\]" "${UPDATE}" || true; } | head -n 1 | cut -d: -f1)"
 check "40-update.sh ensures GARAGE_RPC_SECRET" test -n "${ensure_line}"
 check "before it restarts the app" test "${ensure_line:-999999}" -lt "${restart_line:-0}"
+
+echo "deploy_keeps_app_env_readable_by_the_service"
+# perfect-day.service runs compose as the perfectday user (docker group). With app.env
+# at 600 it failed at every boot for two months unnoticed (found 2026-11-18).
+mode_line="$({ grep -n 'chmod 640 "${ENV_FILE}"' "${UPDATE}" || true; } | head -n 1 | cut -d: -f1)"
+check "40-update.sh sets app.env to 640" test -n "${mode_line}"
+check "and root:docker" grep -q 'chown root:docker "${ENV_FILE}"' "${UPDATE}"
+check "before it restarts the app" test "${mode_line:-999999}" -lt "${restart_line:-0}"
 
 echo ""
 if [ "${FAILS}" -eq 0 ]; then echo "secrets: all passed"; else echo "secrets: ${FAILS} failed"; exit 1; fi

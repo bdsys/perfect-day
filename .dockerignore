@@ -46,4 +46,3 @@ apps/web/e2e/
 # Docker volumes
 data/
 postgres_data/
-minio_data/

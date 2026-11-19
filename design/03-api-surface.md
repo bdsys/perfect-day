@@ -180,7 +180,7 @@ Gated by `users.is_admin = true`. Destructive actions require recent re-auth (mu
 | GET | `/v1/admin/scan-jobs` | All scan jobs with status. |
 | POST | `/v1/admin/scan-jobs/{diaryId}/run` | Force scan, ignore backoff. |
 | GET | `/v1/admin/llm-usage` | Token usage and cost by user/day. |
-| GET | `/v1/admin/system/stats` | DB sizes, MinIO usage, queue depth. |
+| GET | `/v1/admin/system/stats` | DB sizes, photo store (Garage) usage, queue depth. |
 
 ## Breadcrumb routes (deferred — add as commented router stubs)
 
@@ -205,7 +205,7 @@ Gated by `users.is_admin = true`. Destructive actions require recent re-auth (mu
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/healthz` | Liveness. |
-| GET | `/readyz` | Readiness — Postgres, Redis, MinIO checks. |
+| GET | `/readyz` | Readiness — Postgres, Redis, photo storage (`storage`) checks. |
 | GET | `/metrics` | Prometheus exposition format. Bound to localhost or requires admin token. |
 | GET | `/v1/admin/system/celery` | Admin-gated. Queue depth, worker count, oldest pending task. Re-auth not required. |
 

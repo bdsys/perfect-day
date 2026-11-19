@@ -156,7 +156,7 @@ async def hard_delete_user(user_id: uuid.UUID) -> None:
             await db.execute(delete(MagicLinkToken).where(MagicLinkToken.email == user_email))
         await db.execute(delete(SocialIdentity).where(SocialIdentity.user_id == user_id))
 
-        # Scrub MinIO: delete everything under {user_id}/ prefix and tmp/{user_id}/ prefix
+        # Scrub the photo store: delete everything under {user_id}/ prefix and tmp/{user_id}/ prefix
         try:
             settings = get_settings()
             s3 = get_s3()

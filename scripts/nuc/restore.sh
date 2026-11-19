@@ -10,13 +10,13 @@
 #                     starts them again and runs the smoke test.
 #   --into <project>  restores into another compose project's postgres and photo
 #                     store (e.g. perfect-day-drill); starts only those two. The
-#                     store is the one S3_ENDPOINT_URL names (garage or minio).
+#                     store is the one S3_ENDPOINT_URL names (garage).
 #   --from-nas        fetches the night from rsync://192.168.1.112/Backups/perfect-day/
 #   --with-config     also puts /etc/perfect-day back (asks you to type "replace config";
 #                     the current one is kept as /etc/perfect-day.pre-restore-<ts>).
 #                     The live S3_ENDPOINT_URL is kept: it says which photo store
 #                     this machine runs, not a secret, so a night from before the
-#                     MinIO -> Garage switch restores here unchanged (row 41).
+#                     move to Garage (2026-11-18) restores here unchanged (row 41).
 #   --config-only     only /etc/perfect-day, no Docker: step one on a new machine,
 #                     before 20-deploy.sh (see deploy/nuc-ops.md § B7). Never run
 #                     10-secrets.sh on a machine you are restoring.

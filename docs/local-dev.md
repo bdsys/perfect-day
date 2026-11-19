@@ -77,7 +77,7 @@ make up          # docker compose up -d (all 7 services)
 make logs        # follow all logs
 ```
 
-Services started: `postgres`, `redis`, `garage`, `pgadmin`, `api`, `worker`, `beat`, `web`. (MinIO is still defined, behind the `minio` profile, only for the NUC's switch; nothing starts it in dev.)
+Services started: `postgres`, `redis`, `garage`, `pgadmin`, `api`, `worker`, `beat`, `web`.
 
 ### Option B — Hot-reload local dev (recommended for iteration)
 

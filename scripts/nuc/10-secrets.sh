@@ -83,7 +83,7 @@ hex32() {
 
 # Generated secrets are created once and then kept for the life of the install.
 # Photos and OAuth tokens are encrypted under MASTER_SECRET / OAUTH_TOKEN_SECRET
-# and the Postgres and MinIO volumes are initialised with their passwords, so
+# and the Postgres and Garage stores are initialised with their passwords, so
 # regenerating any of them on a re-run would make existing data unreadable.
 keep_or_generate() {
     local varname="$1"
@@ -147,12 +147,13 @@ MASTER_SECRET=$(keep_or_generate MASTER_SECRET hex32)
 OAUTH_TOKEN_SECRET=$(keep_or_generate OAUTH_TOKEN_SECRET hex32)
 SECRET_KEY=$(keep_or_generate SECRET_KEY hex32)
 POSTGRES_PASSWORD=$(keep_or_generate POSTGRES_PASSWORD hex32)
-MINIO_ROOT_PASSWORD=$(keep_or_generate MINIO_ROOT_PASSWORD hex24)
+# The photo store's key. Garage refuses to start if it changes, so it is kept too.
+S3_SECRET_KEY=$(keep_or_generate S3_SECRET_KEY hex24)
 # Garage's internal (node-to-node) secret; one node, but Garage requires it.
 GARAGE_RPC_SECRET=$(keep_or_generate GARAGE_RPC_SECRET hex32)
 
-# The photo store the app uses. Kept as it is: before the switch an install still
-# says MinIO (scripts/nuc/60-switch-storage.sh changes it). A new install gets Garage.
+# The photo store's address. Kept as it is (an install may point somewhere else on
+# purpose); a new install gets Garage.
 S3_ENDPOINT_URL="$(existing_value S3_ENDPOINT_URL)"
 if [[ -n "${S3_ENDPOINT_URL}" ]]; then
     echo "  S3_ENDPOINT_URL kept (${S3_ENDPOINT_URL})" >&2
@@ -190,15 +191,10 @@ REDIS_URL=redis://redis:6379/0
 CELERY_BROKER_URL=redis://redis:6379/0
 CELERY_RESULT_BACKEND=redis://redis:6379/1
 
-# MinIO container creds
-MINIO_ROOT_USER=perfectday
-MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
-
-# Photo storage (S3 API). The same key pair is Garage's default key and MinIO's
-# root login, so the switch between them changes only S3_ENDPOINT_URL.
+# Photo storage (Garage, S3 API). The key pair is also Garage's default key.
 S3_ENDPOINT_URL=${S3_ENDPOINT_URL}
 S3_ACCESS_KEY=perfectday
-S3_SECRET_KEY=${MINIO_ROOT_PASSWORD}
+S3_SECRET_KEY=${S3_SECRET_KEY}
 S3_BUCKET_PHOTOS=photos
 S3_REGION=us-east-1
 GARAGE_RPC_SECRET=${GARAGE_RPC_SECRET}

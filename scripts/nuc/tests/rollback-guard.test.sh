@@ -62,7 +62,8 @@ guard_line="$({ grep -n 'compose_serves_store' "${RB}" || true; } | head -n 1 | 
 checkout_line="$({ grep -n 'git checkout -q "${PREV_SHA}"' "${RB}" || true; } | head -n 1 | cut -d: -f1)"
 check "50-rollback.sh runs the guard" test -n "${guard_line}"
 check "before it checks out the old commit" test "${guard_line:-999999}" -lt "${checkout_line:-0}"
-check "names the way back to MinIO" grep -q "60-switch-storage.sh --back" "${RB}"
+check "says to fix forward instead" grep -qi "fix forward" "${RB}"
+check "no longer names the removed switch script" bash -c '! grep -q "60-switch-storage" "$1"' _ "${RB}"
 check "checks storage after the rollback" grep -q 'readyz_storage_ok "${HEALTH_URL}"' "${RB}"
 
 echo ""

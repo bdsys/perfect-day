@@ -67,9 +67,12 @@ def test_garage_toml_has_no_secret():
     assert cfg["s3_api"]["api_bind_addr"] == "[::]:3900"
 
 
-def test_minio_only_when_asked_for():
-    # MinIO stays defined until release 2 so the switch can read it, but nothing
-    # starts it unless a command names it: fresh dev, CI and e2e stacks never pull
-    # the image, which is no longer published (tracker row 41).
-    assert _services()["minio"]["profiles"] == ["minio"]
-    assert "profiles" not in _services()["garage"]
+def test_no_minio_anywhere():
+    # Row 41 release 2 (2026-11-19): the NUC moved to Garage on 2026-11-18 and MinIO
+    # is gone. No compose file may define, start or name it again.
+    for path in COMPOSE_FILES:
+        assert "minio" not in path.read_text().lower(), path.name
+
+
+def test_app_does_not_wait_on_garage():
+    assert "garage" not in _services()["api"].get("depends_on", {})

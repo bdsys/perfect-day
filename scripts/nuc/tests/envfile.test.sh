@@ -79,6 +79,21 @@ check "value unchanged" test "$(sed -n 's/^GARAGE_RPC_SECRET=//p' "${REAL}")" = 
 RC=0; ef ensure "${REAL}" X nope >/dev/null 2>&1 || RC=$?
 check "unknown generator exits 2" test "${RC}" -eq 2
 
+echo "unset_removes_the_live_line"
+setup
+before_other="$(grep -v '^DATABASE_URL=' "${REAL}")"
+OUT="$(ef unset "${LINK}" DATABASE_URL)"
+check "line gone" bash -c '! grep -q "^DATABASE_URL=" "$1"' _ "${REAL}"
+check "other lines byte-identical" test "$(cat "${REAL}")" = "${before_other}"
+check "link kept" test -L "${LINK}"
+check "mode 600 kept" test "$(stat -c %a "${REAL}")" = "600"
+check "a backup exists" bash -c 'ls "$1".bak-* >/dev/null 2>&1' _ "${REAL}"
+check "says so" grep -q "DATABASE_URL removed" <<<"${OUT}"
+check "value not printed" bash -c '! grep -q "p=q" <<<"$1"' _ "${OUT}"
+OUT="$(ef unset "${REAL}" DATABASE_URL)"
+check "absent is fine" grep -q "DATABASE_URL was not set" <<<"${OUT}"
+check "commented line untouched" grep -qx '#S3_ENDPOINT_URL=http://old:1' "${REAL}"
+
 echo "missing_file"
 RC=0; ef get "${TOP}/none.env" X >/dev/null 2>&1 || RC=$?
 check "exits 2" test "${RC}" -eq 2

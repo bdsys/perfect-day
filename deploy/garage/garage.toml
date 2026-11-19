@@ -17,7 +17,7 @@ data_fsync = true
 # Every object is encrypted by the app before it arrives, so it will not compress.
 compression_level = "none"
 
-# One node, one disk, as MinIO was. The nightly NAS backup (row 36) is the copy.
+# One node, one disk. The nightly NAS backup (row 36) is the copy.
 replication_factor = 1
 
 rpc_bind_addr = "[::]:3901"

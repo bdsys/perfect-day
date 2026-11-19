@@ -89,6 +89,11 @@ if [ -f "${ENV_FILE}" ]; then
     # never be re-run on a NUC with data). Generated once, kept after, never printed.
     # Garage cannot start without its RPC secret (tracker row 41).
     python3 "${DEPLOY_DIR}/scripts/nuc/lib/envfile.py" ensure "${ENV_FILE}" GARAGE_RPC_SECRET hex32
+    # perfect-day.service runs compose as the perfectday user (docker group), which
+    # must read this file through the .env symlinks: 640 root:docker, as 10-secrets.sh
+    # writes it. At 600 the service failed at every boot, unnoticed (2026-11-18).
+    chmod 640 "${ENV_FILE}"
+    chown root:docker "${ENV_FILE}"
 fi
 
 echo '[3/8] Keeping the running images for rollback...'
@@ -174,7 +179,7 @@ STORAGE_WAIT=0
 until readyz_storage_ok "${HEALTH_URL}"; do
     if [ "${STORAGE_WAIT}" -ge 30 ]; then
         echo "ERROR: the app is up but photo storage is not (see the line above)." >&2
-        echo '  Check the store: docker compose --profile nuc ps; docker compose logs --tail=50 garage (minio before the switch)' >&2
+        echo '  Check the store: docker compose --profile nuc ps; docker compose logs --tail=50 garage' >&2
         echo '  If this deploy caused it: sudo ./scripts/nuc/50-rollback.sh' >&2
         exit 1
     fi

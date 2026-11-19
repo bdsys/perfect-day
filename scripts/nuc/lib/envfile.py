@@ -5,6 +5,7 @@ Usage:
   envfile.py get <file> <KEY>             print the value (exit 3 absent, 4 duplicated)
   envfile.py set <file> <KEY> <VALUE>     replace the live line, or append one
   envfile.py ensure <file> <KEY> hex32    add a generated value only if KEY is absent
+  envfile.py unset <file> <KEY>           remove the live line (no-op if absent)
 
 Every change writes through symlinks to the real file (on the NUC, ./.env and
 apps/api/.env are symlinks to /etc/perfect-day/app.env; replacing a symlink with
@@ -111,8 +112,28 @@ def cmd_ensure(path: str, key: str, generator: str) -> int:
     return 0
 
 
+def cmd_unset(path: str, key: str) -> int:
+    lines = _read(path)
+    idx = _live_indexes(lines, key)
+    if not idx:
+        print(f"{key} was not set")
+        return 0
+    if len(idx) > 1:
+        print(f"{key} is set {len(idx)} times in {path}; nothing changed", file=sys.stderr)
+        return 4
+    del lines[idx[0]]
+    _write(path, lines)
+    print(f"{key} removed from {os.path.realpath(path)}")
+    return 0
+
+
 def main(argv: list[str]) -> int:
-    commands = {"get": (cmd_get, 2), "set": (cmd_set, 3), "ensure": (cmd_ensure, 3)}
+    commands = {
+        "get": (cmd_get, 2),
+        "set": (cmd_set, 3),
+        "ensure": (cmd_ensure, 3),
+        "unset": (cmd_unset, 2),
+    }
     if len(argv) < 2 or argv[1] not in commands or len(argv) - 2 != commands[argv[1]][1]:
         print(__doc__.split("\n\n")[1], file=sys.stderr)
         return 2
