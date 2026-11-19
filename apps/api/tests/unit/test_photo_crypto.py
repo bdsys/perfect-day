@@ -271,21 +271,21 @@ class TestStreamingDecrypt:
 
 
 # ---------------------------------------------------------------------------
-# PD02: per-blob subkeys, authenticated header, legacy PD01 compatibility
+# PD02: per-blob subkeys, authenticated header; PD01 refused
 # ---------------------------------------------------------------------------
 
 
 def _legacy_pd01_encrypt(plaintext: bytes, dek: bytes) -> bytes:
-    """Re-implementation of the original PD01 writer, used to prove old blobs still open."""
+    """Re-implementation of the original PD01 writer, used to prove such blobs are refused."""
     import struct
 
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
     from app.core.photo_crypto import CHUNK_SIZE as _CS
-    from app.core.photo_crypto import HEADER_FORMAT, MAGIC_V1, derive_chunk_nonce
+    from app.core.photo_crypto import HEADER_FORMAT, derive_chunk_nonce
 
     chunks = [plaintext[i : i + _CS] for i in range(0, len(plaintext), _CS)]
-    blob = struct.pack(HEADER_FORMAT, MAGIC_V1, len(chunks), _CS, len(plaintext))
+    blob = struct.pack(HEADER_FORMAT, b"PD01", len(chunks), _CS, len(plaintext))
     for i, chunk in enumerate(chunks):
         ct = AESGCM(dek).encrypt(derive_chunk_nonce(dek, i), chunk, None)
         blob += struct.pack("!I", len(ct)) + ct
@@ -362,18 +362,24 @@ class TestBlobSeparation:
         assert encrypt_stream(b"x", generate_dek())[:4] == b"PD02"
 
 
-class TestLegacyPD01:
+class TestRetiredPD01:
+    """Tracker row 25.5 (2026-11-19): PD01 blobs are no longer read.
+
+    PD01 used the DEK directly, so a photo and its thumbnail shared a key and
+    nonce (code review S-1). Every object on the NUC was PD02 when it was retired
+    (63 of 63, checked 2026-11-19), and dev was wiped on 2026-11-18.
+    """
+
     @pytest.mark.parametrize("purpose_name", ["PURPOSE_FULL", "PURPOSE_THUMB"])
-    def test_legacy_blob_still_decrypts(self, purpose_name: str):
-        """Blobs written before PD02 stay readable whichever purpose is asked for."""
+    def test_pd01_blob_is_refused(self, purpose_name: str):
         import app.core.photo_crypto as pc
 
         dek = pc.generate_dek()
-        plaintext = os.urandom(pc.CHUNK_SIZE + 123)
-        blob = _legacy_pd01_encrypt(plaintext, dek)
+        blob = _legacy_pd01_encrypt(os.urandom(pc.CHUNK_SIZE + 123), dek)
         purpose = getattr(pc, purpose_name)
 
-        assert pc.decrypt_stream(blob, dek, purpose) == plaintext
+        with pytest.raises(ValueError, match="invalid magic"):
+            pc.decrypt_stream(blob, dek, purpose)
 
         pos = 0
 
@@ -383,7 +389,13 @@ class TestLegacyPD01:
             pos += n
             return out
 
-        assert b"".join(pc.iter_decrypt_stream(reader, dek, purpose)) == plaintext
+        with pytest.raises(ValueError, match="invalid magic"):
+            list(pc.iter_decrypt_stream(reader, dek, purpose))
+
+    def test_module_no_longer_names_pd01(self):
+        import app.core.photo_crypto as pc
+
+        assert not hasattr(pc, "MAGIC_V1")
 
     def test_unknown_magic_raises_value_error(self):
         import app.core.photo_crypto as pc
