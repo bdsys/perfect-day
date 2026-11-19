@@ -51,8 +51,17 @@ export default function ProfilePage() {
   const { user, loading: authLoading, avatarUrl, refreshUser, logout } = useAuth()
   const router = useRouter()
   const [planName, setPlanName] = useState('')
-  const [avatar, setAvatar] = useState<AvatarChoice | undefined>(undefined)
-  const [unit, setUnit] = useState<TemperatureUnit>('F')
+  const [avatar, setAvatar] = useState<AvatarChoice | undefined>(user?.avatar)
+  const [unit, setUnit] = useState<TemperatureUnit>(user?.temperature_unit ?? 'F')
+  // A refreshed user (after a save, or signing in) resets the choices in this render.
+  const [shownUser, setShownUser] = useState(user)
+  if (user !== shownUser) {
+    setShownUser(user)
+    if (user) {
+      setAvatar(user.avatar)
+      setUnit(user.temperature_unit)
+    }
+  }
   const [busy, setBusy] = useState<string | null>(null)
   const [iconError, setIconError] = useState('')
   const [unitError, setUnitError] = useState('')
@@ -67,13 +76,6 @@ export default function ProfilePage() {
   useEffect(() => {
     if (!authLoading && !user) router.replace('/login')
   }, [authLoading, user, router])
-
-  useEffect(() => {
-    if (user) {
-      setAvatar(user.avatar)
-      setUnit(user.temperature_unit)
-    }
-  }, [user])
 
   useEffect(() => {
     if (!user) return

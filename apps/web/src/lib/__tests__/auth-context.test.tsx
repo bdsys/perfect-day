@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useLayoutEffect } from "react";
 import { act, render, waitFor } from "@testing-library/react";
 import { AuthProvider, useAuth } from "../auth-context";
 import { api, refreshAccessToken, setPendingDeletionHandler } from "@/lib/api";
@@ -45,7 +45,11 @@ mockCapture.fn = (c) => {
   ctx = c as ReturnType<typeof useAuth>;
 };
 function Probe() {
-  ctx = useAuth();
+  const value = useAuth();
+  // After commit, not during render (React Compiler rule react-hooks/globals, row 61).
+  useLayoutEffect(() => {
+    ctx = value;
+  });
   return null;
 }
 const mount = () =>
