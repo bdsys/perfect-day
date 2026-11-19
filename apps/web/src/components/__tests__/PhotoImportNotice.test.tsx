@@ -310,3 +310,29 @@ describe('PhotoImportNotice', () => {
   })
 
 })
+
+describe('row 61: behaviour kept through the React Compiler lint rules', () => {
+  const CANT_CHECK = "We can't check on your Google Photos pick right now."
+
+  it('after giving up, a new pick hides the message at once and checks again', async () => {
+    jest.useFakeTimers()
+    listForEntry
+      .mockResolvedValueOnce([imp({ status: 'waiting' })])
+      .mockRejectedValueOnce(new Error('network'))
+      .mockRejectedValueOnce(new Error('network'))
+      .mockRejectedValueOnce(new Error('network'))
+    const { rerender } = render(<PhotoImportNotice entryId="e1" refreshKey={0} onFinished={jest.fn()} />)
+    await act(async () => {})
+    for (let i = 0; i < 3; i++) await act(async () => { jest.advanceTimersByTime(3000) })
+    expect(screen.getByText(CANT_CHECK)).toBeInTheDocument()
+
+    let answer!: (l: PhotoImport[]) => void
+    listForEntry.mockReturnValueOnce(new Promise<PhotoImport[]>((res) => { answer = res }))
+    const calls = listForEntry.mock.calls.length
+    rerender(<PhotoImportNotice entryId="e1" refreshKey={1} onFinished={jest.fn()} />)
+    expect(screen.queryByText(CANT_CHECK)).not.toBeInTheDocument()
+    expect(listForEntry).toHaveBeenCalledTimes(calls + 1)
+    await act(async () => { answer([imp({ id: 'i2', status: 'waiting' })]) })
+    expect(screen.queryByText(CANT_CHECK)).not.toBeInTheDocument()
+  })
+})

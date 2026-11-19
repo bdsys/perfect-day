@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useEffectEvent, useRef, useState } from 'react'
 import { api, type Entry, type GeocodeResult } from '@/lib/api'
 import { limitMessage } from '@/lib/plan'
 import { OpenMeteoCredit } from './OpenMeteoCredit'
@@ -49,16 +49,14 @@ export function EntryPlace({ entry, onUpdated, readOnly = false }: Props) {
   const [catchUpRound, setCatchUpRound] = useState(0)
   const [catchingUp, setCatchingUp] = useState(false)
   const entryId = useRef(entry.id)
-  const latestOnUpdated = useRef(onUpdated)
-  latestOnUpdated.current = onUpdated
+  const caughtUp = useEffectEvent((e: Entry) => onUpdated(e))
 
   useEffect(() => {
     if (catchUpRound === 0) return
-    setCatchingUp(true)
     const timers = CATCH_UP_MS.map((ms, i) =>
       setTimeout(async () => {
         try {
-          latestOnUpdated.current(await api.entries.get(entryId.current))
+          caughtUp(await api.entries.get(entryId.current))
         } catch {
           // the next look, or a reload, will catch up
         }
@@ -74,6 +72,7 @@ export function EntryPlace({ entry, onUpdated, readOnly = false }: Props) {
     try {
       onUpdated(await api.entries.patch(entry.id, body))
       setEditingPlace(false)
+      setCatchingUp(true)
       setCatchUpRound((n) => n + 1)
     } catch (e: unknown) {
       setError(limitMessage(e) ?? (e instanceof Error ? e.message : 'Could not save'))

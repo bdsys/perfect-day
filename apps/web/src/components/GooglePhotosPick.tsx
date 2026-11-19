@@ -1,8 +1,9 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { api, type Entry } from "../lib/api";
 import { navigateTo } from "../lib/navigate";
 import { useResetOnBfcacheRestore } from "../lib/useResetOnBfcacheRestore";
+import { useLatest } from "../lib/useLatest";
 
 const MONTHS = [
   "January", "February", "March", "April", "May", "June",
@@ -42,8 +43,7 @@ export function GooglePhotosPick({ entry, inFlight, copying = false, onStarted, 
   const [phase, setPhase] = useState<Phase>("loading");
   const [opening, setOpening] = useState(false);
   const openingRef = useRef(false);
-  const onOpeningChangeRef = useRef(onOpeningChange);
-  onOpeningChangeRef.current = onOpeningChange;
+  const onOpeningChangeRef = useLatest(onOpeningChange);
   const [connecting, setConnecting] = useState(false);
   const connectingRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
@@ -97,17 +97,18 @@ export function GooglePhotosPick({ entry, inFlight, copying = false, onStarted, 
     setOpening(value);
     onOpeningChangeRef.current?.(value);
   }
+  const stopOpening = useEffectEvent(() => setOpeningState(false));
 
   // The page found the import the new tab created: stop "opening" and show its progress.
   useEffect(() => {
-    if (inFlight && openingRef.current) setOpeningState(false);
+    if (inFlight && openingRef.current) stopOpening();
   }, [inFlight]);
 
   // No import after a minute: the tab may have been blocked, closed, or shown an error.
   useEffect(() => {
     if (!opening) return;
     const id = setTimeout(() => {
-      setOpeningState(false);
+      stopOpening();
       setError("Didn't see Google Photos open? Try again.");
     }, OPENING_TIMEOUT_MS);
     return () => clearTimeout(id);
