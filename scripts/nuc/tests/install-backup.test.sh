@@ -63,7 +63,7 @@ check "runs backup-run.sh from the deploy dir" grep -qx "ExecStart=/opt/perfect-
 check "oneshot" grep -qx "Type=oneshot" "${SVC}"
 check "15-minute cap" grep -qx "TimeoutStartSec=15min" "${SVC}"
 check "does not also append stdout to backup.log" bash -c '! grep -q "backup.log" "$1"' _ "${SVC}"
-check "daily at 02:17" grep -qx "OnCalendar=\*-\*-\* 02:17:00" "${TMR}"
+check "daily at 03:00 Pacific (follows daylight saving)" grep -qx "OnCalendar=\*-\*-\* 03:00:00 America/Los_Angeles" "${TMR}"
 check "catches up after downtime" grep -qx "Persistent=true" "${TMR}"
 
 echo "never_starts_service"
