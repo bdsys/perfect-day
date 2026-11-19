@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round">
+  <!-- Tracker row 64: Lucide's `rainbow` (lucide-react 1.75.0, ISC), each arc in its own colour.
+       apple-icon.png is made from this file: `npm run icons` (scripts/make-apple-icon.mjs). -->
+  <path d="M22 17a10 10 0 0 0-20 0" stroke="#e5484d"/>
+  <path d="M6 17a6 6 0 0 1 12 0" stroke="#2fa36b"/>
+  <path d="M10 17a2 2 0 0 1 4 0" stroke="#9d5ce6"/>
+</svg>
