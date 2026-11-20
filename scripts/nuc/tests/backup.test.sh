@@ -103,10 +103,13 @@ NAMES=()
 d="2025-10-15"
 while [[ "${d}" < "2026-11-19" ]]; do NAMES+=("${d}"); d=$(date -d "${d} +1 day" +%F); done
 KEPT="$(backup_keep_list 2026-11-18 "${NAMES[@]}")"
-EXPECTED="$( { for m in 2025-12 2026-01 2026-02 2026-03 2026-04 2026-05 2026-06 2026-07 2026-08 2026-09 2026-10; do echo "${m}-01"; done
+# Andrew, 2026-11-20: 3 monthly copies, not 12, so a deleted account's data leaves
+# the backups within about 4 months.
+EXPECTED="$( { for m in 2026-09 2026-10; do echo "${m}-01"; done
     d="2026-10-20"; while [[ "${d}" < "2026-11-19" ]]; do echo "${d}"; d=$(date -d "${d} +1 day" +%F); done; } | sort)"
-check "keeps the newest 30 plus the first of each of the 12 months (41 folders)" test "${KEPT}" = "${EXPECTED}"
-check "41 folders kept" test "$(wc -l <<<"${KEPT}")" -eq 41
+check "keeps the newest 30 plus the first of each of the last 3 months (32 folders)" test "${KEPT}" = "${EXPECTED}"
+check "32 folders kept" test "$(wc -l <<<"${KEPT}")" -eq 32
+check "nothing older than 3 months is kept" bash -c '! grep -q "^2026-08\|^2026-0[1-7]\|^2025" <<<"$1"' _ "${KEPT}"
 
 echo "retention: first run"
 check "a single folder is kept" test "$(backup_keep_list 2026-11-18 2026-11-18)" = "2026-11-18"

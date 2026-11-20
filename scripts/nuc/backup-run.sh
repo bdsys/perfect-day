@@ -5,7 +5,7 @@
 #
 # Dumps the database, exports the photo objects, saves /etc/perfect-day; encrypts
 # all three with the backup key, checks them, keeps them under
-# /var/backups/perfect-day/nightly/YYYY-MM-DD/ (30 nightly + 12 monthly) and copies
+# /var/backups/perfect-day/nightly/YYYY-MM-DD/ (30 nightly + 3 monthly) and copies
 # new nights to the NAS, where the same keep rule is applied to all it holds.
 # Result: /var/log/perfect-day/backup-status.json.
 # Exit codes: 0 ok, 1 failed (nothing pruned or copied), 2 kept locally but the NAS
