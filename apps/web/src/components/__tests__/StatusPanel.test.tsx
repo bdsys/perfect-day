@@ -19,3 +19,24 @@ describe('StatusPanel note', () => {
     expect(onDismiss).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('StatusPanel elapsed time (row 61)', () => {
+  beforeEach(() => {
+    jest.useFakeTimers()
+    jest.setSystemTime(new Date('2026-11-19T10:00:00Z'))
+  })
+  afterEach(() => jest.useRealTimers())
+
+  it('counts up every second while running', () => {
+    const { getByText } = render(<StatusPanel state="running" headline="Scanning" startedAt="2026-11-19T09:59:50Z" />)
+    expect(getByText(/10s ago/)).toBeInTheDocument()
+    act(() => { jest.advanceTimersByTime(65_000) })
+    expect(getByText(/1m 15s ago/)).toBeInTheDocument()
+  })
+
+  it('a new start time shows at once, not a second later', () => {
+    const { getByText, rerender } = render(<StatusPanel state="running" headline="Scanning" startedAt="2026-11-19T09:59:50Z" />)
+    rerender(<StatusPanel state="running" headline="Scanning" startedAt="2026-11-19T09:58:00Z" />)
+    expect(getByText(/2m 0s ago/)).toBeInTheDocument()
+  })
+})

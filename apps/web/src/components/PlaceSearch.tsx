@@ -19,14 +19,21 @@ export function PlaceSearch({ label, onSelect }: Props) {
   const [down, setDown] = useState(false)
   const [searching, setSearching] = useState(false)
 
-  useEffect(() => {
-    const q = query.trim()
-    if (q.length < MIN_CHARS) {
+  // Shortening the query below MIN_CHARS clears the last answer in this render.
+  const tooShort = query.trim().length < MIN_CHARS
+  const [wasTooShort, setWasTooShort] = useState(tooShort)
+  if (tooShort !== wasTooShort) {
+    setWasTooShort(tooShort)
+    if (tooShort) {
       setResults(null)
       setDown(false)
       setSearching(false)
-      return
     }
+  }
+
+  useEffect(() => {
+    const q = query.trim()
+    if (q.length < MIN_CHARS) return
     let cancelled = false
     const timer = setTimeout(() => {
       setSearching(true)

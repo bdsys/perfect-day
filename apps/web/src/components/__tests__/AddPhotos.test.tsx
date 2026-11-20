@@ -285,3 +285,31 @@ describe('room', () => {
     expect(document.getElementById(btn.getAttribute('aria-describedby')!)).toHaveTextContent('Free plan: 1 photo per entry.')
   })
 })
+
+describe('row 61: behaviour kept through the React Compiler lint rules', () => {
+  it('a library error clears when the panel is opened again', async () => {
+    listForUser.mockRejectedValueOnce(new Error('Library is down'))
+    await open()
+    expect(await screen.findByText('Library is down')).toBeInTheDocument()
+    const toggle = screen.getByRole('button', { name: /add photos/i })
+    await act(async () => { fireEvent.click(toggle) }) // close
+    listForUser.mockResolvedValueOnce([photo('b')])
+    await act(async () => { fireEvent.click(toggle) }) // open again
+    await screen.findByTestId('lib-b')
+    expect(screen.queryByText('Library is down')).toBeNull()
+  })
+
+  it('when uploads finish, the newest onChanged gets the refreshed entry', async () => {
+    let finish!: (p: Photo) => void
+    upload.mockImplementation(() => new Promise<Photo>((res) => { finish = res }))
+    const first = jest.fn()
+    const second = jest.fn()
+    const { rerender } = await open(entry(), first)
+    await act(async () => { fireEvent.change(input(), { target: { files: [file('a.jpg')] } }) })
+    rerender(<AddPhotos entry={entry({ title: 'Renamed' })} onChanged={second} />)
+    await act(async () => { finish(photo('p1')) })
+    await waitFor(() => expect(second).toHaveBeenCalledTimes(1))
+    expect(first).not.toHaveBeenCalled()
+    expect(getEntry).toHaveBeenCalledWith('e1')
+  })
+})

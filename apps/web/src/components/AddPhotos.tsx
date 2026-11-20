@@ -4,6 +4,7 @@ import { api, ApiError, type Entry, type Photo } from "../lib/api";
 import { PhotoThumbnail } from "./PhotoThumbnail";
 import LimitNote from "./LimitNote";
 import { PHOTO_LIMIT_NOTE, limitMessage } from "../lib/plan";
+import { useLatest } from "../lib/useLatest";
 
 const MAX_CONCURRENT = 3;
 const MAX_BYTES = 52428800; // 50 MB, the API's limit
@@ -48,10 +49,8 @@ export function AddPhotos({ entry, onChanged, googlePhotos, room = null }: Props
   const [attachedNow, setAttachedNow] = useState<Set<string>>(new Set());
   const [attachError, setAttachError] = useState<string | null>(null);
   const nextId = useRef(1);
-  const entryRef = useRef(entry);
-  entryRef.current = entry;
-  const onChangedRef = useRef(onChanged);
-  onChangedRef.current = onChanged;
+  const entryRef = useLatest(entry);
+  const onChangedRef = useLatest(onChanged);
   const filesRef = useRef(new Map<number, File>());
   // Uploaded photo per row: Try again after a failed attach re-attaches instead of re-uploading.
   const photoIdsRef = useRef(new Map<number, string>());
@@ -59,11 +58,12 @@ export function AddPhotos({ entry, onChanged, googlePhotos, room = null }: Props
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
-    setLibraryError(null);
     api.photos
       .listForUser(entry.entry_date)
       .then((p) => {
-        if (!cancelled) setLibrary(p);
+        if (cancelled) return;
+        setLibrary(p);
+        setLibraryError(null);
       })
       .catch((e) => {
         if (!cancelled) setLibraryError(e instanceof Error ? e.message : "Failed to load your library");
@@ -126,7 +126,7 @@ export function AddPhotos({ entry, onChanged, googlePhotos, room = null }: Props
         }
       })();
     }
-  }, [patch]);
+  }, [patch, entryRef, onChangedRef]);
 
   const enqueue = useCallback(
     (ids: number[]) => {
@@ -175,7 +175,10 @@ export function AddPhotos({ entry, onChanged, googlePhotos, room = null }: Props
       <button
         type="button"
         className="btn btn-secondary"
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => {
+          setLibraryError(null);
+          setOpen((o) => !o);
+        }}
         aria-expanded={open}
         disabled={full}
         aria-describedby={full ? "photo-limit-note" : undefined}

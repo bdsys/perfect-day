@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError, type PhotoImport } from "../lib/api";
 import { navigateTo } from "../lib/navigate";
 import { useResetOnBfcacheRestore } from "../lib/useResetOnBfcacheRestore";
+import { useLatest } from "../lib/useLatest";
 
 interface Props {
   entryId: string;
@@ -57,10 +58,16 @@ export function PhotoImportNotice({ entryId, refreshKey = 0, onDismiss, onFinish
   const failuresRef = useRef(0);
   const [gaveUp, setGaveUp] = useState(false);
 
-  const onFinishedRef = useRef(onFinished);
-  onFinishedRef.current = onFinished;
-  const onInFlightRef = useRef(onInFlightChange);
-  onInFlightRef.current = onInFlightChange;
+  // A new pick (refreshKey) or another entry starts checking afresh: drop "can't check"
+  // in the same render, the way React adjusts state when a prop changes.
+  const [checkedFor, setCheckedFor] = useState({ entryId, refreshKey });
+  if (checkedFor.entryId !== entryId || checkedFor.refreshKey !== refreshKey) {
+    setCheckedFor({ entryId, refreshKey });
+    setGaveUp(false);
+  }
+
+  const onFinishedRef = useLatest(onFinished);
+  const onInFlightRef = useLatest(onInFlightChange);
   const inFlightIds = useRef<Set<string>>(new Set());
   // Every import id seen so far (null until the first load). An id that first appears
   // already finished was picked in another tab while this one wasn't looking.
@@ -104,11 +111,13 @@ export function PhotoImportNotice({ entryId, refreshKey = 0, onDismiss, onFinish
         onInFlightRef.current?.(false, false);
       }
     }
-  }, [entryId]);
+  }, [entryId, onFinishedRef, onInFlightRef]);
 
   useEffect(() => {
     failuresRef.current = 0;
-    setGaveUp(false);
+    // load() sets state only after its first await, so this cannot cascade renders.
+    // react-hooks 7.x flags any async call that sets state (row 61, probed 2026-11-19).
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
   }, [load, refreshKey]);
 

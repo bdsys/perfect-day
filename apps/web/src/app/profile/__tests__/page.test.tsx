@@ -229,3 +229,22 @@ describe('ProfilePage', () => {
     await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('/login'))
   })
 })
+
+describe('ProfilePage, row 61: settings follow the signed-in user', () => {
+  it('shows the saved unit and icon on first paint', async () => {
+    mockUser = { id: 'u1', email: 'pat@example.com', temperature_unit: 'C', avatar: { kind: 'icon', name: 'panda' } }
+    await renderPage()
+    expect(screen.getByRole('radio', { name: '° C' })).toBeChecked()
+    expect(screen.getByRole('button', { name: 'panda' })).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('updates when the user is refreshed with new settings', async () => {
+    const { rerender } = render(<ProfilePage />)
+    await screen.findByText('Plus')
+    expect(screen.getByRole('radio', { name: '° F' })).toBeChecked()
+    mockUser = { id: 'u1', email: 'pat@example.com', temperature_unit: 'C', avatar: { kind: 'icon', name: 'panda' } }
+    rerender(<ProfilePage />)
+    expect(screen.getByRole('radio', { name: '° C' })).toBeChecked()
+    expect(screen.getByRole('button', { name: 'panda' })).toHaveAttribute('aria-pressed', 'true')
+  })
+})

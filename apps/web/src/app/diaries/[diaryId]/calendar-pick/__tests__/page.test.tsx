@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent, act } from '@testing-library/react'
 import CalendarPickPage from '../page'
 import { api } from '@/lib/api'
 
@@ -13,8 +13,10 @@ jest.mock('@/lib/api', () => {
   }
 })
 
+// One user object, as the real auth context keeps it between renders.
+const mockUser = { id: 'u1', email: 'a@b.com' }
 jest.mock('@/lib/auth-context', () => ({
-  useAuth: () => ({ user: { id: 'u1', email: 'a@b.com' }, loading: false }),
+  useAuth: () => ({ user: mockUser, loading: false }),
 }))
 
 jest.mock('next/navigation', () => ({
@@ -46,5 +48,19 @@ describe('calendar pick page', () => {
     render(<CalendarPickPage />)
     await waitFor(() => expect(api.calendarEvents.list).toHaveBeenCalled())
     expect(screen.queryByText(/Google Calendar isn.t connected/)).not.toBeInTheDocument()
+  })
+
+  it('row 61: moving to the next month shows Loading, then that month', async () => {
+    ;(api.diaries.getScanConfig as jest.Mock).mockResolvedValue(scanConfig('connected'))
+    render(<CalendarPickPage />)
+    const next = await screen.findByRole('button', { name: '→' })
+    let answer!: (v: unknown[]) => void
+    ;(api.calendarEvents.list as jest.Mock).mockReturnValueOnce(new Promise((res) => { answer = res }))
+    fireEvent.click(next)
+    expect(screen.getByText('Loading…')).toBeInTheDocument()
+    expect(api.calendarEvents.list).toHaveBeenCalledTimes(2)
+    await act(async () => { answer([]) })
+    expect(screen.queryByText('Loading…')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '←' })).toBeInTheDocument()
   })
 })

@@ -71,3 +71,31 @@ describe('PlaceSearch', () => {
     )
   })
 })
+
+describe('PlaceSearch, row 61: behaviour kept', () => {
+  beforeEach(() => search.mockReset())
+
+  it('shortening the query below two letters clears matches, "down" and Searching… at once', async () => {
+    search.mockRejectedValueOnce(new ApiError(503, 'down')).mockReturnValueOnce(new Promise(() => {}))
+    render(<PlaceSearch label="Location" onSelect={jest.fn()} />)
+    type('Mu')
+    expect(await screen.findByText("Search isn't working right now")).toBeInTheDocument()
+    type('Muk')
+    expect(await screen.findByText('Searching…')).toBeInTheDocument()
+    type('M')
+    expect(screen.queryByText("Search isn't working right now")).toBeNull()
+    expect(screen.queryByText('Searching…')).toBeNull()
+    type('Mu')
+    expect(screen.queryByText("Search isn't working right now")).toBeNull()
+    expect(screen.queryByText('Searching…')).toBeNull()
+  })
+
+  it('picking a place empties the box and the list', async () => {
+    search.mockResolvedValue([MUKILTEO])
+    render(<PlaceSearch label="Location" onSelect={jest.fn()} />)
+    type('Muk')
+    fireEvent.click(await screen.findByRole('button', { name: MUKILTEO.label }))
+    expect(screen.getByRole('searchbox', { name: 'Location' })).toHaveValue('')
+    expect(screen.queryByRole('button', { name: MUKILTEO.label })).toBeNull()
+  })
+})

@@ -21,11 +21,16 @@ function formatElapsed(startedAt: string): string {
 }
 
 export function StatusPanel({ state, headline, detail, note, errors, startedAt, onDismiss }: StatusPanelProps) {
-  const [elapsed, setElapsed] = useState(startedAt ? formatElapsed(startedAt) : '')
+  const [elapsed, setElapsed] = useState(() => (startedAt ? formatElapsed(startedAt) : ''))
+  // A new run (start time or state) shows its time in this render; the effect only ticks.
+  const [shownFor, setShownFor] = useState({ state, startedAt })
+  if (shownFor.state !== state || shownFor.startedAt !== startedAt) {
+    setShownFor({ state, startedAt })
+    setElapsed(startedAt ? formatElapsed(startedAt) : '')
+  }
 
   useEffect(() => {
     if (state !== 'running' || !startedAt) return
-    setElapsed(formatElapsed(startedAt))
     const id = setInterval(() => setElapsed(formatElapsed(startedAt)), 1000)
     return () => clearInterval(id)
   }, [state, startedAt])

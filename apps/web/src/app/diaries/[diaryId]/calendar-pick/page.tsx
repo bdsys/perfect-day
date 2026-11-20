@@ -98,8 +98,8 @@ export default function CalendarPickPage() {
   }, [user, diaryId])
 
   useEffect(() => {
+    // `loading` starts true, and changeMonth sets it again; nothing here sets it first.
     if (!user || !diaryId || blocked !== null) return
-    setLoading(true)
     const gridDays = buildMonthDays(cursorMonth)
     const from = ymd(gridDays[0])
     const to = ymd(gridDays[gridDays.length - 1])
@@ -108,6 +108,11 @@ export default function CalendarPickPage() {
       .catch((e: unknown) => setError(e instanceof Error ? e.message : 'Failed to load events'))
       .finally(() => setLoading(false))
   }, [user, diaryId, cursorMonth, blocked])
+
+  function changeMonth(by: number) {
+    setLoading(true)
+    setCursorMonth((m) => new Date(m.getFullYear(), m.getMonth() + by, 1))
+  }
 
   async function handlePick(event: CalendarEventSummary) {
     setCreating(event.id)
@@ -170,17 +175,9 @@ export default function CalendarPickPage() {
         {blocked === null && (<>
         {/* Month navigation toolbar */}
         <div className="cal-toolbar">
-          <button className="btn btn-secondary" onClick={() => setCursorMonth(m => {
-            const prev = new Date(m)
-            prev.setMonth(prev.getMonth() - 1)
-            return prev
-          })}>←</button>
+          <button className="btn btn-secondary" onClick={() => changeMonth(-1)}>←</button>
           <h2>{cursorMonth.toLocaleString('default', { month: 'long', year: 'numeric' })}</h2>
-          <button className="btn btn-secondary" onClick={() => setCursorMonth(m => {
-            const next = new Date(m)
-            next.setMonth(next.getMonth() + 1)
-            return next
-          })}>→</button>
+          <button className="btn btn-secondary" onClick={() => changeMonth(1)}>→</button>
         </div>
 
         {/* Month grid */}
