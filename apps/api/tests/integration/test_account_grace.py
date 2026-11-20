@@ -361,7 +361,10 @@ async def test_restore_refuses_when_row_no_longer_pending(
     stale = (await db_session.execute(select(User).where(User.email == email))).scalar_one()
     now = datetime.now(tz=UTC)
     await _set_deletion(
-        db_session, email, deleted_at=now - timedelta(days=7), hard_delete_after=now - timedelta(seconds=1)
+        db_session,
+        email,
+        deleted_at=now - timedelta(days=7),
+        hard_delete_after=now - timedelta(seconds=1),
     )
 
     app = client._transport.app  # type: ignore[attr-defined]
