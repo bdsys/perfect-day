@@ -383,3 +383,100 @@ async def test_restore_refuses_when_row_no_longer_pending(
     db_session.expire_all()
     row = (await db_session.execute(select(User).where(User.email == email))).scalar_one()
     assert row.deleted_at is not None and row.hard_delete_after is not None
+
+
+# ---------------------------------------------------------------------------
+# Row 55: a Google connect that finishes after the account was deleted
+# ---------------------------------------------------------------------------
+
+
+async def _connect_while_deleting(
+    client: AsyncClient, db_session: AsyncSession, email: str, token_response: dict
+) -> tuple[httpx.Response, list]:
+    """Run the callback; Google's token answer arrives just after the account is deleted."""
+    from app.routers.v1.integrations import GOOGLE_TOKEN_URL
+    from app.services.google_revoke import GOOGLE_REVOKE_URL
+    from tests.integration.test_google_connect_security import SCOPE_CALENDAR, _id_token
+
+    auth = await register_and_login(client, email)
+    state, _ = await _authorize(client, auth)
+    revokes: list = []
+
+    async def google(url, *args, **kwargs):
+        if url == GOOGLE_TOKEN_URL:
+            now = datetime.now(tz=UTC)
+            await _set_deletion(
+                db_session, email, deleted_at=now, hard_delete_after=now + timedelta(days=7)
+            )
+            return httpx.Response(
+                200,
+                json={
+                    "expires_in": 3600,
+                    "scope": SCOPE_CALENDAR,
+                    "id_token": _id_token("p@gmail.com"),
+                    **token_response,
+                },
+            )
+        if url == GOOGLE_REVOKE_URL:
+            revokes.append(kwargs.get("data"))
+            return httpx.Response(200, json={})
+        raise AssertionError(f"unexpected POST {url}")
+
+    with patch("httpx.AsyncClient.post", AsyncMock(side_effect=google)):
+        r = await client.get(
+            "/v1/integrations/google/callback",
+            params={"code": "c", "state": state, "scope": SCOPE_CALENDAR},
+            headers=connect_cookie_for(state),
+            follow_redirects=False,
+        )
+    return r, revokes
+
+
+async def test_callback_after_delete_revokes_new_grant(
+    client: AsyncClient, db_session: AsyncSession
+):
+    email = "grace-connect-race@example.com"
+    r, revokes = await _connect_while_deleting(
+        client, db_session, email, {"access_token": "a1", "refresh_token": "r1"}
+    )
+
+    assert _query(r) == {"google": "failed", "reason": "account_unavailable"}
+    assert await _token_count(db_session, email) == 0
+    assert revokes == [{"token": "r1"}]
+
+
+async def test_callback_after_delete_revokes_access_only_token(
+    client: AsyncClient, db_session: AsyncSession
+):
+    email = "grace-connect-race-access@example.com"
+    r, revokes = await _connect_while_deleting(client, db_session, email, {"access_token": "a1"})
+
+    assert _query(r) == {"google": "failed", "reason": "account_unavailable"}
+    assert await _token_count(db_session, email) == 0
+    assert revokes == [{"token": "a1"}]
+
+
+async def test_delete_account_locks_user_row(client: AsyncClient):
+    """The delete takes the row lock the callback takes, before it looks for the token."""
+    from sqlalchemy import event
+
+    import app.core.database as db_module
+
+    auth = await register_and_login(client, "grace-delete-lock@example.com")
+    statements: list[str] = []
+
+    def record(conn, cursor, statement, *args):
+        statements.append(" ".join(statement.split()).lower())
+
+    engine = db_module._engine.sync_engine
+    event.listen(engine, "before_cursor_execute", record)
+    try:
+        assert (await client.delete(ACCOUNT, headers=auth)).status_code == 200
+    finally:
+        event.remove(engine, "before_cursor_execute", record)
+
+    lock = next(
+        (i for i, s in enumerate(statements) if "from users" in s and "for update" in s), None
+    )
+    tokens = next((i for i, s in enumerate(statements) if "from oauth_tokens" in s), None)
+    assert lock is not None and tokens is not None and lock < tokens, statements

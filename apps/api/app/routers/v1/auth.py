@@ -422,6 +422,15 @@ async def delete_account(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> AccountDeletionOut:
+    # Row 55: lock the account first. A Google connect finishing in another tab takes
+    # the same lock before saving its token, so either it saves first and the token is
+    # found and revoked below, or it waits and then sees the account deleted.
+    await db.execute(
+        select(User)
+        .where(User.id == user.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
     now = datetime.now(tz=UTC)
     deadline = now + timedelta(days=7)
     user.deleted_at = now
