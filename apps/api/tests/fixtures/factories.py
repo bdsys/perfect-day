@@ -157,3 +157,13 @@ async def make_entry_photo(
     db.add(ep)
     await db.flush()
     return ep
+
+
+async def mark_due_for_hard_delete(db: AsyncSession, user: User) -> None:
+    """Make *user* what the hourly job deletes: deleted, deadline passed (row 54)."""
+    from datetime import timedelta
+
+    now = datetime.now(tz=UTC)
+    user.deleted_at = now - timedelta(days=7)
+    user.hard_delete_after = now - timedelta(seconds=1)
+    await db.commit()

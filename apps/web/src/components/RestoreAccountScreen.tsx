@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useAuth } from '@/lib/auth-context'
+import { authErrorMessage } from '@/lib/authErrors'
 import { formatDeadline } from '@/lib/deadline'
 import { navigateTo } from '@/lib/navigate'
 
@@ -23,8 +24,9 @@ export default function RestoreAccountScreen() {
     setBusy(true)
     try {
       await restore()
-    } catch {
-      setError("Couldn't restore your account. Try again.")
+    } catch (e) {
+      // "This account is no longer available." when the deadline passed first (row 54).
+      setError(authErrorMessage(e, "Couldn't restore your account. Try again."))
       setBusy(false)
     }
   }

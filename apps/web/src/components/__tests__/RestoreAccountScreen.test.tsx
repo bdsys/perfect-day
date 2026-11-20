@@ -11,6 +11,7 @@ jest.mock("@/lib/api", () => ({
   setAccessToken: jest.fn(),
   refreshAccessToken: jest.fn(),
   setPendingDeletionHandler: jest.fn(),
+  ApiError: jest.requireActual("@/lib/api").ApiError,
 }));
 jest.mock("@/lib/navigate", () => ({ navigateTo: jest.fn() }));
 
@@ -88,6 +89,16 @@ describe("restore screen", () => {
     expect(await screen.findByText("Couldn't restore your account. Try again.")).toBeInTheDocument();
     expect(screen.queryByText("the app")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Restore my account" })).toBeEnabled();
+  });
+
+  it("row 54: a restore refused because the account is gone says so, not try again", async () => {
+    const { ApiError } = jest.requireActual("@/lib/api");
+    me.mockResolvedValue(pending());
+    restoreAccount.mockRejectedValue(new ApiError(401, "account_unavailable", "account_unavailable"));
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: "Restore my account" }));
+    expect(await screen.findByText("This account is no longer available.")).toBeInTheDocument();
+    expect(screen.queryByText("Couldn't restore your account. Try again.")).not.toBeInTheDocument();
   });
 
   it("Sign out signs out and goes to /login", async () => {

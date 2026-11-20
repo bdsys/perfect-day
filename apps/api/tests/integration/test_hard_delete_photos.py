@@ -41,7 +41,7 @@ async def test_hard_delete_user_removes_tmp_prefix(
 async def test_hard_delete_removes_avatar(client, db_session, s3_client, photos_bucket):
     from app.services.avatar import make_avatar_jpeg, store_avatar
     from app.workers.hard_delete import hard_delete_user
-    from tests.fixtures.factories import make_user
+    from tests.fixtures.factories import make_user, mark_due_for_hard_delete
     from tests.integration.photo_helpers import jpeg_with_exif
 
     user = await make_user(db_session)
@@ -51,6 +51,7 @@ async def test_hard_delete_removes_avatar(client, db_session, s3_client, photos_
     user_id = user.id
     listed = s3_client.list_objects_v2(Bucket=photos_bucket, Prefix=f"{user_id}/avatar/")
     assert [o["Key"] for o in listed.get("Contents", [])] == [key]
+    await mark_due_for_hard_delete(db_session, user)
 
     await hard_delete_user(user_id)
 
@@ -82,9 +83,10 @@ async def test_user_scrub_failure_keeps_user_for_retry(
     from app.core.dependencies import get_s3
     from app.models import User
     from app.workers.hard_delete import hard_delete_user
-    from tests.fixtures.factories import make_user
+    from tests.fixtures.factories import make_user, mark_due_for_hard_delete
 
     user = await make_user(db_session)
+    await mark_due_for_hard_delete(db_session, user)
     user_id = user.id
     key = f"{user_id}/avatar/a.enc"
     s3_client.put_object(Bucket=photos_bucket, Key=key, Body=b"x")
@@ -154,9 +156,10 @@ async def test_hard_delete_user_revokes_google(client, db_session, photos_bucket
     from app.models import OAuthToken
     from app.services.google_revoke import GOOGLE_REVOKE_URL
     from app.workers.hard_delete import hard_delete_user
-    from tests.fixtures.factories import make_user
+    from tests.fixtures.factories import make_user, mark_due_for_hard_delete
 
     user = await make_user(db_session)
+    await mark_due_for_hard_delete(db_session, user)
     user_id = user.id
     db_session.add(
         OAuthToken(

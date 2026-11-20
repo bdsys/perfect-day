@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 
 import structlog
 
@@ -136,6 +137,22 @@ async def hard_delete_user(user_id: uuid.UUID) -> None:
     from app.services.google_revoke import revoke_and_forget_google
 
     log.info("hard_delete_user_start", user_id=str(user_id))
+
+    # Row 54: lock the account and check it is still due. A restore that landed after
+    # the hourly job picked this account has cleared both columns; restore takes the
+    # same lock and refuses once the deadline has passed, so the two never cross.
+    # No row at all is a retry after a partial run: carry on and finish the cleanup.
+    async with db_session() as db:
+        account = (
+            await db.execute(select(User).where(User.id == user_id).with_for_update())
+        ).scalar_one_or_none()
+        if account is not None and not (
+            account.deleted_at is not None
+            and account.hard_delete_after is not None
+            and account.hard_delete_after <= datetime.now(tz=UTC)
+        ):
+            log.info("hard_delete_user_skipped_not_due", user_id=str(user_id))
+            return
 
     async with db_session() as db:
         # Hard delete all owned diaries first

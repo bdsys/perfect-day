@@ -298,3 +298,85 @@ async def test_oauth_callback_still_connects_active_account(
 
     assert _query(r) == {"google": "connected"}
     assert await _token_count(db_session, email) == 1
+
+
+# ---------------------------------------------------------------------------
+# Row 54: restore and the hourly hard delete serialize on the user row
+# ---------------------------------------------------------------------------
+
+
+async def test_hard_delete_stops_if_restored_after_pickup(
+    client: AsyncClient, db_session: AsyncSession
+):
+    """The hourly job picked the account, then a restore landed: nothing is deleted."""
+    import uuid
+
+    from app.models import Diary
+    from app.workers.hard_delete import hard_delete_user
+
+    email = "grace-race-restored@example.com"
+    auth = await register_and_login(client, email)
+    diary = (
+        await client.post("/v1/diaries", json={"name": "D", "timezone": "UTC"}, headers=auth)
+    ).json()
+    user_id = (await db_session.execute(select(User.id).where(User.email == email))).scalar_one()
+    # As a restore leaves it: both columns cleared.
+    await _set_deletion(db_session, email, deleted_at=None, hard_delete_after=None)
+
+    await hard_delete_user(user_id)
+
+    db_session.expire_all()
+    assert (await db_session.execute(select(User.id).where(User.id == user_id))).first()
+    assert (
+        await db_session.execute(select(Diary.id).where(Diary.id == uuid.UUID(diary["id"])))
+    ).first()
+
+
+async def test_hard_delete_stops_if_deadline_not_reached(
+    client: AsyncClient, db_session: AsyncSession
+):
+    from app.workers.hard_delete import hard_delete_user
+
+    email = "grace-race-early@example.com"
+    auth = await register_and_login(client, email)
+    await client.delete(ACCOUNT, headers=auth)  # pending, deadline in 7 days
+    user_id = (await db_session.execute(select(User.id).where(User.email == email))).scalar_one()
+
+    await hard_delete_user(user_id)
+
+    db_session.expire_all()
+    assert (await db_session.execute(select(User.id).where(User.id == user_id))).first()
+
+
+async def test_restore_refuses_when_row_no_longer_pending(
+    client: AsyncClient, db_session: AsyncSession
+):
+    """The request passed the grace check, then the deadline passed before the row lock."""
+    from app.core.auth import get_current_user_within_grace
+
+    email = "grace-race-lost@example.com"
+    auth = await register_and_login(client, email)
+    await client.delete(ACCOUNT, headers=auth)
+    headers = await _bearer(client, email)
+    stale = (await db_session.execute(select(User).where(User.email == email))).scalar_one()
+    now = datetime.now(tz=UTC)
+    await _set_deletion(
+        db_session, email, deleted_at=now - timedelta(days=7), hard_delete_after=now - timedelta(seconds=1)
+    )
+
+    app = client._transport.app  # type: ignore[attr-defined]
+
+    async def passed_grace_check() -> User:
+        return stale
+
+    app.dependency_overrides[get_current_user_within_grace] = passed_grace_check
+    try:
+        r = await client.post(RESTORE, headers=headers)
+    finally:
+        app.dependency_overrides.pop(get_current_user_within_grace, None)
+
+    assert r.status_code == 401, r.text
+    assert _detail(r) == "account_unavailable"
+    db_session.expire_all()
+    row = (await db_session.execute(select(User).where(User.email == email))).scalar_one()
+    assert row.deleted_at is not None and row.hard_delete_after is not None

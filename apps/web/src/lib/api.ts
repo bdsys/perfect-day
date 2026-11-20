@@ -149,6 +149,13 @@ async function apiFetch<T>(
   })
 
   if (res.status === 401 && retryOn401) {
+    const err = await parseApiError(res)
+    // The account is gone or blocked (row 54): a refresh can't fix that, and
+    // retrying would hide the reason the screen needs to show.
+    if (err.code === 'account_unavailable') {
+      _accessToken = null
+      throw err
+    }
     if (await refreshAccessToken()) return apiFetch<T>(path, options, false)
     throw new Error('unauthorized')
   }

@@ -36,6 +36,7 @@ from tests.fixtures.factories import (
     make_event,
     make_photo,
     make_user,
+    mark_due_for_hard_delete,
 )
 
 PAST = datetime(2020, 1, 1, tzinfo=UTC)
@@ -181,6 +182,7 @@ class TestHardDeleteScope:
             ]
         )
         await db_session.commit()
+        await mark_due_for_hard_delete(db_session, leaving)
 
         await hard_delete_user(leaving.id)
 

@@ -451,8 +451,18 @@ async def restore_account(
     user: User = Depends(get_current_user_within_grace),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> None:
-    # The dependency refused blocked accounts, so this one is active or pending.
-    result = await db.execute(select(User).where(User.id == user.id))
+    # The dependency refused blocked accounts, but the deadline may pass before this
+    # runs (row 54). Lock the row, as the hourly hard delete does, and check again: a
+    # restore either lands before the deadline or is refused, never both restored and
+    # then deleted.
+    result = await db.execute(
+        select(User)
+        .where(User.id == user.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
     fresh_user = result.scalar_one()
+    if deletion_state(fresh_user) == "blocked":
+        raise account_unavailable()
     fresh_user.deleted_at = None
     fresh_user.hard_delete_after = None
