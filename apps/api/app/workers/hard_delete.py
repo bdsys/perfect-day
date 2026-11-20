@@ -143,8 +143,14 @@ async def hard_delete_user(user_id: uuid.UUID) -> None:
     # same lock and refuses once the deadline has passed, so the two never cross.
     # No row at all is a retry after a partial run: carry on and finish the cleanup.
     async with db_session() as db:
+        # key_share=True renders FOR NO KEY UPDATE: it orders the four paths that lock
+        # this row (restore, account delete, the Google callback, this) without
+        # blocking the KEY SHARE lock foreign-key inserts take, so a refresh-token
+        # rotation running at the same time cannot deadlock against it.
         account = (
-            await db.execute(select(User).where(User.id == user_id).with_for_update())
+            await db.execute(
+                select(User).where(User.id == user_id).with_for_update(key_share=True)
+            )
         ).scalar_one_or_none()
         if account is not None and not (
             account.deleted_at is not None

@@ -436,9 +436,12 @@ async def test_callback_after_delete_revokes_new_grant(
     client: AsyncClient, db_session: AsyncSession
 ):
     email = "grace-connect-race@example.com"
-    r, revokes = await _connect_while_deleting(
-        client, db_session, email, {"access_token": "a1", "refresh_token": "r1"}
-    )
+    with _CaptureSQL() as statements:
+        r, revokes = await _connect_while_deleting(
+            client, db_session, email, {"access_token": "a1", "refresh_token": "r1"}
+        )
+    locks = _users_locks(statements)
+    assert locks and all("for no key update" in s for s in locks), locks
 
     assert _query(r) == {"google": "failed", "reason": "account_unavailable"}
     assert await _token_count(db_session, email) == 0
@@ -475,8 +478,58 @@ async def test_delete_account_locks_user_row(client: AsyncClient):
     finally:
         event.remove(engine, "before_cursor_execute", record)
 
+    # FOR NO KEY UPDATE, not FOR UPDATE: a plain FOR UPDATE also blocks the KEY SHARE
+    # lock every foreign-key insert takes, which deadlocks against refresh rotation.
     lock = next(
-        (i for i, s in enumerate(statements) if "from users" in s and "for update" in s), None
+        (i for i, s in enumerate(statements) if "from users" in s and "for no key update" in s),
+        None,
     )
     tokens = next((i for i, s in enumerate(statements) if "from oauth_tokens" in s), None)
     assert lock is not None and tokens is not None and lock < tokens, statements
+
+
+def _users_locks(statements: list[str]) -> list[str]:
+    return [s for s in statements if "from users" in s and " for " in s]
+
+
+class _CaptureSQL:
+    """Record every SQL statement the app's engine sends while the block runs."""
+
+    def __enter__(self) -> list[str]:
+        from sqlalchemy import event
+
+        import app.core.database as db_module
+
+        self.statements: list[str] = []
+        self.engine = db_module._engine.sync_engine
+        event.listen(self.engine, "before_cursor_execute", self._record)
+        return self.statements
+
+    def _record(self, conn, cursor, statement, *args) -> None:
+        self.statements.append(" ".join(statement.split()).lower())
+
+    def __exit__(self, *exc) -> None:
+        from sqlalchemy import event
+
+        event.remove(self.engine, "before_cursor_execute", self._record)
+
+
+async def test_restore_and_hard_delete_lock_without_blocking_key_share(
+    client: AsyncClient, db_session: AsyncSession
+):
+    """Every new users lock is FOR NO KEY UPDATE (final review, Important 3)."""
+    from app.workers.hard_delete import hard_delete_user
+
+    email = "grace-lock-kind@example.com"
+    auth = await register_and_login(client, email)
+    await client.delete(ACCOUNT, headers=auth)
+    headers = await _bearer(client, email)
+    with _CaptureSQL() as restore_sql:
+        assert (await client.post(RESTORE, headers=headers)).status_code == 204
+    user_id = (await db_session.execute(select(User.id).where(User.email == email))).scalar_one()
+    with _CaptureSQL() as delete_sql:
+        await hard_delete_user(user_id)  # not due: only the lock and the check run
+
+    for statements in (restore_sql, delete_sql):
+        locks = _users_locks(statements)
+        assert locks and all("for no key update" in s for s in locks), locks

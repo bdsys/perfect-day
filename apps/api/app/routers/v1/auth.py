@@ -428,7 +428,7 @@ async def delete_account(
     await db.execute(
         select(User)
         .where(User.id == user.id)
-        .with_for_update()
+        .with_for_update(key_share=True)
         .execution_options(populate_existing=True)
     )
     now = datetime.now(tz=UTC)
@@ -467,7 +467,7 @@ async def restore_account(
     result = await db.execute(
         select(User)
         .where(User.id == user.id)
-        .with_for_update()
+        .with_for_update(key_share=True)
         .execution_options(populate_existing=True)
     )
     fresh_user = result.scalar_one()

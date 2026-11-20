@@ -335,7 +335,7 @@ async def _google_callback(
         await db.execute(
             select(User)
             .where(User.id == user_id)
-            .with_for_update()
+            .with_for_update(key_share=True)
             .execution_options(populate_existing=True)
         )
     ).scalar_one_or_none()
