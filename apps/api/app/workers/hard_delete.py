@@ -63,23 +63,27 @@ async def hard_delete_diary(diary_id: uuid.UUID) -> None:
                 )
                 photo_ids_in_diary -= {r[0] for r in shared_result.fetchall()}
 
+            # A storage error stops the whole delete: the transaction rolls back, the
+            # diary stays due, and the hourly job tries again. Deleting the rows
+            # anyway would leave the objects in storage with nothing to find them.
+            settings = get_settings()
             for photo_id in list(photo_ids_in_diary):
-                try:
-                    settings = get_settings()
-                    photo_result = await db.execute(select(Photo).where(Photo.id == photo_id))
-                    photo = photo_result.scalar_one_or_none()
-                    if photo:
-                        s3 = get_s3()
-                        for key in [photo.s3_key, photo.thumbnail_s3_key, photo.display_s3_key]:
-                            if key:
-                                try:
-                                    s3.delete_object(Bucket=settings.s3_bucket_photos, Key=key)
-                                except Exception:
-                                    pass
-                except Exception as e:
-                    log.warning(
-                        "hard_delete_photo_s3_error", photo_id=str(photo_id), error=str(e)
-                    )
+                photo_result = await db.execute(select(Photo).where(Photo.id == photo_id))
+                photo = photo_result.scalar_one_or_none()
+                if photo:
+                    s3 = get_s3()
+                    for key in [photo.s3_key, photo.thumbnail_s3_key, photo.display_s3_key]:
+                        if key:
+                            try:
+                                s3.delete_object(Bucket=settings.s3_bucket_photos, Key=key)
+                            except Exception as e:
+                                log.warning(
+                                    "hard_delete_diary_storage_failed",
+                                    diary_id=str(diary_id),
+                                    photo_id=str(photo_id),
+                                    error=type(e).__name__,
+                                )
+                                raise
 
                 await db.execute(delete(Photo).where(Photo.id == photo_id))
 
@@ -129,6 +133,7 @@ async def hard_delete_user(user_id: uuid.UUID) -> None:
         SocialIdentity,
         User,
     )
+    from app.services.google_revoke import revoke_and_forget_google
 
     log.info("hard_delete_user_start", user_id=str(user_id))
 
@@ -146,6 +151,21 @@ async def hard_delete_user(user_id: uuid.UUID) -> None:
         await db.execute(
             delete(NotificationPreferences).where(NotificationPreferences.user_id == user_id)
         )
+        # Revoke any Google grant still held (an admin delete never revoked it, and a
+        # connect may have finished after the account was deleted), then forget it.
+        google_tokens = (
+            (
+                await db.execute(
+                    select(OAuthToken).where(
+                        OAuthToken.user_id == user_id, OAuthToken.provider == "google"
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for token in google_tokens:
+            await revoke_and_forget_google(db, token, user_id=user_id)
         await db.execute(delete(OAuthToken).where(OAuthToken.user_id == user_id))
         await db.execute(delete(RefreshToken).where(RefreshToken.user_id == user_id))
         # magic_link_tokens has no user FK; match on the user's email. An empty
@@ -156,7 +176,9 @@ async def hard_delete_user(user_id: uuid.UUID) -> None:
             await db.execute(delete(MagicLinkToken).where(MagicLinkToken.email == user_email))
         await db.execute(delete(SocialIdentity).where(SocialIdentity.user_id == user_id))
 
-        # Scrub the photo store: delete everything under {user_id}/ prefix and tmp/{user_id}/ prefix
+        # Scrub the photo store: everything under {user_id}/ and tmp/{user_id}/.
+        # A storage error stops the delete (the user row stays, so the hourly job
+        # retries); deleting the row anyway would leave the photos in storage for good.
         try:
             settings = get_settings()
             s3 = get_s3()
@@ -165,9 +187,18 @@ async def hard_delete_user(user_id: uuid.UUID) -> None:
                 for page in paginator.paginate(Bucket=settings.s3_bucket_photos, Prefix=prefix):
                     objects = [{"Key": obj["Key"]} for obj in page.get("Contents", [])]
                     if objects:
-                        s3.delete_objects(Bucket=settings.s3_bucket_photos, Delete={"Objects": objects})
+                        result = s3.delete_objects(
+                            Bucket=settings.s3_bucket_photos, Delete={"Objects": objects}
+                        )
+                        if result.get("Errors"):
+                            raise RuntimeError(
+                                f"storage refused {len(result['Errors'])} object deletes"
+                            )
         except Exception as e:
-            log.warning("hard_delete_user_s3_error", user_id=str(user_id), error=str(e))
+            log.warning(
+                "hard_delete_user_storage_failed", user_id=str(user_id), error=type(e).__name__
+            )
+            raise
 
         # Anonymize audit_log (null user_id, keep action/timestamp)
         await db.execute(update(AuditLog).where(AuditLog.user_id == user_id).values(user_id=None))
