@@ -48,3 +48,16 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
         except Exception:
             await session.rollback()
             raise
+
+
+async def dispose_engine() -> None:
+    """Close the pool and forget the engine.
+
+    For one-off scripts that run the app's async code in their own event loop
+    (the admin CLI): the next caller gets a fresh engine on its own loop.
+    """
+    global _engine, _session_factory
+    if _engine is not None:
+        await _engine.dispose()
+    _engine = None
+    _session_factory = None

@@ -26,7 +26,9 @@ Run `./scripts/admin.sh --help` or `./scripts/admin.sh <group> --help` for full 
 
 All `delete` commands are **soft delete by default** — they set `deleted_at` on the row(s) but the data stays in the DB.
 
-Pass `--hard` for **permanent deletion** (DB foreign-key cascades remove related rows). Both modes show what will be affected and require typing `yes`.
+Pass `--hard` for **permanent deletion**. Both modes show what will be affected and require typing `yes`.
+
+A hard delete of a user or a diary runs the app's own deletion (`apps/api/app/workers/hard_delete.py`), the same as the hourly job after the 7-day grace: it removes the stored photos (and, for a user, the avatar) from storage and revokes Google access, not just the database rows. A diary's photos that another diary still uses are kept. The row is marked due first, so if storage fails part-way the command says so and the worker's hourly job finishes the delete. `entries delete --hard` removes the entry only; its photos stay in the user's photo library, as in the app (tracker row 51).
 
 To completely reset your local DB instead, run `make down -v` followed by `make infra && make migrate`.
 
@@ -57,7 +59,7 @@ Tiers: `free` | `plus` | `family`
 # Soft delete (cascades deleted_at to all their diaries and entries)
 ./scripts/admin.sh users delete --email alice@example.com
 
-# Hard delete (DB FK cascades remove diaries, entries, oauth tokens, photos, etc.)
+# Hard delete (diaries, entries, photos in storage, the avatar, Google access, everything)
 ./scripts/admin.sh users delete --email alice@example.com --hard
 ```
 
