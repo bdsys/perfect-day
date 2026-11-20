@@ -553,6 +553,7 @@ async def _generate_draft(
     from sqlalchemy import select
     from sqlalchemy.orm import selectinload
 
+    from app.core.auth import deletion_state
     from app.models import Diary, Entry, LLMGeneration, User
     from app.services.ai_drafts import AI_DRAFT_LIMIT_ERROR, release_ai_draft, reserve_ai_draft
     from app.services.read_only import is_diary_read_only
@@ -592,11 +593,17 @@ async def _generate_draft(
         if diary is None:
             return
 
+        # Row 53: a draft queued before the owner deleted the account (or an admin
+        # blocked it) must not send the child's events to the LLM.
+        owner = await db.get(User, diary.owner_user_id)
+        if owner is None or deletion_state(owner) != "active":
+            log.info("generate_draft_skipped_owner_not_active", entry_id=str(entry_id))
+            return
+
         if await is_diary_read_only(db, diary):
             log.info("diary_read_only_skip", diary_id=str(diary.id), where="draft")
             return
 
-        owner = await db.get(User, diary.owner_user_id)
         temperature_unit: TemperatureUnit = "C" if owner and owner.temperature_unit == "C" else "F"
 
         events = sorted(
