@@ -15,6 +15,11 @@ updates:
       # (2026-11-18). Drop this once Next supports TS 7 by default.
       - dependency-name: "typescript"
         versions: [">=7"]
+      # The types follow the Node major the app runs on (apps/web/Dockerfile, CI,
+      # .nvmrc), so a new major moves with the runtime, by hand. Types ahead of the
+      # runtime would let code use Node APIs that production doesn't have.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
     groups:
       minor-and-patch:
         update-types:
