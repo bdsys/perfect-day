@@ -627,3 +627,40 @@ class TestNoDraftsForDeletedAccounts:
         self, client: AsyncClient, db_session: AsyncSession
     ):
         await self._assert_no_draft(db_session, "blocked")
+
+    # Final review, Important 1: the draft job works out the place and weather first,
+    # which calls Open-Meteo with the events' location text and the entry's coordinates.
+    async def _location_calls(self, db_session: AsyncSession, state: str) -> tuple[int, int]:
+        from app.services.entry_location import update_place_and_weather
+
+        if state == "active":
+            owner = await make_user(db_session)
+            diary = await make_diary(db_session, owner)
+            entry = await make_entry(db_session, diary, body_markdown=None)
+            await make_event(db_session, entry=entry)
+            entry_id = entry.id
+        else:
+            entry_id, _, _ = await self._owner_state(db_session, state)
+        resolve = AsyncMock(return_value=False)
+        weather = AsyncMock()
+        with (
+            patch("app.services.entry_location.resolve_entry_location", resolve),
+            patch("app.workers.enrichments.enrich_entry_weather", weather),
+        ):
+            await update_place_and_weather(entry_id, db_session)
+        return resolve.await_count, weather.await_count
+
+    async def test_no_place_or_weather_lookup_when_owner_pending_deletion(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
+        assert await self._location_calls(db_session, "pending") == (0, 0)
+
+    async def test_no_place_or_weather_lookup_when_owner_blocked(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
+        assert await self._location_calls(db_session, "blocked") == (0, 0)
+
+    async def test_place_and_weather_still_looked_up_for_active_owner(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
+        assert await self._location_calls(db_session, "active") == (1, 1)
