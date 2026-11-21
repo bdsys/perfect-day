@@ -99,6 +99,9 @@ describe("restore screen", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Restore my account" }));
     expect(await screen.findByText("This account is no longer available.")).toBeInTheDocument();
     expect(screen.queryByText("Couldn't restore your account. Try again.")).not.toBeInTheDocument();
+    // Nothing left to restore: no second click that would say "Try again" (final review).
+    expect(screen.queryByRole("button", { name: "Restore my account" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sign out" })).toBeEnabled();
   });
 
   it("Sign out signs out and goes to /login", async () => {
