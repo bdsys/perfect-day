@@ -62,6 +62,32 @@ def _make_session() -> Session:
     return factory()
 
 
+API_ENV_FILE = REPO_ROOT / "apps" / "api" / ".env"
+
+
+def _load_api_env(env_file: Path) -> None:
+    """Fill in settings the environment lacks from apps/api/.env (quotes stripped).
+
+    The app's get_settings() reads .env from the working directory, and admin.sh runs
+    from the repo root, whose .env is the web app's. Without this every command that
+    runs the app's own code (the --hard deletes) failed on the dev PC. Inside the API
+    container (production) app.env is already in the environment and wins.
+    """
+    if not env_file.exists():
+        return
+    for line in env_file.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key, value = key.strip(), value.strip()
+        if not key.isidentifier():
+            continue
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        os.environ.setdefault(key, value)
+
+
 def _run_app_hard_delete(what: str, run) -> None:
     """Run the app's own hard delete (apps/api/app/workers/hard_delete.py) to the end.
 
@@ -107,6 +133,7 @@ def _slugify(name: str) -> str:
 @click.group()
 def cli() -> None:
     """Perfect Day admin CLI — local dev use only."""
+    _load_api_env(API_ENV_FILE)
 
 
 # ---------------------------------------------------------------------------

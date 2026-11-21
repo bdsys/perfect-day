@@ -25,6 +25,8 @@ def manage(sync_engine, monkeypatch):
     sys.modules["manage_cli"] = module
     spec.loader.exec_module(module)
     monkeypatch.setattr(module, "_make_session", lambda: Session(sync_engine))
+    # Never load the developer's apps/api/.env into the test process.
+    monkeypatch.setattr(module, "API_ENV_FILE", Path("/nonexistent/apps/api/.env"))
     return module
 
 
@@ -407,3 +409,55 @@ def test_cli_hard_delete_with_storage_down_leaves_it_due(manage, sync_engine, ap
     with Session(sync_engine) as db:
         row = db.get(User, user_id)
         assert row is not None and row.deleted_at is not None and row.hard_delete_after is not None
+
+
+def test_cli_loads_the_api_env_file_without_overriding(manage, tmp_path, monkeypatch) -> None:
+    """Final review, Important 2: on the dev PC the app's settings come from apps/api/.env.
+
+    admin.sh runs from the repo root, whose .env is the web app's, so the app's own
+    get_settings() found nothing and every --hard delete failed half-way.
+    """
+    import os
+
+    env = tmp_path / ".env"
+    env.write_text(
+        "# comment\n"
+        "DATABASE_URL=postgresql+asyncpg://from-file\n"
+        "PD_TEST_QUOTED='quoted'\n"
+        'PD_TEST_DOUBLE="double"\n'
+        "ALREADY_SET=from-file\n"
+        "\n"
+        "NOT A SETTING\n"
+    )
+    for name in ("DATABASE_URL", "PD_TEST_QUOTED", "PD_TEST_DOUBLE"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("ALREADY_SET", "from-environment")
+
+    manage._load_api_env(env)
+
+    assert os.environ.pop("DATABASE_URL") == "postgresql+asyncpg://from-file"
+    assert os.environ.pop("PD_TEST_QUOTED") == "quoted"
+    assert os.environ.pop("PD_TEST_DOUBLE") == "double"
+    assert os.environ["ALREADY_SET"] == "from-environment"  # the container's app.env wins
+
+
+def test_cli_without_an_api_env_file_changes_nothing(manage, tmp_path, monkeypatch) -> None:
+    import os
+
+    before = dict(os.environ)
+    manage._load_api_env(tmp_path / "missing.env")
+    assert dict(os.environ) == before
+
+
+def test_cli_commands_load_the_api_env_file(manage, sync_engine, tmp_path, monkeypatch) -> None:
+    import os
+
+    env = tmp_path / ".env"
+    env.write_text("PD_TEST_ONLY_SETTING=loaded\n")
+    monkeypatch.delenv("PD_TEST_ONLY_SETTING", raising=False)
+    monkeypatch.setattr(manage, "API_ENV_FILE", env)
+
+    result = CliRunner().invoke(manage.cli, ["users", "list"])
+
+    assert result.exit_code == 0, result.output
+    assert os.environ.pop("PD_TEST_ONLY_SETTING") == "loaded"
