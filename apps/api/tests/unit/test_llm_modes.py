@@ -108,6 +108,12 @@ def _make_entry(
     return entry_id, entry, diary
 
 
+def _active_owner(temperature_unit: str = "F"):
+    from app.models import User
+
+    return User(email="owner@example.com", temperature_unit=temperature_unit)
+
+
 def _db_context(entry: MagicMock, diary: MagicMock):
     """Build a context-manager mock that sequences the three DB calls made by
     generate_draft_for_entry:
@@ -139,7 +145,9 @@ def _db_context(entry: MagicMock, diary: MagicMock):
         return result
 
     db = MagicMock()
-    db.get = AsyncMock(return_value=None)  # no owner row: the default unit, F
+    # An active owner on the default unit, F. A real diary always has an owner, and
+    # the worker skips an owner who is not active (row 53).
+    db.get = AsyncMock(return_value=_active_owner())
     db.execute = fake_execute
     db.add = MagicMock()
 
@@ -270,8 +278,7 @@ class TestOwnerTemperatureUnit:
         anthropic_p = _make_provider(name="anthropic", result=_llm_result(_EVENTS_OUTPUT))
         gemini_p = _make_provider(name="gemini", configured=False)
         ctx, _, _ = _db_context(entry, diary)
-        owner = MagicMock()
-        owner.temperature_unit = "C"
+        owner = _active_owner("C")
         db = await ctx.__aenter__()  # the same db mock every entry into ctx returns
         db.get = AsyncMock(return_value=owner)
 

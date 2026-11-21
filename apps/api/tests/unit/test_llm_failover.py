@@ -116,6 +116,12 @@ def _make_entry_and_diary():
 # DB session mock: first call loads entry+diary, second call saves result
 # ---------------------------------------------------------------------------
 
+def _active_owner(temperature_unit: str = "F"):
+    from app.models import User
+
+    return User(email="owner@example.com", temperature_unit=temperature_unit)
+
+
 def _db_context(entry, diary):
     """Return a context-manager mock that returns entry (with events) on first
     execute and a fresh entry_update on the second execute."""
@@ -146,7 +152,9 @@ def _db_context(entry, diary):
         return result
 
     db = MagicMock()
-    db.get = AsyncMock(return_value=None)  # no owner row: the default unit, F
+    # An active owner on the default unit, F. A real diary always has an owner, and
+    # the worker skips an owner who is not active (row 53).
+    db.get = AsyncMock(return_value=_active_owner())
     db.execute = fake_execute
     db.add = MagicMock()
 
