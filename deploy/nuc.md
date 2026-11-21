@@ -78,8 +78,13 @@ Commands: [`nuc-ops.md` § B7](nuc-ops.md#b7--backups).
   whole `Backups` share to an external drive kept 30 miles away; that is the offsite
   copy.
 - **Retention:** the newest 30 nights, plus the earliest night of each of the last
-  12 months. On the NAS the rule is applied to everything the NAS holds, so a
-  rebuilt machine never trims its history.
+  3 months (12 until 2026-11-20). On the NAS the rule is applied to everything the
+  NAS holds, so a rebuilt machine never trims its history. So a deleted account's
+  data is gone from the NUC within its 7-day grace and from the NUC's and NAS's
+  backups within about 4 months (Andrew, 2026-11-20). The offsite drive keeps
+  whatever was on the share when it was last copied: replace its copy with the
+  share's current contents, rather than adding to it, for the same promise to hold
+  there.
 - **Known limit (Andrew's call, 2026-11-18):** the NAS's rsync service has no password.
   Anyone on the home network can delete the backups, though not read them. The
   external drive is the cover.

@@ -23,7 +23,7 @@ from app.core.database import get_db
 from app.core.dependencies import get_redis
 from app.core.security import encrypt_oauth_token
 from app.models import OAuthToken, User
-from app.services.google_revoke import revoke_and_forget_google
+from app.services.google_revoke import revoke_and_forget_google, revoke_google_secret
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
 logger = logging.getLogger(__name__)
@@ -327,6 +327,22 @@ async def _google_callback(
     identity = _decode_id_token(token_data.get("id_token"))
     access_token = token_data.get("access_token", "")
     refresh_token = token_data.get("refresh_token", "")
+
+    # Row 55: the account may have been deleted while Google was answering. Lock the
+    # row (DELETE /v1/auth/account takes the same lock before it looks for a token)
+    # and check again. If it is gone, give back the grant Google just issued.
+    account = (
+        await db.execute(
+            select(User)
+            .where(User.id == user_id)
+            .with_for_update(key_share=True)
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one_or_none()
+    if account is None or deletion_state(account) != "active":
+        if refresh_token or access_token:
+            await revoke_google_secret(refresh_token or access_token, user_id=user_id)
+        return _redirect(web_base, return_to, google="failed", reason="account_unavailable")
     expires_in = token_data.get("expires_in", 3600)
     granted_scope_str = scope or token_data.get("scope", "")
 

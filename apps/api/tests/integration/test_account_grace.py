@@ -298,3 +298,238 @@ async def test_oauth_callback_still_connects_active_account(
 
     assert _query(r) == {"google": "connected"}
     assert await _token_count(db_session, email) == 1
+
+
+# ---------------------------------------------------------------------------
+# Row 54: restore and the hourly hard delete serialize on the user row
+# ---------------------------------------------------------------------------
+
+
+async def test_hard_delete_stops_if_restored_after_pickup(
+    client: AsyncClient, db_session: AsyncSession
+):
+    """The hourly job picked the account, then a restore landed: nothing is deleted."""
+    import uuid
+
+    from app.models import Diary
+    from app.workers.hard_delete import hard_delete_user
+
+    email = "grace-race-restored@example.com"
+    auth = await register_and_login(client, email)
+    diary = (
+        await client.post("/v1/diaries", json={"name": "D", "timezone": "UTC"}, headers=auth)
+    ).json()
+    user_id = (await db_session.execute(select(User.id).where(User.email == email))).scalar_one()
+    # As a restore leaves it: both columns cleared.
+    await _set_deletion(db_session, email, deleted_at=None, hard_delete_after=None)
+
+    await hard_delete_user(user_id)
+
+    db_session.expire_all()
+    assert (await db_session.execute(select(User.id).where(User.id == user_id))).first()
+    assert (
+        await db_session.execute(select(Diary.id).where(Diary.id == uuid.UUID(diary["id"])))
+    ).first()
+
+
+async def test_hard_delete_stops_if_deadline_not_reached(
+    client: AsyncClient, db_session: AsyncSession
+):
+    from app.workers.hard_delete import hard_delete_user
+
+    email = "grace-race-early@example.com"
+    auth = await register_and_login(client, email)
+    await client.delete(ACCOUNT, headers=auth)  # pending, deadline in 7 days
+    user_id = (await db_session.execute(select(User.id).where(User.email == email))).scalar_one()
+
+    await hard_delete_user(user_id)
+
+    db_session.expire_all()
+    assert (await db_session.execute(select(User.id).where(User.id == user_id))).first()
+
+
+async def test_restore_refuses_when_row_no_longer_pending(
+    client: AsyncClient, db_session: AsyncSession
+):
+    """The request passed the grace check, then the deadline passed before the row lock."""
+    from app.core.auth import get_current_user_within_grace
+
+    email = "grace-race-lost@example.com"
+    auth = await register_and_login(client, email)
+    await client.delete(ACCOUNT, headers=auth)
+    headers = await _bearer(client, email)
+    stale = (await db_session.execute(select(User).where(User.email == email))).scalar_one()
+    now = datetime.now(tz=UTC)
+    await _set_deletion(
+        db_session,
+        email,
+        deleted_at=now - timedelta(days=7),
+        hard_delete_after=now - timedelta(seconds=1),
+    )
+
+    app = client._transport.app  # type: ignore[attr-defined]
+
+    async def passed_grace_check() -> User:
+        return stale
+
+    app.dependency_overrides[get_current_user_within_grace] = passed_grace_check
+    try:
+        r = await client.post(RESTORE, headers=headers)
+    finally:
+        app.dependency_overrides.pop(get_current_user_within_grace, None)
+
+    assert r.status_code == 401, r.text
+    assert _detail(r) == "account_unavailable"
+    db_session.expire_all()
+    row = (await db_session.execute(select(User).where(User.email == email))).scalar_one()
+    assert row.deleted_at is not None and row.hard_delete_after is not None
+
+
+# ---------------------------------------------------------------------------
+# Row 55: a Google connect that finishes after the account was deleted
+# ---------------------------------------------------------------------------
+
+
+async def _connect_while_deleting(
+    client: AsyncClient, db_session: AsyncSession, email: str, token_response: dict
+) -> tuple[httpx.Response, list]:
+    """Run the callback; Google's token answer arrives just after the account is deleted."""
+    from app.routers.v1.integrations import GOOGLE_TOKEN_URL
+    from app.services.google_revoke import GOOGLE_REVOKE_URL
+    from tests.integration.test_google_connect_security import SCOPE_CALENDAR, _id_token
+
+    auth = await register_and_login(client, email)
+    state, _ = await _authorize(client, auth)
+    revokes: list = []
+
+    async def google(url, *args, **kwargs):
+        if url == GOOGLE_TOKEN_URL:
+            now = datetime.now(tz=UTC)
+            await _set_deletion(
+                db_session, email, deleted_at=now, hard_delete_after=now + timedelta(days=7)
+            )
+            return httpx.Response(
+                200,
+                json={
+                    "expires_in": 3600,
+                    "scope": SCOPE_CALENDAR,
+                    "id_token": _id_token("p@gmail.com"),
+                    **token_response,
+                },
+            )
+        if url == GOOGLE_REVOKE_URL:
+            revokes.append(kwargs.get("data"))
+            return httpx.Response(200, json={})
+        raise AssertionError(f"unexpected POST {url}")
+
+    with patch("httpx.AsyncClient.post", AsyncMock(side_effect=google)):
+        r = await client.get(
+            "/v1/integrations/google/callback",
+            params={"code": "c", "state": state, "scope": SCOPE_CALENDAR},
+            headers=connect_cookie_for(state),
+            follow_redirects=False,
+        )
+    return r, revokes
+
+
+async def test_callback_after_delete_revokes_new_grant(
+    client: AsyncClient, db_session: AsyncSession
+):
+    email = "grace-connect-race@example.com"
+    with _CaptureSQL() as statements:
+        r, revokes = await _connect_while_deleting(
+            client, db_session, email, {"access_token": "a1", "refresh_token": "r1"}
+        )
+    locks = _users_locks(statements)
+    assert locks and all("for no key update" in s for s in locks), locks
+
+    assert _query(r) == {"google": "failed", "reason": "account_unavailable"}
+    assert await _token_count(db_session, email) == 0
+    assert revokes == [{"token": "r1"}]
+
+
+async def test_callback_after_delete_revokes_access_only_token(
+    client: AsyncClient, db_session: AsyncSession
+):
+    email = "grace-connect-race-access@example.com"
+    r, revokes = await _connect_while_deleting(client, db_session, email, {"access_token": "a1"})
+
+    assert _query(r) == {"google": "failed", "reason": "account_unavailable"}
+    assert await _token_count(db_session, email) == 0
+    assert revokes == [{"token": "a1"}]
+
+
+async def test_delete_account_locks_user_row(client: AsyncClient):
+    """The delete takes the row lock the callback takes, before it looks for the token."""
+    from sqlalchemy import event
+
+    import app.core.database as db_module
+
+    auth = await register_and_login(client, "grace-delete-lock@example.com")
+    statements: list[str] = []
+
+    def record(conn, cursor, statement, *args):
+        statements.append(" ".join(statement.split()).lower())
+
+    engine = db_module._engine.sync_engine
+    event.listen(engine, "before_cursor_execute", record)
+    try:
+        assert (await client.delete(ACCOUNT, headers=auth)).status_code == 200
+    finally:
+        event.remove(engine, "before_cursor_execute", record)
+
+    # FOR NO KEY UPDATE, not FOR UPDATE: a plain FOR UPDATE also blocks the KEY SHARE
+    # lock every foreign-key insert takes, which deadlocks against refresh rotation.
+    lock = next(
+        (i for i, s in enumerate(statements) if "from users" in s and "for no key update" in s),
+        None,
+    )
+    tokens = next((i for i, s in enumerate(statements) if "from oauth_tokens" in s), None)
+    assert lock is not None and tokens is not None and lock < tokens, statements
+
+
+def _users_locks(statements: list[str]) -> list[str]:
+    return [s for s in statements if "from users" in s and " for " in s]
+
+
+class _CaptureSQL:
+    """Record every SQL statement the app's engine sends while the block runs."""
+
+    def __enter__(self) -> list[str]:
+        from sqlalchemy import event
+
+        import app.core.database as db_module
+
+        self.statements: list[str] = []
+        self.engine = db_module._engine.sync_engine
+        event.listen(self.engine, "before_cursor_execute", self._record)
+        return self.statements
+
+    def _record(self, conn, cursor, statement, *args) -> None:
+        self.statements.append(" ".join(statement.split()).lower())
+
+    def __exit__(self, *exc) -> None:
+        from sqlalchemy import event
+
+        event.remove(self.engine, "before_cursor_execute", self._record)
+
+
+async def test_restore_and_hard_delete_lock_without_blocking_key_share(
+    client: AsyncClient, db_session: AsyncSession
+):
+    """Every new users lock is FOR NO KEY UPDATE (final review, Important 3)."""
+    from app.workers.hard_delete import hard_delete_user
+
+    email = "grace-lock-kind@example.com"
+    auth = await register_and_login(client, email)
+    await client.delete(ACCOUNT, headers=auth)
+    headers = await _bearer(client, email)
+    with _CaptureSQL() as restore_sql:
+        assert (await client.post(RESTORE, headers=headers)).status_code == 204
+    user_id = (await db_session.execute(select(User.id).where(User.email == email))).scalar_one()
+    with _CaptureSQL() as delete_sql:
+        await hard_delete_user(user_id)  # not due: only the lock and the check run
+
+    for statements in (restore_sql, delete_sql):
+        locks = _users_locks(statements)
+        assert locks and all("for no key update" in s for s in locks), locks

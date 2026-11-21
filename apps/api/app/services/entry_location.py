@@ -115,10 +115,18 @@ async def update_place_and_weather(
     *refetch_weather*: the dates or a parent-set place changed, so stored
     weather is stale even if this run did not move the place.
     """
+    from app.core.auth import deletion_state
+    from app.models import User
     from app.workers.enrichments import enrich_entry_weather
 
     entry = await load_entry_for_location(db, entry_id)
     if entry is None or entry.deleted_at is not None:
+        return
+    # Rows 53/55 follow-up: working out the place sends the events' location text to
+    # Open-Meteo's geocoder, and the weather sends the coordinates. Nothing goes out
+    # for an account that is being deleted or blocked.
+    owner = await db.get(User, entry.diary.owner_user_id) if entry.diary else None
+    if owner is None or deletion_state(owner) != "active":
         return
     moved = await resolve_entry_location(entry, db)
     if moved or refetch_weather:

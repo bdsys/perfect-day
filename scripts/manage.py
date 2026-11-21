@@ -62,6 +62,58 @@ def _make_session() -> Session:
     return factory()
 
 
+API_ENV_FILE = REPO_ROOT / "apps" / "api" / ".env"
+
+
+def _load_api_env(env_file: Path) -> None:
+    """Fill in settings the environment lacks from apps/api/.env (quotes stripped).
+
+    The app's get_settings() reads .env from the working directory, and admin.sh runs
+    from the repo root, whose .env is the web app's. Without this every command that
+    runs the app's own code (the --hard deletes) failed on the dev PC. Inside the API
+    container (production) app.env is already in the environment and wins.
+    """
+    if not env_file.exists():
+        return
+    for line in env_file.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key, value = key.strip(), value.strip()
+        if not key.isidentifier():
+            continue
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        os.environ.setdefault(key, value)
+
+
+def _run_app_hard_delete(what: str, run) -> None:
+    """Run the app's own hard delete (apps/api/app/workers/hard_delete.py) to the end.
+
+    The row is already marked due, so if storage fails part-way the hourly job in the
+    worker finishes it. Row 51: the database cascade alone left the photos in storage.
+    """
+    import asyncio
+
+    from app.core.database import dispose_engine
+
+    async def main() -> None:
+        try:
+            await run()
+        finally:
+            await dispose_engine()
+
+    try:
+        asyncio.run(main())
+    except Exception as e:
+        raise click.ClickException(
+            f"The {what} is marked for deletion, but removing it failed "
+            f"({type(e).__name__}). The worker's hourly job will finish it; "
+            "check the worker log."
+        ) from e
+
+
 def _confirm_destructive(message: str) -> None:
     click.echo(message)
     answer = input('Type "yes" to confirm: ').strip()
@@ -81,6 +133,7 @@ def _slugify(name: str) -> str:
 @click.group()
 def cli() -> None:
     """Perfect Day admin CLI — local dev use only."""
+    _load_api_env(API_ENV_FILE)
 
 
 # ---------------------------------------------------------------------------
@@ -139,7 +192,8 @@ def users_create(email: str, password: str, tier: str, admin: bool) -> None:
 @users.command("delete")
 @click.option("--email", required=True, help="Email of user to delete.")
 @click.option("--hard", is_flag=True, default=False,
-              help="Permanently delete row (DB FK cascades). Default is soft delete.")
+              help="Permanently delete the account, its photos in storage, and Google access. "
+                   "Default is soft delete.")
 def users_delete(email: str, hard: bool) -> None:
     """Delete a user. Soft by default (sets deleted_at and cascades to diaries/entries)."""
     with _make_session() as db:
@@ -159,12 +213,16 @@ def users_delete(email: str, hard: bool) -> None:
             _confirm_destructive(
                 f"\n⚠  HARD DELETE: This will PERMANENTLY remove user "
                 f"{user.email} (id={user.id}).\n"
-                f"DB cascades will also remove: {diary_count} diary/diaries, "
-                f"{entry_count} entry/entries,\n"
-                f"plus all related rows (oauth tokens, photos, scan jobs, "
-                f"notifications, etc.).\nThis cannot be undone."
+                f"Also removed: {diary_count} diary/diaries, {entry_count} entry/entries,\n"
+                f"every stored photo and the avatar, and all related rows; "
+                f"Google access is revoked.\nThis cannot be undone."
             )
-            db.delete(user)
+            # Mark it due first, as the app's own deletion would leave it, so the
+            # hourly job finishes the delete if storage fails part-way.
+            now = datetime.now(UTC)
+            user.deleted_at = user.deleted_at or now
+            user.hard_delete_after = now
+            hard_user_id = user.id
         else:
             _confirm_destructive(
                 f"\nThis will soft-delete user {user.email} (id={user.id}) and cascade to:\n"
@@ -179,6 +237,10 @@ def users_delete(email: str, hard: bool) -> None:
             if diary_ids:
                 db.query(Entry).filter(Entry.diary_id.in_(diary_ids)).update({"deleted_at": now})
         db.commit()
+    if hard:
+        from app.workers.hard_delete import hard_delete_user
+
+        _run_app_hard_delete("user", lambda: hard_delete_user(hard_user_id))
     click.echo(f"{'Hard-deleted' if hard else 'Soft-deleted'} user {email}.")
 
 
@@ -286,7 +348,8 @@ def diaries_create(email: str, name: str, tz: str) -> None:
 @diaries.command("delete")
 @click.option("--diary-id", required=True, help="UUID of the diary to delete.")
 @click.option("--hard", is_flag=True, default=False,
-              help="Permanently delete row (DB FK cascades). Default is soft delete.")
+              help="Permanently delete the diary and the photos only it uses, storage "
+                   "included. Default is soft delete.")
 def diaries_delete(diary_id: str, hard: bool) -> None:
     """Delete a diary. Soft by default (sets deleted_at and cascades to entries)."""
     with _make_session() as db:
@@ -304,10 +367,15 @@ def diaries_delete(diary_id: str, hard: bool) -> None:
             _confirm_destructive(
                 f"\n⚠  HARD DELETE: This will PERMANENTLY remove diary "
                 f"{diary.name!r} (id={diary.id}).\n"
-                f"DB cascades will remove {entry_count} entry/entries plus scan_job, "
-                f"permissions, photos, etc.\nThis cannot be undone."
+                f"Also removed: {entry_count} entry/entries, the photos no other diary "
+                f"uses (from storage too), scan state and permissions.\nThis cannot be undone."
             )
-            db.delete(diary)
+            now = datetime.now(UTC)
+            diary.deleted_at = diary.deleted_at or now
+            diary.hard_delete_after = now
+            db.query(Entry).filter(Entry.diary_id == did, Entry.deleted_at.is_(None)).update(
+                {"deleted_at": now}
+            )
         else:
             _confirm_destructive(
                 f"\nThis will soft-delete diary {diary.name!r} (id={diary.id}) and "
@@ -317,6 +385,10 @@ def diaries_delete(diary_id: str, hard: bool) -> None:
             diary.deleted_at = now
             db.query(Entry).filter(Entry.diary_id == did).update({"deleted_at": now})
         db.commit()
+    if hard:
+        from app.workers.hard_delete import hard_delete_diary
+
+        _run_app_hard_delete("diary", lambda: hard_delete_diary(did))
     click.echo(f"{'Hard-deleted' if hard else 'Soft-deleted'} diary {diary_id}.")
 
 

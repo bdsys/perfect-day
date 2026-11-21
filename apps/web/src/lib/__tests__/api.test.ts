@@ -88,6 +88,22 @@ describe("API error parsing", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("row 54: a 401 saying the account is gone is reported as is, without a refresh", async () => {
+    const fetchMock = respond(401, { error: { code: "http_error", message: "account_unavailable" } });
+    await expect(api.auth.restoreAccount()).rejects.toMatchObject({
+      name: "ApiError",
+      status: 401,
+      code: "account_unavailable",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("an ordinary 401 still tries a refresh first", async () => {
+    const fetchMock = respond(401, { error: { code: "http_error", message: "unauthorized" } });
+    await expect(api.diaries.list()).rejects.toThrow("unauthorized");
+    expect(fetchMock.mock.calls.some(([u]) => String(u).endsWith("/v1/auth/refresh"))).toBe(true);
+  });
+
   it("falls back to the status when the body is not JSON", async () => {
     global.fetch = jest.fn().mockResolvedValue({
       ok: false,

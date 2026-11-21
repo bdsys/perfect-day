@@ -19,7 +19,9 @@ PD_STATUS="${PD_LOG_DIR}/backup-status.json"
 PD_PUB="${PD_ETC}/backup.pub"
 PD_KEY="${PD_ETC}/backup.key"
 PD_KEEP_NEWEST=30
-PD_KEEP_MONTHS=12
+# 3, not 12 (Andrew, 2026-11-20): a deleted account's data then leaves the backups
+# within about 4 months (row 51's follow-up in POC_PHASE2_TODO.md).
+PD_KEEP_MONTHS=3
 
 backup_log() { echo "[backup $(date -u +%FT%TZ)] $*"; }
 
@@ -66,7 +68,7 @@ compose_serves_store() {
 
 # backup_keep_list <today YYYY-MM-DD> <folder names...>
 # Prints the folder names to keep, sorted: the newest 30, plus the earliest of
-# each calendar month among the 12 months ending with today's month. Names that
+# each calendar month among the 3 months ending with today's month. Names that
 # are not dates are ignored (and never printed).
 backup_keep_list() {
     local today="$1"; shift

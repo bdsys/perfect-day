@@ -167,6 +167,8 @@ Celery beat task daily:
 1. `pg_dump` is **encrypted with `age`** using a backup public key before it leaves the host. The corresponding private key is stored **separately from `master_secret`** — ideally on a different device or in a different secret store managed by a different operator. Without this separation, anyone who obtains both the backup bucket and `master_secret` can decrypt every historical photo and OAuth token.
 2. (Superseded: backups are the nightly encrypted NAS copies of tracker row 36; see `deploy/nuc.md` § Backup.)
 
+**Deleted data and backups.** A backup holds everything as it was that night, keys included, so a deleted account stays recoverable from older backups until they expire. Backups keep the newest 30 nights plus one per month for 3 months (Andrew, 2026-11-20), so deleted data leaves the backups within about 4 months. Removing one account from an existing backup is not done: each night is one encrypted bundle, and expiry is the lever.
+
 Backup destinations and operator-separation specifics are deployment concerns — see [`deploy/nuc.md`](../deploy/nuc.md) and `deploy/cloud.md`. This is irreplaceable family data.
 
 ## Subscription tier downgrade
