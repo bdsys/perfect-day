@@ -343,6 +343,21 @@ and volumes. It starts postgres and Garage, and nights from before the move to G
 sudo /opt/perfect-day/scripts/nuc/restore.sh 2026-11-18 --from-nas
 ```
 
+**A restore brings deleted accounts back.** The night's copy holds every account and diary as it was then, photos included, so anything deleted after that night is back, and nobody is told. Until tracker row 67 makes the restore deal with this, check accounts by hand when the NUC's database still works:
+
+```bash
+# before restore.sh: save the account list (root-only; it holds emails)
+sudo sh -c 'umask 077; /opt/perfect-day/scripts/admin.sh users list > /var/backups/perfect-day/users-before-restore.txt'
+# after restore.sh
+sudo /opt/perfect-day/scripts/admin.sh users list
+```
+
+- An account in the new list but not in the saved one was permanently deleted after that night: `sudo ./scripts/admin.sh users delete --email <email> --hard`.
+- An account with a DELETED date in the saved list but none now had asked to be deleted: `sudo ./scripts/admin.sh users delete --email <email>` marks it deleted again (it is not then removed on its old deadline; hard-delete it on that date).
+- Then `sudo rm /var/backups/perfect-day/users-before-restore.txt`.
+
+Deleted diaries can't be checked this way, and after losing the NUC there is no list to compare with. Both wait for row 67.
+
 **Ad-hoc dump before a big change** (stays on the NUC, never copied to the NAS):
 
 ```bash
