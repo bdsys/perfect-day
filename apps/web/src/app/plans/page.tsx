@@ -5,6 +5,8 @@ const ROWS: { label: string; values: string[] }[] = [
   { label: 'Diaries', values: ['1', '2', '4'] },
   { label: 'AI drafts per month', values: ['5', 'Unlimited', 'Unlimited'] },
   { label: 'Photos per entry', values: ['1', 'Unlimited', 'Unlimited'] },
+  { label: 'People who can read', values: ['3', '10 per diary', 'Unlimited'] },
+  { label: 'Editors', values: ['—', '—', '✓'] },
   { label: 'Manual entries', values: ['Unlimited', 'Unlimited', 'Unlimited'] },
   { label: 'Backfill', values: ['—', '✓', '✓'] },
 ]
