@@ -362,8 +362,8 @@ async def _entry_is_full(db: AsyncSession, entry_id: uuid.UUID, *, lock: bool = 
 async def _can_still_edit(db: AsyncSession, entry_id: uuid.UUID, user_id: uuid.UUID) -> bool:
     """One scalar query mirroring _get_entry_or_404(require_editor=True).
 
-    The entry and its diary are not deleted and the user owns the diary or holds a
-    permission that is not "viewer". Scalars, not ORM objects, so a role changed
+    The entry and its diary are not deleted and the user owns the diary or holds an
+    editor permission that counts (effective_role: the owner is on Family). Scalars, not ORM objects, so a role changed
     since an earlier load is never served from the identity map. A diary over its
     owner's plan limit is read-only, so nobody can edit it.
     """

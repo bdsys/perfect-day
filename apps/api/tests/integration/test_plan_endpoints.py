@@ -74,6 +74,7 @@ async def test_editor_on_free_owner_diary_cannot_regenerate(
         r = await client.post(f"/v1/entries/{entry.id}/regenerate", headers=_auth(editor))
     # Off Family the editor acts as a viewer, so the request is refused before any quota check.
     assert r.status_code == 403
+    assert r.json()["error"]["message"] == "forbidden"  # not a tier_limit from the quota
     delay.assert_not_called()
 
 
@@ -142,6 +143,24 @@ async def test_diary_and_entry_detail_carry_owner_plan(
     e2 = (await client.get(f"/v1/entries/{second_entry.id}", headers=_auth(owner))).json()
     assert d2["plan"]["read_only"] is True
     assert e2["plan"]["read_only"] is True
+
+
+async def test_editor_gets_the_family_owners_plan(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    owner = await make_user(db_session, subscription_tier="family")
+    diary = await make_diary(db_session, owner)
+    entry = await make_entry(db_session, diary)
+    editor = await make_user(db_session, subscription_tier="free")  # plan irrelevant
+    db_session.add(DiaryPermission(diary_id=diary.id, user_id=editor.id, role="editor"))
+    await db_session.commit()
+
+    d = (await client.get(f"/v1/diaries/{diary.id}", headers=_auth(editor))).json()
+    e = (await client.get(f"/v1/entries/{entry.id}", headers=_auth(editor))).json()
+    for plan in (d["plan"], e["plan"]):
+        assert plan["tier"] == "family"
+        assert plan["read_only"] is False
+        assert plan["ai_drafts_limit"] is None
 
 
 async def test_plan_only_on_detail_gets(client: AsyncClient, db_session: AsyncSession) -> None:

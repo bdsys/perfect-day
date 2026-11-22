@@ -986,3 +986,14 @@ async def test_can_still_edit_owner_editor_viewer(client, db_session):
     )
     assert perm.role == "editor"  # the identity map is stale on purpose
     assert await _can_still_edit(db_session, entry_id, user_id) is False
+
+    # An editor whose owner is off Family acts as a viewer.
+    await db_session.execute(
+        update(DiaryPermission).where(DiaryPermission.id == perm.id).values(role="editor")
+    )
+    assert await _can_still_edit(db_session, entry_id, user_id) is True
+    await db_session.execute(
+        update(User).where(User.id == owner_id).values(subscription_tier="plus")
+    )
+    await db_session.commit()
+    assert await _can_still_edit(db_session, entry_id, user_id) is False

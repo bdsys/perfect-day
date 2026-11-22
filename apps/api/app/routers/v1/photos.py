@@ -149,6 +149,7 @@ async def _readable_photo(photo_id: uuid.UUID, user: User, db: AsyncSession) -> 
     owner = aliased(User)
     role_ok = or_(
         Diary.owner_user_id == user.id,
+        # "family" must match the tiers with PLAN_LIMITS[...].editors in services/tier.py.
         and_(DiaryPermission.role == "editor", owner.subscription_tier == "family"),
         and_(DiaryPermission.user_id.is_not(None), Entry.status == "published"),
     )

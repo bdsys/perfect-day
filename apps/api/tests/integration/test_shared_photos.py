@@ -232,7 +232,7 @@ async def test_viewer_of_published_entry_cannot_read_photo_only_on_other_diarys_
     auth, _, _ = await _setup(client, db_session, prefix, published=True)  # diary A, published
     viewer = auth["viewer"]
     # Diary B: the same viewer may view it, but the only entry holding the photo is a draft.
-    owner_b = await _register(client, f"{prefix}-owner-b@example.com")  # free tier: one diary each
+    owner_b = await _register(client, f"{prefix}-owner-b@example.com")  # own owner, own diary
     await db_session.execute(
         update(User)
         .where(User.email == f"{prefix}-owner-b@example.com")

@@ -50,14 +50,19 @@ async def _setup(client, db_session, prefix, tier="plus"):
             f"/v1/diaries/{diary['id']}/entries", json={"entry_date": "2026-05-17"}, headers=owner
         )
     ).json()
+    pub_pid = await upload_photo(client, owner, read_fixture("sample.jpg"))
+    r = await client.post(
+        f"/v1/entries/{published['id']}/photos", json={"photo_id": pub_pid}, headers=owner
+    )
+    assert r.status_code == 201, r.text
     r = await client.post(f"/v1/entries/{published['id']}/publish", headers=owner)
     assert r.status_code == 200, r.text
-    return owner, editor, diary, draft, published, pid
+    return owner, editor, diary, draft, published, pid, pub_pid
 
 
 @pytest.mark.asyncio
 async def test_downgraded_editor_cannot_see_drafts(client, db_session):
-    _, editor, diary, draft, published, _ = await _setup(client, db_session, "dd1")
+    _, editor, diary, draft, published, _, _ = await _setup(client, db_session, "dd1")
     r = await client.get(f"/v1/diaries/{diary['id']}/entries", headers=editor)
     assert r.status_code == 200, r.text
     ids = {e["id"] for e in r.json()}
@@ -69,21 +74,28 @@ async def test_downgraded_editor_cannot_see_drafts(client, db_session):
 
 @pytest.mark.asyncio
 async def test_downgraded_editor_cannot_read_draft_photo(client, db_session):
-    _, editor, _, _, _, pid = await _setup(client, db_session, "dd2")
+    _, editor, _, _, _, pid, _ = await _setup(client, db_session, "dd2")
     r = await client.get(f"/v1/photos/{pid}", headers=editor)
     assert r.status_code == 404
 
 
 @pytest.mark.asyncio
+async def test_downgraded_editor_can_read_published_photo(client, db_session):
+    _, editor, _, _, _, _, pub_pid = await _setup(client, db_session, "dd5")
+    r = await client.get(f"/v1/photos/{pub_pid}", headers=editor)
+    assert r.status_code == 200, r.text
+
+
+@pytest.mark.asyncio
 async def test_downgraded_editor_cannot_edit(client, db_session):
-    _, editor, _, _, published, _ = await _setup(client, db_session, "dd3")
+    _, editor, _, _, published, _, _ = await _setup(client, db_session, "dd3")
     r = await client.patch(f"/v1/entries/{published['id']}", json={"title": "x"}, headers=editor)
     assert r.status_code == 403, r.text
 
 
 @pytest.mark.asyncio
 async def test_family_editor_still_edits(client, db_session):
-    _, editor, _, _, published, pid = await _setup(client, db_session, "dd4", tier="family")
+    _, editor, _, _, published, pid, _ = await _setup(client, db_session, "dd4", tier="family")
     r = await client.patch(f"/v1/entries/{published['id']}", json={"title": "x"}, headers=editor)
     assert r.status_code == 200, r.text
     r = await client.get(f"/v1/photos/{pid}", headers=editor)
