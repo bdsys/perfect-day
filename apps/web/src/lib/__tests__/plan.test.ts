@@ -1,7 +1,7 @@
 import { ApiError } from '../api'
 import {
   limitColor, formatResetDate, diaryLimitNote, limitMessage, readOnlyBanner,
-  PHOTO_LIMIT_NOTE, BACKFILL_LIMIT_NOTE,
+  PHOTO_LIMIT_NOTE, BACKFILL_LIMIT_NOTE, peopleCounter, peopleLimitNote,
 } from '../plan'
 
 describe('limitColor', () => {
@@ -89,5 +89,25 @@ describe('limitMessage', () => {
 
   it('BACKFILL_LIMIT_NOTE is the agreed copy', () => {
     expect(BACKFILL_LIMIT_NOTE).toBe('Backfill is on Plus and Family. Free scans look back 90 days.')
+  })
+})
+
+describe('sharing copy', () => {
+  it('peopleCounter', () => {
+    expect(peopleCounter(2, 3)).toBe('Shared with 2 of 3 people')
+    expect(peopleCounter(1, 3)).toBe('Shared with 1 of 3 people')
+    expect(peopleCounter(2, null)).toBe('Shared with 2 people')
+    expect(peopleCounter(1, null)).toBe('Shared with 1 person')
+  })
+
+  it('peopleLimitNote', () => {
+    expect(peopleLimitNote('Free', 3)).toBe('Free plan: 3 people per diary.')
+  })
+
+  it('limitMessage handles people and editor', () => {
+    const people = new ApiError(403, 'tier_limit', 'tier_limit', { source: 'people', limit: 3 })
+    expect(limitMessage(people, { plan_name: 'Free', resets_on: '2026-12-01' })).toBe('Free plan: 3 people per diary.')
+    const editor = new ApiError(403, 'tier_limit', 'tier_limit', { source: 'editor' })
+    expect(limitMessage(editor)).toBe('Editors are on the Family plan.')
   })
 })

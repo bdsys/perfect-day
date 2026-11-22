@@ -14,6 +14,7 @@ import { navigateTo } from '@/lib/navigate'
 import { useResetOnBfcacheRestore } from '@/lib/useResetOnBfcacheRestore'
 import PlanBadge from '@/components/PlanBadge'
 import LimitNote from '@/components/LimitNote'
+import DeletionNotice from '@/components/DeletionNotice'
 import { BACKFILL_LIMIT_NOTE, formatResetDate, limitMessage, readOnlyBanner } from '@/lib/plan'
 
 // Must match the API's default page size for GET /v1/diaries/{id}/entries.
@@ -76,6 +77,7 @@ export default function DiaryDetailPage() {
   const [latestRun, setLatestRun] = useState<ScanRun | null>(null)
   const [creating, setCreating] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [leaving, setLeaving] = useState(false)
   const [statusFilter, setStatusFilter] = useState('')
   const [showScanOptions, setShowScanOptions] = useState(false)
   const [pastDays, setPastDays] = useState(90)
@@ -387,6 +389,24 @@ export default function DiaryDetailPage() {
     }
   }
 
+  async function handleLeaveDiary() {
+    if (!user || !confirm(`Leave ${diary?.name ?? 'this diary'}? You'll need a new invite to see it again.`)) return
+    setLeaving(true)
+    try {
+      await api.sharing.remove(diaryId, user.id)
+      router.push('/diaries')
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Could not leave the diary')
+      setLeaving(false)
+    }
+  }
+
+  // The layout follows the caller's role on this diary. Scan and calendar
+  // logic below still follows scanAccess (only the owner may scan).
+  const isDiaryOwner = diary?.role === 'owner'
+  const isViewer = diary?.role === 'viewer'
+  const isMember = diary?.role === 'editor' || isViewer
+
   // Scan and Backfill read the owner's Google Calendar and only the owner may
   // start them (decision 2026-11-12). The hint says why they are switched off.
   const isOwner = scanAccess?.can_scan ?? false
@@ -397,7 +417,7 @@ export default function DiaryDetailPage() {
   const backfillOff = diary?.plan?.backfill === false
   const pastDaysMax = diary?.plan?.scan_past_days_max ?? null
   const calendarOff = readOnly || !isOwner || calendar !== 'connected'
-  const scanHint = !scanAccess ? undefined
+  const scanHint = !scanAccess || isViewer ? undefined
     : !isOwner ? OWNER_ONLY_HINT
     : calendar !== 'connected' ? CALENDAR_HINT
     : undefined
@@ -409,6 +429,16 @@ export default function DiaryDetailPage() {
     <>
       <AppHeader />
       <div className="container" style={{ paddingTop: '1.5rem' }}>
+        {diary?.deletion_notice && (
+          <DeletionNotice
+            notice={diary.deletion_notice}
+            diaryId={diaryId}
+            diaryName={diary.name}
+            onDeclined={() => {
+              api.diaries.get(diaryId).then(setDiary).catch((e: unknown) => setError(e instanceof Error ? e.message : 'Failed to refresh'))
+            }}
+          />
+        )}
         {readOnly && diary?.plan && (
           <div className="error-message" style={{ marginBottom: '1rem' }}>
             <p style={{ margin: 0 }}>{readOnlyBanner(diary.plan.plan_name)}</p>
@@ -436,13 +466,27 @@ export default function DiaryDetailPage() {
           </div>
         )}
         <div className="page-header">
-          <h1 className="page-title">{diary?.name ?? 'Diary'}</h1>
+          <div>
+            <h1 className="page-title">{diary?.name ?? 'Diary'}</h1>
+            {isMember && diary?.owner_name && (
+              <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-muted)' }}>Shared by {diary.owner_name}</p>
+            )}
+          </div>
           <div className="page-actions">
-            {readOnly ? (
+            {isDiaryOwner && (readOnly ? (
               <button type="button" className="btn btn-secondary" disabled>Settings</button>
             ) : (
               <Link href={`/diaries/${diaryId}/settings`} className="btn btn-secondary">Settings</Link>
+            ))}
+            {isDiaryOwner && (
+              <Link href={`/diaries/${diaryId}/sharing`} className="btn btn-secondary">Share</Link>
             )}
+            {isMember && (
+              <button type="button" className="btn btn-secondary" onClick={handleLeaveDiary} disabled={leaving}>
+                {leaving ? 'Leaving…' : 'Leave diary'}
+              </button>
+            )}
+            {!isViewer && (<>
             {isOwner && calendar === 'connected' ? (
               <span className="btn btn-secondary" style={{ cursor: 'default', opacity: 0.7 }}>
                 Connected: {googleIntegration?.google_name ?? 'Google account'}
@@ -635,13 +679,16 @@ export default function DiaryDetailPage() {
             <Link href={`/diaries/${diaryId}/restore`} className="btn btn-secondary">
               Deleted entries
             </Link>
-            <button className="btn btn-danger" onClick={handleDeleteDiary} disabled={deleting}>
-              {deleting ? 'Deleting…' : 'Delete diary'}
-            </button>
+            {isDiaryOwner && (
+              <button className="btn btn-danger" onClick={handleDeleteDiary} disabled={deleting}>
+                {deleting ? 'Deleting…' : 'Delete diary'}
+              </button>
+            )}
+            </>)}
           </div>
         </div>
 
-        {calendar === 'lost' && (
+        {!isViewer && calendar === 'lost' && (
           <div className="error-message" role="alert" style={{ marginBottom: '1rem' }}>
             {isOwner ? (
               <>
@@ -736,7 +783,7 @@ export default function DiaryDetailPage() {
           </button>
         )}
 
-        <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+        {!isViewer && <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
           {['', 'draft', 'published'].map((f) => (
             <button
               key={f}
@@ -746,11 +793,13 @@ export default function DiaryDetailPage() {
               {f === '' ? 'All' : f.charAt(0).toUpperCase() + f.slice(1)}
             </button>
           ))}
-        </div>
+        </div>}
 
         {entries.length === 0 ? (
           <div className="empty-state">
-            {isOwner ? (
+            {isViewer ? (
+              <p>No entries shared yet.</p>
+            ) : isOwner ? (
               <p>
                 No entries yet. Create one manually, pick from Google Calendar, or{' '}
                 <Link href={`/diaries/${diaryId}/rules`}>set up auto-creation rules</Link>.

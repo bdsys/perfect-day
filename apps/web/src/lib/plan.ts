@@ -32,6 +32,19 @@ export function aiEntryNote(resetsOn: string): string {
   return `Out of AI drafts until ${formatResetDate(resetsOn)}. Write it yourself, or generate it then.`
 }
 
+/** "Shared with 2 of 3 people"; with no limit "Shared with 2 people" / "Shared with 1 person". */
+export function peopleCounter(used: number, limit: number | null): string {
+  if (limit == null) return `Shared with ${used} ${used === 1 ? 'person' : 'people'}`
+  return `Shared with ${used} of ${limit} people`
+}
+
+/** "Free plan: 3 people per diary." */
+export function peopleLimitNote(planName: string | null, n: number): string {
+  return `${planName ? `${planName} plan` : 'Your plan'}: ${n} ${n === 1 ? 'person' : 'people'} per diary.`
+}
+
+export const EDITOR_LIMIT_NOTE = 'Editors are on the Family plan.'
+
 export const PHOTO_LIMIT_NOTE = 'Free plan: 1 photo per entry.'
 
 export const BACKFILL_LIMIT_NOTE = 'Backfill is on Plus and Family. Free scans look back 90 days.'
@@ -61,6 +74,10 @@ export function limitMessage(
       return PHOTO_LIMIT_NOTE
     case 'diary':
       return diaryLimitNote(planName, typeof details.limit === 'number' ? details.limit : 1)
+    case 'people':
+      return peopleLimitNote(planName, typeof details.limit === 'number' ? details.limit : 0)
+    case 'editor':
+      return EDITOR_LIMIT_NOTE
     case 'diary_read_only':
       return readOnlyBanner(planName)
     case 'backfill':

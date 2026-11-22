@@ -21,3 +21,8 @@ export function formatDateRange(
   }
   return `${formatDate(startDate)} – ${formatDate(endDate)}`
 }
+
+/** An ISO timestamp as "Nov 29" in the browser's zone. */
+export function formatShortDate(iso: string): string {
+  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+}

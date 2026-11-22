@@ -20,6 +20,7 @@ jest.mock('@/lib/api', () => {
         triggerScan: jest.fn(),
       },
       entries: { list: jest.fn(), get: jest.fn(), aiStatus: jest.fn() },
+      sharing: { remove: jest.fn(), decline: jest.fn() },
       integrations: { list: jest.fn(), getGoogleAuthUrl: jest.fn() },
     },
   }
@@ -31,8 +32,9 @@ jest.mock('@/lib/auth-context', () => {
   return { useAuth: () => value }
 })
 
+const mockPush = jest.fn()
 jest.mock('next/navigation', () => ({
-  useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
+  useRouter: () => ({ push: mockPush, replace: jest.fn() }),
   useParams: () => ({ diaryId: 'diary-1' }),
 }))
 
@@ -69,7 +71,7 @@ async function runBackfill(run: BackfillRun) {
 
 beforeEach(() => {
   jest.clearAllMocks()
-  ;(api.diaries.get as jest.Mock).mockResolvedValue({ id: 'diary-1', name: 'Emma diary' })
+  ;(api.diaries.get as jest.Mock).mockResolvedValue({ id: 'diary-1', name: 'Emma diary', role: 'owner', owner_name: 'Me' })
   ;(api.diaries.getScanConfig as jest.Mock).mockResolvedValue({
     can_scan: true,
     calendar: 'connected',
@@ -233,7 +235,7 @@ describe('DiaryDetailPage connect calendar', () => {
 describe('diary page: read-only plan', () => {
   it('shows the banner, disables the write controls and leaves Delete diary enabled', async () => {
     ;(api.diaries.get as jest.Mock).mockResolvedValue({
-      id: 'diary-1', name: 'Emma diary',
+      id: 'diary-1', name: 'Emma diary', role: 'owner', owner_name: 'Me',
       plan: { tier: 'free', plan_name: 'Free', ai_drafts_limit: 5, ai_drafts_left: 2, resets_on: '2026-12-01', photos_per_entry: 1, read_only: true },
     })
     ;(api.entries.list as jest.Mock).mockResolvedValue([])
@@ -250,7 +252,7 @@ describe('diary page: read-only plan', () => {
 
   it('a Plus diary that is not read-only has no badge and enabled controls', async () => {
     ;(api.diaries.get as jest.Mock).mockResolvedValue({
-      id: 'diary-1', name: 'Emma diary',
+      id: 'diary-1', name: 'Emma diary', role: 'owner', owner_name: 'Me',
       plan: { tier: 'plus', plan_name: 'Plus', ai_drafts_limit: null, ai_drafts_left: null, resets_on: '2026-12-01', photos_per_entry: null, read_only: false },
     })
     ;(api.entries.list as jest.Mock).mockResolvedValue([])
@@ -263,7 +265,7 @@ describe('diary page: read-only plan', () => {
 
 describe('diary page: plan copy', () => {
   const freeDiary = {
-    id: 'diary-1', name: 'Emma diary',
+    id: 'diary-1', name: 'Emma diary', role: 'owner', owner_name: 'Me',
     plan: { tier: 'free', plan_name: 'Free', ai_drafts_limit: 5, ai_drafts_left: 2, resets_on: '2026-12-01', photos_per_entry: 1, read_only: false, backfill: false, scan_past_days_max: 90 },
   }
 
@@ -313,7 +315,7 @@ describe('diary page: plan copy', () => {
 
 describe('diary page: gray out what the API refuses', () => {
   const planOf = (over: Record<string, unknown>) => ({
-    id: 'diary-1', name: 'Emma diary',
+    id: 'diary-1', name: 'Emma diary', role: 'owner', owner_name: 'Me',
     plan: { tier: 'free', plan_name: 'Free', ai_drafts_limit: 5, ai_drafts_left: 2, resets_on: '2026-12-01', photos_per_entry: 1, read_only: false, backfill: false, scan_past_days_max: 90, ...over },
   })
   const BACKFILL_NOTE = 'Backfill is on Plus and Family. Free scans look back 90 days.'
@@ -547,5 +549,77 @@ describe('diary page: AI status', () => {
     await tick()
     expect(await screen.findByText('Old one')).toBeInTheDocument()
     expect(api.entries.get).toHaveBeenCalledWith('old')
+  })
+})
+
+describe('DiaryDetailPage roles', () => {
+  const memberDiary = (role: string, extra: object = {}) => ({
+    id: 'diary-1', name: 'Emma diary', role, owner_name: 'Sam', ...extra,
+  })
+
+  it('shows an owner the Share link and no Leave', async () => {
+    render(<DiaryDetailPage />)
+    expect(await screen.findByRole('link', { name: 'Share' })).toHaveAttribute('href', '/diaries/diary-1/sharing')
+    expect(screen.queryByRole('button', { name: 'Leave diary' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/Shared by/)).not.toBeInTheDocument()
+  })
+
+  it('shows a viewer only the title, the byline and the entries', async () => {
+    ;(api.diaries.get as jest.Mock).mockResolvedValue(memberDiary('viewer'))
+    ;(api.diaries.getScanConfig as jest.Mock).mockResolvedValue({ can_scan: false, calendar: 'connected' })
+    render(<DiaryDetailPage />)
+    expect(await screen.findByText('Shared by Sam')).toBeInTheDocument()
+    expect(screen.getByText('No entries shared yet.')).toBeInTheDocument()
+    for (const name of ['Scan now', 'Backfill', 'New entry', 'Delete diary', 'All', 'Draft', 'Published', 'Auto-Creation Rules']) {
+      expect(screen.queryByRole('button', { name })).not.toBeInTheDocument()
+    }
+    for (const name of ['Settings', 'Photos', 'Deleted entries', 'Share']) {
+      expect(screen.queryByRole('link', { name })).not.toBeInTheDocument()
+    }
+    expect(screen.getByRole('button', { name: 'Leave diary' })).toBeInTheDocument()
+  })
+
+  it('a viewer still gets Load older entries', async () => {
+    ;(api.diaries.get as jest.Mock).mockResolvedValue(memberDiary('viewer'))
+    ;(api.entries.list as jest.Mock).mockResolvedValue(
+      Array.from({ length: 20 }, (_, i) => ({
+        id: `e${i}`, status: 'published', entry_date: '2026-11-01', entry_end_date: null,
+        title: `T${i}`, body_markdown: 'b', events: [],
+      })),
+    )
+    render(<DiaryDetailPage />)
+    expect(await screen.findByRole('button', { name: 'Load older entries' })).toBeInTheDocument()
+  })
+
+  it('an editor loses Settings and Delete diary but keeps the rest', async () => {
+    ;(api.diaries.get as jest.Mock).mockResolvedValue(memberDiary('editor'))
+    ;(api.diaries.getScanConfig as jest.Mock).mockResolvedValue({ can_scan: false, calendar: 'connected' })
+    render(<DiaryDetailPage />)
+    expect(await screen.findByText('Shared by Sam')).toBeInTheDocument()
+    expect(screen.queryByText('Settings')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Delete diary' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'New entry' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Deleted entries' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Leave diary' })).toBeInTheDocument()
+  })
+
+  it('Leave diary confirms, removes me and goes to the diaries list', async () => {
+    ;(api.diaries.get as jest.Mock).mockResolvedValue(memberDiary('viewer'))
+    ;(api.sharing.remove as jest.Mock).mockResolvedValue(undefined)
+    const confirm = jest.spyOn(window, 'confirm').mockReturnValue(true)
+    render(<DiaryDetailPage />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Leave diary' }))
+    expect(confirm).toHaveBeenCalledWith("Leave Emma diary? You'll need a new invite to see it again.")
+    await waitFor(() => expect(api.sharing.remove).toHaveBeenCalledWith('diary-1', 'u1'))
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith('/diaries'))
+    confirm.mockRestore()
+  })
+
+  it('shows the deletion notice to a member', async () => {
+    ;(api.diaries.get as jest.Mock).mockResolvedValue(
+      memberDiary('viewer', { deletion_notice: { owner_name: 'Sam', deletes_on: '2026-11-29T12:00:00Z', becomes_yours: false } }),
+    )
+    render(<DiaryDetailPage />)
+    expect(await screen.findByText(/Sam is deleting their account\. Emma diary will be deleted on/)).toBeInTheDocument()
   })
 })
