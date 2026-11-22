@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from app.models import DiaryPermission, Entry, User
 from tests.fixtures.factories import make_event
@@ -56,6 +56,12 @@ async def _shared_entry_with_event(client, db_session, role: str, prefix: str):
         },
     )
     await client.post(f"/v1/entries/{entry['id']}/publish", headers=owner_auth)
+    await db_session.execute(
+        update(User)
+        .where(User.email == f"{prefix}-owner@example.com")
+        .values(subscription_tier="family")
+    )
+    await db_session.commit()
 
     r = await client.post(
         "/v1/auth/register",
@@ -102,9 +108,7 @@ class TestEventAddressesStayWithTheOwner:
             assert event["description"] == DESCRIPTION
             assert event["start"] == {"dateTime": "2026-05-16T09:00:00-07:00"}
 
-    async def test_editor_gets_no_address_or_attendees_even_when_editing(
-        self, client, db_session
-    ):
+    async def test_editor_gets_no_address_or_attendees_even_when_editing(self, client, db_session):
         _, editor_auth, diary, entry = await _shared_entry_with_event(
             client, db_session, "editor", "s13-edit"
         )

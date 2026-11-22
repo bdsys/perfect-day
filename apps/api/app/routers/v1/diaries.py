@@ -16,6 +16,7 @@ from app.core.database import get_db
 from app.models import AuditLog, Diary, DiaryPermission, ScanJob, User
 from app.services.plan_view import OwnerPlanOut, owner_plan_out
 from app.services.read_only import ensure_diary_writable
+from app.services.sharing import effective_role
 from app.services.tier import limits_for, tier_limit_error
 
 router = APIRouter(prefix="/diaries", tags=["diaries"])
@@ -108,7 +109,7 @@ async def _get_diary_or_404(
     db: AsyncSession,
     require_owner: bool = False,
 ) -> tuple[Diary, str | None]:
-    """Return (diary, role) or raise 404. role is None for owner."""
+    """Return (diary, role) or raise 404. role is None for owner, else the effective role."""
     result = await db.execute(select(Diary).where(Diary.id == diary_id, Diary.deleted_at.is_(None)))
     diary = result.scalar_one_or_none()
     if diary is None:
@@ -131,7 +132,11 @@ async def _get_diary_or_404(
         raise HTTPException(status_code=404, detail="not_found")
     if require_owner:
         raise HTTPException(status_code=403, detail="forbidden")
-    return diary, perm.role
+    # An editor whose owner is off the Family plan acts as a viewer; the stored role is kept.
+    owner_tier = (
+        await db.execute(select(User.subscription_tier).where(User.id == diary.owner_user_id))
+    ).scalar_one_or_none()
+    return diary, effective_role(perm.role, owner_tier or "free")
 
 
 def _diary_out(diary: Diary, *, is_owner: bool) -> DiaryOut:

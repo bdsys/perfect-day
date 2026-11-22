@@ -205,8 +205,9 @@ async def test_import_worker_stops_at_room(client, db_session):
 
 
 @pytest.mark.asyncio
-async def test_editor_in_plus_owner_diary_unlimited(client, db_session):
-    owner, entry = await _setup(client, "pl-ed-owner", "plus", db_session)
+async def test_editor_in_family_owner_diary_unlimited(client, db_session):
+    # Editors only exist on Family, where photos per entry are unlimited.
+    owner, entry = await _setup(client, "pl-ed-owner", "family", db_session)
     editor = await register_and_login(client, "pl-editor@example.com")
     editor_id = (await _user(db_session, "pl-editor@example.com")).id
     db_session.add(
@@ -219,7 +220,7 @@ async def test_editor_in_plus_owner_diary_unlimited(client, db_session):
 
 
 @pytest.mark.asyncio
-async def test_editor_in_free_owner_diary_limited(client, db_session):
+async def test_editor_in_free_owner_diary_acts_as_viewer(client, db_session):
     owner, entry = await _setup(client, "pl-edf-owner")
     await _set_tier(db_session, "pl-edf-owner@example.com", "free")
     editor = await register_and_login(client, "pl-edf-editor@example.com")
@@ -231,8 +232,6 @@ async def test_editor_in_free_owner_diary_limited(client, db_session):
         DiaryPermission(diary_id=uuid.UUID(entry["diary_id"]), user_id=editor_id, role="editor")
     )
     await db_session.commit()
-    assert (
-        await _attach(client, editor, entry["id"], await _new_photo(client, editor))
-    ).status_code == 201
+    # Off Family the editor acts as a viewer, so cannot attach at all.
     r = await _attach(client, editor, entry["id"], await _new_photo(client, editor))
     assert r.status_code == 403, r.text

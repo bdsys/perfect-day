@@ -184,13 +184,14 @@ async def _entry(
     return diary, r.json()
 
 
-async def _owner_with_entry(client, db_session, prefix: str, *, connected: bool = True):
+async def _owner_with_entry(
+    client, db_session, prefix: str, *, connected: bool = True, tier: str = "plus"
+):
     email = f"{prefix}@example.com"
     auth = await register_and_login(client, email)
     # Plus: these tests are about the import, not the Free plan's one-photo limit.
-    await db_session.execute(
-        update(User).where(User.email == email).values(subscription_tier="plus")
-    )
+    # Tests with an editor use Family: editors only act as editors there.
+    await db_session.execute(update(User).where(User.email == email).values(subscription_tier=tier))
     await db_session.commit()
     _, entry = await _entry(client, auth)
     if connected:
@@ -350,7 +351,9 @@ async def test_viewer_cannot_start_import(client, db_session):
 
 @pytest.mark.asyncio
 async def test_editor_can_start_import_into_own_library(client, db_session):
-    owner, entry = await _owner_with_entry(client, db_session, "pi-ed-owner", connected=False)
+    owner, entry = await _owner_with_entry(
+        client, db_session, "pi-ed-owner", connected=False, tier="family"
+    )
     editor = await register_and_login(client, "pi-editor@example.com")
     await _connect_photos(db_session, "pi-editor@example.com")
     editor_id = (await _user(db_session, "pi-editor@example.com")).id
@@ -572,8 +575,9 @@ async def test_task_finishes_with_no_web_polling(client, db_session):
     def _no_web(*args, **kwargs):
         raise AssertionError("the web page polled; it must not be needed")
 
-    with patch.object(client, "get", side_effect=_no_web), patch.object(
-        client, "post", side_effect=_no_web
+    with (
+        patch.object(client, "get", side_effect=_no_web),
+        patch.object(client, "post", side_effect=_no_web),
     ):
         countdowns, _ = await _run_worker(imp["id"], fake)
 
@@ -651,9 +655,7 @@ async def test_revoked_token_marks_needs_reconnect(client, db_session, how):
 @pytest.mark.asyncio
 async def test_auth_error_mid_copy_keeps_what_was_added(client, db_session):
     auth, entry = await _owner_with_entry(client, db_session, "pi-reconnect-mid")
-    fake = FakeGoogle(
-        [_photo(1, read_fixture("sample.jpg")), _photo(2, GoogleAuthError("401"))]
-    )
+    fake = FakeGoogle([_photo(1, read_fixture("sample.jpg")), _photo(2, GoogleAuthError("401"))])
     imp = await _start(client, auth, entry["id"], fake)
 
     _, location = await _run_worker(imp["id"], fake)
@@ -757,7 +759,7 @@ async def test_dismissed_import_not_listed(client, db_session):
 
 @pytest.mark.asyncio
 async def test_list_shows_only_the_callers_imports(client, db_session):
-    owner, entry = await _owner_with_entry(client, db_session, "pi-list-owner")
+    owner, entry = await _owner_with_entry(client, db_session, "pi-list-owner", tier="family")
     editor = await register_and_login(client, "pi-list-editor@example.com")
     await _connect_photos(db_session, "pi-list-editor@example.com")
     db_session.add(
@@ -899,7 +901,9 @@ async def test_create_session_missing_field_is_502_not_500(client, db_session):
 
 
 async def _editor_import(client, db_session, prefix: str, picks):
-    owner, entry = await _owner_with_entry(client, db_session, f"{prefix}-owner", connected=False)
+    owner, entry = await _owner_with_entry(
+        client, db_session, f"{prefix}-owner", connected=False, tier="family"
+    )
     email = f"{prefix}-editor@example.com"
     editor = await register_and_login(client, email)
     await _connect_photos(db_session, email)
@@ -951,7 +955,9 @@ async def test_losing_edit_rights_mid_copy_stops(client, db_session, how):
 async def test_can_still_edit_owner_editor_viewer(client, db_session):
     from app.workers.photo_imports import _can_still_edit
 
-    owner, entry = await _owner_with_entry(client, db_session, "pi-cse-owner", connected=False)
+    owner, entry = await _owner_with_entry(
+        client, db_session, "pi-cse-owner", connected=False, tier="family"
+    )
     entry_id = uuid.UUID(entry["id"])
     owner_id = (await _user(db_session, "pi-cse-owner@example.com")).id
     await register_and_login(client, "pi-cse-user@example.com")

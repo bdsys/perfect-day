@@ -63,15 +63,17 @@ async def test_regenerate_allowed_below_limit(
     delay.assert_called_once()
 
 
-async def test_editor_blocked_by_owner_quota(client: AsyncClient, db_session: AsyncSession) -> None:
+async def test_editor_on_free_owner_diary_cannot_regenerate(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
     owner, diary, entry = await _free_world(db_session, 5)
     editor = await make_user(db_session, subscription_tier="family")
     db_session.add(DiaryPermission(diary_id=diary.id, user_id=editor.id, role="editor"))
     await db_session.commit()
     with patch(DELAY, new=MagicMock()) as delay:
         r = await client.post(f"/v1/entries/{entry.id}/regenerate", headers=_auth(editor))
+    # Off Family the editor acts as a viewer, so the request is refused before any quota check.
     assert r.status_code == 403
-    assert r.json()["detail"]["details"]["source"] == "ai_draft"
     delay.assert_not_called()
 
 
@@ -122,17 +124,22 @@ async def test_diary_and_entry_detail_carry_owner_plan(
     await db_session.commit()
     second_entry = await make_entry(db_session, second)
 
-    d = (await client.get(f"/v1/diaries/{diary.id}", headers=_auth(editor))).json()
+    # An editor of a Free owner acts as a viewer, who gets no plan numbers.
+    assert (await client.get(f"/v1/entries/{entry.id}", headers=_auth(editor))).json().get(
+        "plan"
+    ) is None
+
+    d = (await client.get(f"/v1/diaries/{diary.id}", headers=_auth(owner))).json()
     assert d["plan"]["tier"] == "free"
     assert d["plan"]["ai_drafts_left"] == 3
     assert d["plan"]["read_only"] is False
-    e = (await client.get(f"/v1/entries/{entry.id}", headers=_auth(editor))).json()
+    e = (await client.get(f"/v1/entries/{entry.id}", headers=_auth(owner))).json()
     assert e["plan"]["tier"] == "free"
     assert e["plan"]["ai_drafts_left"] == 3
     assert e["plan"]["read_only"] is False
 
-    d2 = (await client.get(f"/v1/diaries/{second.id}", headers=_auth(editor))).json()
-    e2 = (await client.get(f"/v1/entries/{second_entry.id}", headers=_auth(editor))).json()
+    d2 = (await client.get(f"/v1/diaries/{second.id}", headers=_auth(owner))).json()
+    e2 = (await client.get(f"/v1/entries/{second_entry.id}", headers=_auth(owner))).json()
     assert d2["plan"]["read_only"] is True
     assert e2["plan"]["read_only"] is True
 

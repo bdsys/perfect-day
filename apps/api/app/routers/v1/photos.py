@@ -13,6 +13,7 @@ from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import and_, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.core.auth import get_current_user
 from app.core.database import get_db
@@ -142,18 +143,20 @@ async def _readable_photo(photo_id: uuid.UUID, user: User, db: AsyncSession) -> 
     """The photo if *user* may read it, else None (design/03 "Photo authorization").
 
     Readable when the user uploaded it, or when it is attached to a live entry
-    in a live diary the user can read: owner and editors always, viewers only
-    once the entry is published.
+    in a live diary the user can read: the owner always, editors always while
+    the owner is on Family, everyone else only once the entry is published.
     """
+    owner = aliased(User)
     role_ok = or_(
         Diary.owner_user_id == user.id,
-        DiaryPermission.role == "editor",
-        and_(DiaryPermission.role == "viewer", Entry.status == "published"),
+        and_(DiaryPermission.role == "editor", owner.subscription_tier == "family"),
+        and_(DiaryPermission.user_id.is_not(None), Entry.status == "published"),
     )
     shared = exists(
         select(EntryPhoto.photo_id)
         .join(Entry, Entry.id == EntryPhoto.entry_id)
         .join(Diary, Diary.id == Entry.diary_id)
+        .join(owner, owner.id == Diary.owner_user_id)
         .outerjoin(
             DiaryPermission,
             and_(DiaryPermission.diary_id == Diary.id, DiaryPermission.user_id == user.id),
