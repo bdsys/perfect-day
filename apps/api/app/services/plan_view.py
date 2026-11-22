@@ -42,6 +42,8 @@ class MyPlanOut(BaseModel):
     read_only_diary_ids: list[uuid.UUID]
     backfill: bool
     scan_past_days_max: int | None
+    people_per_diary: int | None
+    editors: bool
 
 
 def _tier_of(user: User) -> str:
@@ -91,4 +93,6 @@ async def my_plan_out(db: AsyncSession, user: User) -> MyPlanOut:
         read_only_diary_ids=sorted(await read_only_diary_ids(db, user.id, tier)),
         backfill=limits.backfill,
         scan_past_days_max=limits.scan_past_days,
+        people_per_diary=limits.people_per_diary,
+        editors=limits.editors,
     )

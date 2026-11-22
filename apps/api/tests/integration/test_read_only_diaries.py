@@ -263,3 +263,15 @@ async def test_cancelled_backfill_run_stays_cancelled_when_read_only(
     run = rows.scalar_one()
     assert run.status == "cancelled"
     assert run.error == "earlier"
+
+
+async def test_received_diary_goes_read_only_not_own(db_session: AsyncSession) -> None:
+    from app.services.read_only import read_only_diary_ids
+
+    user = await make_user(db_session, subscription_tier="free")
+    own = await _diary(db_session, user, "Own", 0)
+    received = await _diary(db_session, user, "Received", 365)
+    received.owned_since = datetime.now(tz=UTC) + timedelta(seconds=1)
+    await db_session.commit()
+    assert await read_only_diary_ids(db_session, user.id, "free") == {received.id}
+    assert own.id != received.id

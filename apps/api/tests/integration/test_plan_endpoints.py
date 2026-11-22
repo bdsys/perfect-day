@@ -92,6 +92,15 @@ async def test_me_plan_free(client: AsyncClient, db_session: AsyncSession) -> No
     assert date.fromisoformat(body["resets_on"]).day == 1
 
 
+async def test_my_plan_reports_people_limit(client: AsyncClient, db_session: AsyncSession) -> None:
+    owner = await make_user(db_session, subscription_tier="free")
+    r = await client.get("/v1/auth/me/plan", headers=_auth(owner))
+    assert r.status_code == 200
+    body = r.json()
+    assert body["people_per_diary"] == 3
+    assert body["editors"] is False
+
+
 async def test_me_plan_plus(client: AsyncClient, db_session: AsyncSession) -> None:
     owner = await make_user(db_session, subscription_tier="plus")
     r = await client.get("/v1/auth/me/plan", headers=_auth(owner))
