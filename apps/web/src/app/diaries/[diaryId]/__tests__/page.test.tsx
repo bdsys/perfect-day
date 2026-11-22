@@ -579,6 +579,21 @@ describe('DiaryDetailPage roles', () => {
     expect(screen.getByRole('button', { name: 'Leave diary' })).toBeInTheDocument()
   })
 
+  it('a viewer sees no published badge on entry cards, an editor does', async () => {
+    ;(api.entries.list as jest.Mock).mockResolvedValue([
+      { id: 'e1', status: 'published', entry_date: '2026-11-01', entry_end_date: null, title: 'First day', body_markdown: 'b', events: [] },
+    ])
+    ;(api.diaries.get as jest.Mock).mockResolvedValue(memberDiary('viewer'))
+    const { unmount } = render(<DiaryDetailPage />)
+    expect(await screen.findByText('First day')).toBeInTheDocument()
+    expect(screen.queryByText('published')).not.toBeInTheDocument()
+    unmount()
+    ;(api.diaries.get as jest.Mock).mockResolvedValue(memberDiary('editor'))
+    render(<DiaryDetailPage />)
+    expect(await screen.findByText('First day')).toBeInTheDocument()
+    expect(screen.getByText('published')).toBeInTheDocument()
+  })
+
   it('a viewer still gets Load older entries', async () => {
     ;(api.diaries.get as jest.Mock).mockResolvedValue(memberDiary('viewer'))
     ;(api.entries.list as jest.Mock).mockResolvedValue(

@@ -9,7 +9,8 @@ jest.mock('next/navigation', () => ({
   useRouter: () => mockRouter,
   useParams: () => ({ token: 'tok' }),
 }))
-let mockAuth: { user: unknown; loading: boolean }
+const mockLogout = jest.fn()
+let mockAuth: { user: unknown; loading: boolean; logout?: () => Promise<void> }
 jest.mock('@/lib/auth-context', () => ({ useAuth: () => mockAuth }))
 const mockPreview = jest.fn()
 const mockAccept = jest.fn()
@@ -20,7 +21,8 @@ jest.mock('@/lib/api', () => {
 
 beforeEach(() => {
   jest.clearAllMocks()
-  mockAuth = { user: { id: 'u1' }, loading: false }
+  mockAuth = { user: { id: 'u1' }, loading: false, logout: mockLogout }
+  mockLogout.mockResolvedValue(undefined)
 })
 
 const pending = { diary_id: 'd1', diary_name: 'Baby Book', owner_name: 'Andrew', role: 'viewer', status: 'pending' }
@@ -70,6 +72,21 @@ describe('InvitePage', () => {
     expect(
       await screen.findByText('This invite is for a***@x.com. Sign in with that address, or ask Andrew for a new link.'),
     ).toBeInTheDocument()
+  })
+
+  it('wrong email offers to sign out and use another account', async () => {
+    mockPreview.mockRejectedValue(new ApiError(403, 'x', 'invite_wrong_email', { masked_email: 'a***@x.com', owner_name: 'Andrew' }))
+    render(<InvitePage />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Sign out and use another account' }))
+    await waitFor(() => expect(mockLogout).toHaveBeenCalled())
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith('/login?next=%2Finvite%2Ftok'))
+  })
+
+  it('other errors have no switch-account button', async () => {
+    mockPreview.mockRejectedValue(new ApiError(410, 'x', 'invite_expired', { owner_name: 'Andrew' }))
+    render(<InvitePage />)
+    await screen.findByText('This invite has expired. Ask Andrew for a new link.')
+    expect(screen.queryByRole('button', { name: 'Sign out and use another account' })).not.toBeInTheDocument()
   })
 
   it('expired', async () => {

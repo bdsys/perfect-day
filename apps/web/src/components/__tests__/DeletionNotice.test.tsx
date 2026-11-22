@@ -25,6 +25,22 @@ describe('DeletionNotice', () => {
     expect(screen.queryByRole('button', { name: 'Decline' })).not.toBeInTheDocument()
   })
 
+  it('says the diary stays shared when it goes to someone else', () => {
+    const { container } = render(
+      <DeletionNotice
+        diaryId="d1"
+        diaryName="Emma diary"
+        notice={{ owner_name: 'Sam', deletes_on: '2026-11-29T12:00:00Z', becomes_yours: false, goes_to_name: 'Mom' }}
+        onDeclined={jest.fn()}
+      />,
+    )
+    expect(container).toHaveTextContent(
+      `Sam is deleting their account. Emma diary stays shared with you; Mom will look after it from ${DATE}.`,
+    )
+    expect(container).not.toHaveTextContent('will be deleted')
+    expect(screen.queryByRole('button', { name: 'Decline' })).not.toBeInTheDocument()
+  })
+
   it('says the diary becomes yours and Decline calls the API after a confirm', async () => {
     ;(api.sharing.decline as jest.Mock).mockResolvedValue(undefined)
     const confirm = jest.spyOn(window, 'confirm').mockReturnValue(true)

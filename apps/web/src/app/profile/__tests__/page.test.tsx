@@ -52,7 +52,7 @@ beforeEach(() => {
   a.auth.updateProfile.mockResolvedValue({})
   a.auth.uploadAvatar.mockResolvedValue({})
   a.auth.logoutAll.mockResolvedValue(undefined)
-  a.auth.deleteAccount.mockResolvedValue({ deletion_scheduled_for: '2026-11-24T17:04:00Z' })
+  a.auth.deleteAccount.mockResolvedValue({ deletion_scheduled_for: '2026-11-24T17:04:00Z', handovers: {} })
   a.integrations.list.mockResolvedValue([])
   a.auth.handoverOptions.mockResolvedValue([])
   a.auth.logout.mockResolvedValue(undefined)
@@ -190,6 +190,50 @@ describe('ProfilePage', () => {
       expect(del[0]).not.toBeChecked()
       fireEvent.click(screen.getByRole('button', { name: 'Delete my account' }))
       await waitFor(() => expect(a.auth.deleteAccount).toHaveBeenCalledWith({ d1: 'm1' }))
+    })
+
+    it('tells the owner when the server did not record the choice', async () => {
+      a.auth.handoverOptions.mockResolvedValue(options)
+      a.auth.deleteAccount.mockResolvedValue({ deletion_scheduled_for: '2026-11-24T17:04:00Z', handovers: {} })
+      await open()
+      await screen.findByText('Ava is shared with Mom, Dad.')
+      fireEvent.click(screen.getByRole('radio', { name: 'Give it to Mom' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Delete my account' }))
+      expect(
+        await screen.findByText(
+          "Your choice of who gets your shared diaries didn't save. Restore your account from the sign-in page and try again.",
+        ),
+      ).toBeInTheDocument()
+      expect(navigateTo).not.toHaveBeenCalledWith(expect.stringContaining('/login?deleted='))
+    })
+
+    it('goes on as usual when the server echoes the choice', async () => {
+      a.auth.handoverOptions.mockResolvedValue(options)
+      a.auth.deleteAccount.mockResolvedValue({ deletion_scheduled_for: '2026-11-24T17:04:00Z', handovers: { d1: 'm1' } })
+      await open()
+      await screen.findByText('Ava is shared with Mom, Dad.')
+      fireEvent.click(screen.getByRole('radio', { name: 'Give it to Mom' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Delete my account' }))
+      await waitFor(() => expect(navigateTo).toHaveBeenCalledWith('/login?deleted=' + encodeURIComponent('2026-11-24T17:04:00Z')))
+    })
+
+    it('reloads the choices when a chosen person no longer has access', async () => {
+      a.auth.handoverOptions.mockResolvedValueOnce(options)
+      a.auth.deleteAccount.mockRejectedValueOnce(new ApiError(422, 'invalid_handover', 'invalid_handover'))
+      await open()
+      await screen.findByText('Ava is shared with Mom, Dad.')
+      fireEvent.click(screen.getByRole('radio', { name: 'Give it to Mom' }))
+      a.auth.handoverOptions.mockResolvedValue([
+        { diary_id: 'd1', diary_name: 'Ava', members: [{ user_id: 'm2', name: 'Dad' }] },
+      ])
+      fireEvent.click(screen.getByRole('button', { name: 'Delete my account' }))
+      expect(
+        await screen.findByText('Someone you chose no longer has access. Check your choices and try again.'),
+      ).toBeInTheDocument()
+      await waitFor(() => expect(screen.queryByRole('radio', { name: 'Give it to Mom' })).not.toBeInTheDocument())
+      expect(screen.getByRole('radio', { name: 'Give it to Dad' })).toBeInTheDocument()
+      expect(screen.getAllByRole('radio', { name: 'Delete it' })[0]).toBeChecked()
+      expect(a.auth.handoverOptions).toHaveBeenCalledTimes(2)
     })
 
     it('sends nothing when every choice stays Delete it', async () => {

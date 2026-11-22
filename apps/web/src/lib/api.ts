@@ -270,6 +270,8 @@ export interface DeletionNotice {
   owner_name: string
   deletes_on: string
   becomes_yours: boolean
+  /** Who the owner chose to receive the diary, if anyone. */
+  goes_to_name?: string | null
 }
 
 export interface Invitation {
@@ -623,7 +625,7 @@ export const api = {
     async logoutAll(): Promise<void> {
       return apiFetch('/v1/auth/logout-all', { method: 'POST' })
     },
-    async deleteAccount(handovers?: Record<string, string>): Promise<{ deletion_scheduled_for: string }> {
+    async deleteAccount(handovers?: Record<string, string>): Promise<{ deletion_scheduled_for: string; handovers?: Record<string, string> }> {
       return apiFetch('/v1/auth/account', {
         method: 'DELETE',
         ...(handovers ? { body: JSON.stringify({ handovers }) } : {}),

@@ -22,7 +22,7 @@ const ENTRIES_PAGE_SIZE = 20
 const MAX_POLL_FAILURES = 5
 const AI_STATUS_POLL_MS = 3000
 
-function EntryCard({ entry, aiStalled }: { entry: Entry; aiStalled: boolean }) {
+function EntryCard({ entry, aiStalled, showStatus }: { entry: Entry; aiStalled: boolean; showStatus: boolean }) {
   const preview = entry.body_markdown?.slice(0, 120) ?? ''
   const firstEventSummary = !entry.body_markdown && entry.events?.length > 0 ? entry.events[0].summary : null
   return (
@@ -38,7 +38,7 @@ function EntryCard({ entry, aiStalled }: { entry: Entry; aiStalled: boolean }) {
           preview && <div className="entry-preview">{preview}{entry.body_markdown && entry.body_markdown.length > 120 ? '…' : ''}</div>
         )}
         <div style={{ marginTop: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-          <span className={`status-badge status-${entry.status}`}>{entry.status}</span>
+          {showStatus && <span className={`status-badge status-${entry.status}`}>{entry.status}</span>}
           <AiStatusBadge status={entry.ai_status ?? null} stalled={aiStalled} />
           {entry.events && entry.events.length > 0 && (
             <span style={{ fontSize: '0.75rem', color: '#888' }}>• {entry.events.length} event{entry.events.length !== 1 ? 's' : ''}</span>
@@ -809,7 +809,7 @@ export default function DiaryDetailPage() {
             )}
           </div>
         ) : (
-          entries.map((e) => <EntryCard key={e.id} entry={e} aiStalled={aiFailures >= MAX_POLL_FAILURES} />)
+          entries.map((e) => <EntryCard key={e.id} entry={e} aiStalled={aiFailures >= MAX_POLL_FAILURES} showStatus={!isViewer} />)
         )}
 
         {hasMoreEntries && (

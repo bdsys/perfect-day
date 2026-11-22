@@ -45,6 +45,10 @@ export default function DeletionNotice({
           </button>
           {error && <p style={{ margin: '0.5rem 0 0' }}>{error}</p>}
         </>
+      ) : notice.goes_to_name ? (
+        <p style={{ margin: 0 }}>
+          {notice.owner_name} is deleting their account. <em>{diaryName}</em> stays shared with you; {notice.goes_to_name} will look after it from {date}.
+        </p>
       ) : (
         <p style={{ margin: 0 }}>
           {notice.owner_name} is deleting their account. {diaryName} will be deleted on {date}.

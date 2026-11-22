@@ -6,7 +6,7 @@ import { useParams, useRouter } from 'next/navigation'
 import { api, ApiError, type InvitePreview } from '@/lib/api'
 import { useAuth } from '@/lib/auth-context'
 
-type Outcome = { kind: 'preview'; preview: InvitePreview } | { kind: 'error'; message: string }
+type Outcome = { kind: 'preview'; preview: InvitePreview } | { kind: 'error'; message: string; code?: string }
 
 function detail(err: ApiError, key: string, fallback: string): string {
   const v = err.details?.[key]
@@ -34,7 +34,7 @@ function errorMessage(err: unknown): string {
 export default function InvitePage() {
   const { token } = useParams<{ token: string }>()
   const router = useRouter()
-  const { user, loading: authLoading } = useAuth()
+  const { user, loading: authLoading, logout } = useAuth()
   const [outcome, setOutcome] = useState<Outcome | null>(null)
   const [accepting, setAccepting] = useState(false)
   const [acceptError, setAcceptError] = useState('')
@@ -55,7 +55,7 @@ export default function InvitePage() {
         setOutcome({ kind: 'preview', preview })
       })
       .catch((err: unknown) => {
-        if (!cancelled) setOutcome({ kind: 'error', message: errorMessage(err) })
+        if (!cancelled) setOutcome({ kind: 'error', message: errorMessage(err), code: err instanceof ApiError ? err.code : undefined })
       })
     return () => {
       cancelled = true
@@ -72,6 +72,15 @@ export default function InvitePage() {
       setAcceptError(errorMessage(err))
       setAccepting(false)
     }
+  }
+
+  async function switchAccount() {
+    try {
+      await logout()
+    } catch {
+      // the sign-in page still works if the server call failed
+    }
+    router.push(`/login?next=${encodeURIComponent(`/invite/${token}`)}`)
   }
 
   if (authLoading) return <div className="loading">Loading…</div>
@@ -92,7 +101,14 @@ export default function InvitePage() {
         ) : !outcome ? (
           <div className="loading">Loading…</div>
         ) : outcome.kind === 'error' ? (
-          <p className="error-message">{outcome.message}</p>
+          <>
+            <p className="error-message">{outcome.message}</p>
+            {outcome.code === 'invite_wrong_email' && (
+              <button type="button" className="btn btn-secondary" onClick={switchAccount} style={{ marginTop: '1rem' }}>
+                Sign out and use another account
+              </button>
+            )}
+          </>
         ) : (
           <>
             <p>

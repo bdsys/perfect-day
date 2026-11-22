@@ -76,6 +76,8 @@ export default function ProfilePage() {
   const [handoverOptions, setHandoverOptions] = useState<HandoverOption[] | null>(null)
   const [handoverFailed, setHandoverFailed] = useState(false)
   const [handovers, setHandovers] = useState<Record<string, string>>({})
+  // Set when the server's record of the hand-over choice differs from what was sent.
+  const [handoverLostUntil, setHandoverLostUntil] = useState<string | null>(null)
 
   useEffect(() => {
     if (!authLoading && !user) router.replace('/login')
@@ -202,7 +204,8 @@ export default function ProfilePage() {
     setBusy('delete')
     setDeleteError('')
     try {
-      const { deletion_scheduled_for } = await api.auth.deleteAccount(Object.keys(handovers).length ? handovers : undefined)
+      const sent = handovers
+      const { deletion_scheduled_for, handovers: recorded } = await api.auth.deleteAccount(Object.keys(sent).length ? sent : undefined)
       // Not the context logout(): it clears `user`, and this page's signed-out effect would
       // router.replace('/login') and can drop ?deleted= (WebKit). navigateTo reloads the context.
       try {
@@ -211,9 +214,28 @@ export default function ProfilePage() {
         // the server already revoked every session
       }
       setAccessToken('')
+      // A proxy can drop a DELETE body. Then the account is scheduled without the choice.
+      const echoed = recorded ?? {}
+      const kept = Object.keys(sent).length === Object.keys(echoed).length
+        && Object.entries(sent).every(([d, m]) => echoed[d] === m)
+      if (!kept) {
+        setHandoverLostUntil(deletion_scheduled_for)
+        setBusy(null)
+        return
+      }
       navigateTo('/login?deleted=' + encodeURIComponent(deletion_scheduled_for))
-    } catch {
-      setDeleteError("Couldn't delete your account. Try again.")
+    } catch (e: unknown) {
+      if (e instanceof ApiError && e.code === 'invalid_handover') {
+        // Someone left after the choices loaded: show the current people, pick again.
+        setHandovers({})
+        setHandoverOptions(null)
+        setDeleteError('Someone you chose no longer has access. Check your choices and try again.')
+        api.auth.handoverOptions()
+          .then(setHandoverOptions)
+          .catch(() => setHandoverFailed(true))
+      } else {
+        setDeleteError("Couldn't delete your account. Try again.")
+      }
       setBusy(null)
     }
   }
@@ -344,7 +366,20 @@ export default function ProfilePage() {
         <section className="card profile-section" aria-labelledby="delete-h">
           <h2 id="delete-h">Delete account</h2>
           <p>Your diaries, entries and photos are deleted after 7 days. Log in during those 7 days to undo it.</p>
-          {!confirming ? (
+          {handoverLostUntil !== null ? (
+            <div style={{ marginTop: '0.75rem' }}>
+              <p className="error-message" role="alert">
+                Your choice of who gets your shared diaries didn&apos;t save. Restore your account from the sign-in page and try again.
+              </p>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => navigateTo('/login?deleted=' + encodeURIComponent(handoverLostUntil))}
+              >
+                Go to sign-in
+              </button>
+            </div>
+          ) : !confirming ? (
             <button type="button" className="btn btn-danger" style={{ marginTop: '0.75rem' }} onClick={() => { setHandoverOptions(null); setHandoverFailed(false); setHandovers({}); setConfirming(true) }}>
               Delete account…
             </button>
