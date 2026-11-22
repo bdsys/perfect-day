@@ -8,7 +8,9 @@ export function safeNext(raw: string | null): string {
   try {
     const url = new URL(raw, BASE)
     if (url.origin !== BASE) return '/diaries'
-    return url.pathname + url.search + url.hash
+    const out = url.pathname + url.search + url.hash
+    // Dot segments can normalise to //host, which the router treats as external.
+    return /^\/(?!\/)/.test(out) ? out : '/diaries'
   } catch {
     return '/diaries'
   }
