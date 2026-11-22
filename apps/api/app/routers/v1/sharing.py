@@ -11,7 +11,7 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import get_current_user
+from app.core.auth import deletion_state, get_current_user
 from app.core.database import get_db
 from app.core.security import hash_token
 from app.models import Diary, DiaryPermission, Invitation, User
@@ -402,6 +402,30 @@ async def _resolve_invitation(
     if inv.expires_at <= datetime.now(UTC):
         raise _invite_error(410, "invite_expired", {"owner_name": person_name(owner)})
     return inv, diary, "pending", inv.role
+
+
+@router.post("/{diary_id}/handover/decline", status_code=status.HTTP_204_NO_CONTENT)
+async def decline_handover(
+    diary_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db, scope="function"),
+) -> Response:
+    """The person a departing owner chose for the diary says no; it will be deleted."""
+    diary = (
+        await db.execute(
+            select(Diary)
+            .where(Diary.id == diary_id, Diary.deleted_at.is_(None))
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one_or_none()
+    if diary is None or diary.handover_to_user_id != user.id:
+        raise HTTPException(status_code=404, detail="not_found")
+    owner = (await db.execute(select(User).where(User.id == diary.owner_user_id))).scalar_one()
+    if deletion_state(owner) != "pending":
+        raise HTTPException(status_code=404, detail="not_found")
+    diary.handover_to_user_id = None
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @invitee_router.get("/{token}", response_model=InvitePreviewOut)
