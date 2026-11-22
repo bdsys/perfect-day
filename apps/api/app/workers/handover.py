@@ -5,6 +5,10 @@ deleted. These are retry-safe steps, not one transaction: each one re-checks sta
 objects are copied before any row points at them, and the old copies are left for
 the prefix scrub at the end of hard_delete_user. Any step may fail; the next hourly
 run sees what was committed and finishes the rest.
+
+Hard deletes are single-flight (hard_delete.hard_delete_lock): a photo may be handed to
+an account that is itself due for deletion, because that deletion is never running at
+the same time and, when it runs, treats the photo as its own.
 """
 
 from __future__ import annotations
@@ -234,18 +238,6 @@ async def move_departing_photos(departing_user_id: uuid.UUID) -> int:
     return moved
 
 
-class HandoverTargetUnavailable(RuntimeError):
-    """The photo's new owner is being deleted too: the next run works it out again."""
-
-
-def _past_deadline(user: User) -> bool:
-    return (
-        user.deleted_at is not None
-        and user.hard_delete_after is not None
-        and user.hard_delete_after <= datetime.now(tz=UTC)
-    )
-
-
 def _moved_key(key: str, departing_user_id: uuid.UUID, new_owner_id: uuid.UUID) -> str:
     prefix = f"{departing_user_id}/"
     if key.startswith(prefix):
@@ -268,9 +260,11 @@ async def _move_photo(
     """Give the photo to the owner of its earliest other diary. True when it moved.
 
     *new_owner_id* is what move_departing_photos worked out; it is worked out again
-    under the photo's row lock, and used only while that account is not past its own
-    deletion deadline (else HandoverTargetUnavailable). Safe to run again after any
-    failure.
+    under the photo's row lock. Any owner of a diary holding the photo will do, even
+    one past its own deletion deadline: hard deletes are single-flight
+    (hard_delete_lock), so that account's deletion is not running now, and when it
+    runs it hands the diary on (and the photo with it) or deletes the diary (and the
+    photo goes with it). Safe to run again after any failure.
     """
     from app.core.config import get_settings
     from app.core.dependencies import get_s3
@@ -289,13 +283,12 @@ async def _move_photo(
         if photo.dek_ciphertext is None:
             return False
 
-        # Defence in depth behind the single-flight hard-delete lock: never hand a
-        # photo to an account the hourly job may be deleting (its deadline has passed:
-        # the same test as hard_delete_user's row-54 check), or the photo is scrubbed
-        # with it. An account inside its grace window is fine: its own hard delete
-        # later treats the photo as its own. So is one the admin CLI soft-deleted with
-        # no deadline, which the job never deletes; refusing it would stall this
-        # deletion for good.
+        # Worked out again under the row lock, in case attachments changed since the
+        # caller's query. Moving to whichever owner it names is safe only because no
+        # other hard delete runs alongside this one (hard_delete_lock): that owner's
+        # own deletion, if due, comes later and finds the photo as its own. Refusing a
+        # past-deadline owner instead would let two co-parents, each with a photo in
+        # the other's diary, block each other's deletion for good.
         target = (
             await db.execute(_earliest_target(departing_user_id).where(Photo.id == photo.id))
         ).first()
@@ -304,12 +297,6 @@ async def _move_photo(
         if target.owner_user_id != new_owner_id:
             log.info("handover_photo_target_changed", photo_id=str(photo_id))
             new_owner_id = target.owner_user_id
-        new_owner = (
-            await db.execute(select(User).where(User.id == new_owner_id))
-        ).scalar_one_or_none()
-        if new_owner is None or _past_deadline(new_owner):
-            log.warning("handover_photo_target_unavailable", photo_id=str(photo_id))
-            raise HandoverTargetUnavailable(str(photo_id))
 
         if photo.source == "google_photos" and photo.external_id is not None:
             existing_id = (

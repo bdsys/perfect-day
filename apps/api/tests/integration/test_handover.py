@@ -720,26 +720,64 @@ async def _editor_photo_in_owners_diary(client, db_session, prefix: str, body: b
 
 
 @pytest.mark.asyncio
-async def test_move_refuses_a_target_past_its_own_deadline(client, db_session):
-    from app.workers.handover import HandoverTargetUnavailable
-    from app.workers.hard_delete import hard_delete_user
+async def test_mutual_photos_both_past_deadline_both_complete(
+    client, db_session, s3_client, photos_bucket
+):
+    """Co-parents, each an editor in the other's diary with a photo there, both due."""
+    from app.workers.beat_tasks import _process_hard_deletes
 
-    owner, editor, did, pid = await _editor_photo_in_owners_diary(
-        client, db_session, "t7p", jpeg_with_exif()
-    )
-    await _delete_account(client, editor)
-    editor_id = await _make_due(db_session, "t7p-e@example.com")
-    owner_id = await _make_due(db_session, "t7p@example.com")  # being deleted too
+    a, a_did = await _owner_with_diary(client, "t7p-a@example.com", tier="family")
+    b, b_did = await _owner_with_diary(client, "t7p-b@example.com", tier="family")
+    created = await invite(client, a, a_did, "t7p-b@example.com", role="editor")
+    assert (await accept(client, b, created["token"])).status_code == 200
+    created = await invite(client, b, b_did, "t7p-a@example.com", role="editor")
+    assert (await accept(client, a, created["token"])).status_code == 200
+    a_photo = await upload_photo(client, a, jpeg_with_exif())
+    await _entry_with_photo(client, a, b_did, a_photo, publish=False)  # in B's diary
+    b_photo = await upload_photo(client, b, jpeg_with_exif())
+    await _entry_with_photo(client, b, a_did, b_photo, publish=False)  # in A's diary
+    await _delete_account(client, a)
+    await _delete_account(client, b)
+    a_id = await _make_due(db_session, "t7p-a@example.com")
+    b_id = await _make_due(db_session, "t7p-b@example.com")
 
-    with pytest.raises(HandoverTargetUnavailable):
-        await hard_delete_user(editor_id)
+    await _process_hard_deletes()
+
+    for user_id in (a_id, b_id):
+        assert (await db_session.execute(select(User.id).where(User.id == user_id))).first() is None
+        assert _keys(s3_client, photos_bucket, f"{user_id}/") == set()
+    assert await _photo(db_session, a_photo) is None
+    assert await _photo(db_session, b_photo) is None
+
+
+@pytest.mark.asyncio
+async def test_photo_follows_past_deadline_owners_handover(client, db_session):
+    """A's photo is in B's diary; B hands that diary to C; A and B are both due."""
+    from app.workers.beat_tasks import _process_hard_deletes
+
+    b, b_did = await _owner_with_diary(client, "t7w-b@example.com", tier="family")
+    a = await _add_member(client, b, b_did, "t7w-a@example.com", role="editor")
+    c = await _add_member(client, b, b_did, "t7w-c@example.com")
+    original = jpeg_with_exif()
+    pid = await upload_photo(client, a, original)
+    await _entry_with_photo(client, a, b_did, pid, publish=False)
+    c_user = await _user(db_session, "t7w-c@example.com")
+    await _delete_account(client, a)
+    await _delete_account(client, b, {b_did: c_user.id})
+    a_id = await _make_due(db_session, "t7w-a@example.com")
+    b_id = await _make_due(db_session, "t7w-b@example.com")
+
+    await _process_hard_deletes()
+
+    for user_id in (a_id, b_id):
+        assert (await db_session.execute(select(User.id).where(User.id == user_id))).first() is None
+    diary = await _diary(db_session, b_did)
+    assert diary is not None and diary.owner_user_id == c_user.id
     photo = await _photo(db_session, pid)
-    assert photo is not None and photo.user_id == editor_id  # not handed to a dying account
-
-    await hard_delete_user(owner_id)  # the owner's diary, and the photo only it held, go
-    await hard_delete_user(editor_id)  # the next run works it out again and finishes
-    assert await _photo(db_session, pid) is None
-    assert (await db_session.execute(select(User.id).where(User.id == editor_id))).first() is None
+    assert photo is not None and photo.user_id == c_user.id
+    r = await client.get(f"/v1/photos/{pid}", params={"kind": "original"}, headers=c)
+    assert r.status_code == 200, r.text
+    assert r.content == original
 
 
 @pytest.mark.asyncio
@@ -878,10 +916,12 @@ async def test_display_sweep_does_not_point_a_moved_photo_at_the_old_prefix(
     )
     owner_user = await _user(db_session, "t7u@example.com")
     editor_user = await _user(db_session, "t7u-e@example.com")
+    stale_key = f"{editor_user.id}/{pid}_display.enc"
     await db_session.execute(
         update(Photo).where(Photo.id == uuid.UUID(pid)).values(display_s3_key=None)
     )
     await db_session.commit()
+    s3_client.delete_object(Bucket=photos_bucket, Key=stale_key)  # the one made at upload
 
     loop = asyncio.get_running_loop()
     real_get = photos_service.get_object_bytes
@@ -900,6 +940,7 @@ async def test_display_sweep_does_not_point_a_moved_photo_at_the_old_prefix(
     photo = await _photo(db_session, pid)
     assert photo is not None and photo.user_id == owner_user.id
     assert photo.display_s3_key is None  # never a key under the editor's prefix
+    assert stale_key not in _keys(s3_client, photos_bucket, f"{editor_user.id}/")  # cleaned up
 
     assert await create_missing_display_copies() == 1  # the next sweep, for the new owner
     photo = await _photo(db_session, pid)

@@ -229,12 +229,18 @@ async def _sweep_orphaned_photos() -> int:
 async def create_missing_display_copies(limit: int = 20) -> int:
     """Give HEIC/HEIF photos that lack a JPEG display copy one. Returns how many were made."""
     import asyncio
+    from functools import partial
 
     from sqlalchemy import func, select, update
 
     from app.core.photo_crypto import PURPOSE_DISPLAY, decrypt_stream, encrypt_stream, unwrap_dek
     from app.models import Photo
-    from app.services.photos import get_object_bytes, make_display_jpeg, put_object_bytes
+    from app.services.photos import (
+        delete_object,
+        get_object_bytes,
+        make_display_jpeg,
+        put_object_bytes,
+    )
     from app.workers.utils import db_session
 
     loop = asyncio.get_running_loop()
@@ -290,6 +296,16 @@ async def create_missing_display_copies(limit: int = 20) -> int:
                         made += 1
                     else:
                         log.info("display_copy_photo_moved", photo_id=str(photo.id))
+                        # The old owner's scrub may already have run: remove the copy
+                        # made here ourselves, unless another sweep stored this very
+                        # key on the row first.
+                        current = (
+                            await db.execute(
+                                select(Photo.display_s3_key).where(Photo.id == photo.id)
+                            )
+                        ).scalar_one_or_none()
+                        if current != key:
+                            await loop.run_in_executor(None, partial(delete_object, key))
             except Exception:  # noqa: BLE001 — one bad photo must not stop the rest
                 log.warning("display_copy_failed", photo_id=str(photo.id))
     log.info("create_missing_display_copies", made=made)
