@@ -45,29 +45,46 @@ def person_name(user: User) -> str:
     return name or user.email
 
 
+async def people_counts(
+    db: AsyncSession,
+    diary_ids: list[uuid.UUID],
+    *,
+    exclude_invitation_id: uuid.UUID | None = None,
+) -> dict[uuid.UUID, int]:
+    """People per diary: member rows plus pending (unaccepted, unexpired) invitations.
+
+    The one definition of the count; two grouped queries however many diaries.
+    """
+    counts: dict[uuid.UUID, int] = dict.fromkeys(diary_ids, 0)
+    if not diary_ids:
+        return counts
+    members = await db.execute(
+        select(DiaryPermission.diary_id, func.count())
+        .where(DiaryPermission.diary_id.in_(diary_ids))
+        .group_by(DiaryPermission.diary_id)
+    )
+    pending = (
+        select(Invitation.diary_id, func.count())
+        .where(
+            Invitation.diary_id.in_(diary_ids),
+            Invitation.accepted_at.is_(None),
+            Invitation.expires_at > func.now(),
+        )
+        .group_by(Invitation.diary_id)
+    )
+    if exclude_invitation_id is not None:
+        pending = pending.where(Invitation.id != exclude_invitation_id)
+    for diary_id, n in [*members.all(), *(await db.execute(pending)).all()]:
+        counts[diary_id] += n
+    return counts
+
+
 async def people_used(
     db: AsyncSession, diary_id: uuid.UUID, *, exclude_invitation_id: uuid.UUID | None = None
 ) -> int:
     """Members plus pending (unaccepted, unexpired) invitations."""
-    members = (
-        await db.execute(
-            select(func.count())
-            .select_from(DiaryPermission)
-            .where(DiaryPermission.diary_id == diary_id)
-        )
-    ).scalar_one()
-    pending = (
-        select(func.count())
-        .select_from(Invitation)
-        .where(
-            Invitation.diary_id == diary_id,
-            Invitation.accepted_at.is_(None),
-            Invitation.expires_at > func.now(),
-        )
-    )
-    if exclude_invitation_id is not None:
-        pending = pending.where(Invitation.id != exclude_invitation_id)
-    return members + (await db.execute(pending)).scalar_one()
+    counts = await people_counts(db, [diary_id], exclude_invitation_id=exclude_invitation_id)
+    return counts[diary_id]
 
 
 async def lock_diary_sharing(db: AsyncSession, diary: Diary) -> None:

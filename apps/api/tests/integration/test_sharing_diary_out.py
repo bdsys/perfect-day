@@ -13,6 +13,7 @@ from tests.integration.sharing_helpers import (
     invite,
     make_shared_diary,
     register,
+    set_tier,
 )
 
 
@@ -124,6 +125,7 @@ async def test_recipient_can_decline(client, db_session):
     assert notice["becomes_yours"] is False
     again = await client.post(f"/v1/diaries/{did}/handover/decline", headers=a)
     assert again.status_code == 404
+    assert again.json()["error"]["message"] == "not_found"
 
 
 @pytest.mark.asyncio
@@ -134,7 +136,9 @@ async def test_non_recipient_decline_404(client, db_session):
     await _owner_deleting(
         db_session, "do6@example.com", did, await _user_id(db_session, "do6a@example.com")
     )
-    assert (await client.post(f"/v1/diaries/{did}/handover/decline", headers=b)).status_code == 404
+    r = await client.post(f"/v1/diaries/{did}/handover/decline", headers=b)
+    assert r.status_code == 404
+    assert r.json()["error"]["message"] == "not_found"
     assert (
         await client.post(f"/v1/diaries/{did}/handover/decline", headers=owner)
     ).status_code in (403, 404)
@@ -150,4 +154,39 @@ async def test_decline_404_when_owner_not_deleting(client, db_session):
         .values(handover_to_user_id=await _user_id(db_session, "do7a@example.com"))
     )
     await db_session.commit()
-    assert (await client.post(f"/v1/diaries/{did}/handover/decline", headers=a)).status_code == 404
+    r = await client.post(f"/v1/diaries/{did}/handover/decline", headers=a)
+    assert r.status_code == 404
+    assert r.json()["error"]["message"] == "not_found"
+
+
+async def _editor(client, owner, did, email):
+    created = await invite(client, owner, did, email, role="editor")
+    headers = await register(client, email)
+    assert (await accept(client, headers, created["token"])).status_code == 200
+    return headers
+
+
+@pytest.mark.asyncio
+async def test_editor_role_follows_owner_plan(client):
+    owner, did = await make_shared_diary(client, "do8@example.com", "family")
+    editor = await _editor(client, owner, did, "do8e@example.com")
+    item = next(
+        d for d in (await client.get("/v1/diaries", headers=editor)).json() if d["id"] == did
+    )
+    assert item["role"] == "editor"
+    await set_tier("do8@example.com", "plus")
+    item = next(
+        d for d in (await client.get("/v1/diaries", headers=editor)).json() if d["id"] == did
+    )
+    assert item["role"] == "viewer"
+    got = (await client.get(f"/v1/diaries/{did}", headers=editor)).json()
+    assert got["role"] == "viewer"
+
+
+@pytest.mark.asyncio
+async def test_member_get_has_no_people(client):
+    owner, did = await make_shared_diary(client, "do9@example.com")
+    guest = await _join(client, owner, did, "do9g@example.com")
+    got = (await client.get(f"/v1/diaries/{did}", headers=guest)).json()
+    assert got["people"] is None
+    assert got["role"] == "viewer"

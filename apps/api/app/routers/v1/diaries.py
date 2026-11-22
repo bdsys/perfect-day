@@ -13,10 +13,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import deletion_state, get_current_user
 from app.core.database import get_db
-from app.models import AuditLog, Diary, DiaryPermission, Invitation, ScanJob, User
+from app.models import AuditLog, Diary, DiaryPermission, ScanJob, User
 from app.services.plan_view import OwnerPlanOut, owner_plan_out
 from app.services.read_only import ensure_diary_writable
-from app.services.sharing import effective_role, person_name
+from app.services.sharing import effective_role, people_counts, person_name
 from app.services.tier import limits_for, tier_limit_error
 
 router = APIRouter(prefix="/diaries", tags=["diaries"])
@@ -87,7 +87,7 @@ class DeletionNoticeOut(BaseModel):
     becomes_yours: bool  # the caller is the person the owner chose to receive the diary
 
 
-class DiaryOut(BaseModel):
+class _DiaryFields(BaseModel):
     id: uuid.UUID
     name: str
     slug: str
@@ -104,13 +104,17 @@ class DiaryOut(BaseModel):
     deleted_at: datetime | None
     hard_delete_after: datetime | None
     created_at: datetime
-    plan: OwnerPlanOut | None = None  # the owner's plan; set on GET /diaries/{id} only
-    role: Literal["owner", "editor", "viewer"] = "owner"  # the caller's effective role
-    owner_name: str = ""
-    people: PeopleOut | None = None  # owner only
-    deletion_notice: DeletionNoticeOut | None = None  # members only
 
     model_config = {"from_attributes": True}
+
+
+class DiaryOut(_DiaryFields):
+    plan: OwnerPlanOut | None = None  # the owner's plan; set on GET /diaries/{id} only
+    # No defaults: a response built without them must fail, not claim ownership.
+    role: Literal["owner", "editor", "viewer"]  # the caller's effective role
+    owner_name: str
+    people: PeopleOut | None = None  # owner only
+    deletion_notice: DeletionNoticeOut | None = None  # members only
 
 
 # ---------------------------------------------------------------------------
@@ -157,60 +161,35 @@ async def _get_diary_or_404(
 def _diary_out(
     diary: Diary,
     *,
-    is_owner: bool,
-    role: str | None = None,
-    owner: User | None = None,
+    role: Literal["owner", "editor", "viewer"],
+    owner: User,
+    caller: User,
     people: PeopleOut | None = None,
-    caller: User | None = None,
 ) -> DiaryOut:
-    """Serialize a diary. Home coordinates go to the owner only (TR-20), like
-    photo and entry coordinates (S-12); co-parents get the place name.
+    """Serialize a diary for `caller`. Home coordinates go to the owner only (TR-20),
+    like photo and entry coordinates (S-12); co-parents get the place name.
 
-    `role` is the caller's effective role when not the owner. `owner`, `people`
-    and `caller` fill in who shared it, the member count and the deletion notice.
+    `role` is the caller's effective role. People counts go to the owner, the
+    deletion notice to members.
     """
-    out = DiaryOut.model_validate(diary)
+    fields = _DiaryFields.model_validate(diary).model_dump()
+    is_owner = role == "owner"
     if not is_owner:
-        out.lat = None
-        out.lon = None
-        out.role = "editor" if role == "editor" else "viewer"
-    else:
-        out.role = "owner"
-        out.people = people
-    if owner is not None:
-        out.owner_name = person_name(owner)
-        if not is_owner and caller is not None and deletion_state(owner) == "pending":
-            assert owner.hard_delete_after is not None  # pending implies a deadline
-            out.deletion_notice = DeletionNoticeOut(
-                owner_name=out.owner_name,
-                deletes_on=owner.hard_delete_after,
-                becomes_yours=diary.handover_to_user_id == caller.id,
-            )
-    return out
-
-
-async def _people_counts(db: AsyncSession, diary_ids: list[uuid.UUID]) -> dict[uuid.UUID, int]:
-    """Members plus pending unexpired invitations per diary: one query for each."""
-    counts: dict[uuid.UUID, int] = dict.fromkeys(diary_ids, 0)
-    if not diary_ids:
-        return counts
-    members = await db.execute(
-        select(DiaryPermission.diary_id, func.count())
-        .where(DiaryPermission.diary_id.in_(diary_ids))
-        .group_by(DiaryPermission.diary_id)
+        fields["lat"] = None
+        fields["lon"] = None
+    out = DiaryOut(
+        **fields, role=role, owner_name=person_name(owner), people=people if is_owner else None
     )
-    pending = await db.execute(
-        select(Invitation.diary_id, func.count())
-        .where(
-            Invitation.diary_id.in_(diary_ids),
-            Invitation.accepted_at.is_(None),
-            Invitation.expires_at > func.now(),
+    if not is_owner and deletion_state(owner) == "pending":
+        deadline = owner.hard_delete_after
+        if deadline is None:
+            raise RuntimeError("pending deletion without a deadline")
+        out.deletion_notice = DeletionNoticeOut(
+            owner_name=out.owner_name,
+            deletes_on=deadline,
+            becomes_yours=diary.handover_to_user_id == caller.id,
         )
-        .group_by(Invitation.diary_id)
-    )
-    for diary_id, n in [*members.all(), *pending.all()]:
-        counts[diary_id] += n
-    return counts
+    return out
 
 
 async def _diaries_out(
@@ -224,26 +203,25 @@ async def _diaries_out(
     owners = {
         u.id: u for u in (await db.execute(select(User).where(User.id.in_(owner_ids)))).scalars()
     }
-    counts = await _people_counts(db, [d.id for d in diaries if d.owner_user_id == user.id])
+    counts = await people_counts(db, [d.id for d in diaries if d.owner_user_id == user.id])
     result = []
     for d in diaries:
         owner = owners[d.owner_user_id]
-        is_owner = d.owner_user_id == user.id
-        limit = limits_for(owner.subscription_tier).people_per_diary
-        people = PeopleOut(used=counts[d.id], limit=limit) if is_owner else None
-        role = (
-            None
-            if is_owner
-            else effective_role((roles or {}).get(d.id, "viewer"), owner.subscription_tier)
-        )
-        result.append(
-            _diary_out(d, is_owner=is_owner, role=role, owner=owner, people=people, caller=user)
-        )
+        if d.owner_user_id == user.id:
+            limit = limits_for(owner.subscription_tier).people_per_diary
+            result.append(
+                _diary_out(
+                    d,
+                    role="owner",
+                    owner=owner,
+                    caller=user,
+                    people=PeopleOut(used=counts[d.id], limit=limit),
+                )
+            )
+        else:
+            role = effective_role((roles or {}).get(d.id, "viewer"), owner.subscription_tier)
+            result.append(_diary_out(d, role=role, owner=owner, caller=user))
     return result
-
-
-async def _owned_out(db: AsyncSession, diaries: list[Diary], user: User) -> list[DiaryOut]:
-    return await _diaries_out(db, diaries, user)
 
 
 # Columns a PATCH may set to NULL. An explicit null for any other field is
@@ -346,7 +324,7 @@ async def create_diary(
     # Commit before returning so the row is visible to concurrent requests that
     # receive this response and immediately issue follow-up calls (e.g. DELETE).
     await db.commit()
-    return (await _owned_out(db, [diary], user))[0]
+    return (await _diaries_out(db, [diary], user))[0]
 
 
 @router.get("/trash", response_model=list[DiaryOut])
@@ -363,7 +341,7 @@ async def list_deleted_diaries(
         )
         .order_by(Diary.hard_delete_after.asc())
     )
-    return await _owned_out(db, list(result.scalars()), user)
+    return await _diaries_out(db, list(result.scalars()), user)
 
 
 @router.get("/{diary_id}", response_model=DiaryOut)
@@ -414,7 +392,7 @@ async def patch_diary(
             logging.getLogger(__name__).exception(
                 "refresh_diary_locations_queue_failed diary=%s", diary.id
             )
-    return (await _owned_out(db, [diary], user))[0]
+    return (await _diaries_out(db, [diary], user))[0]
 
 
 @router.delete("/{diary_id}", response_model=DiaryOut)
@@ -431,7 +409,7 @@ async def delete_diary(
     db.add(
         AuditLog(user_id=user.id, action="diary.delete", target_type="diary", target_id=diary.id)
     )
-    return (await _owned_out(db, [diary], user))[0]
+    return (await _diaries_out(db, [diary], user))[0]
 
 
 @router.post("/{diary_id}/restore", response_model=DiaryOut)
@@ -483,4 +461,4 @@ async def restore_diary(
     diary.deleted_at = None
     diary.hard_delete_after = None
     diary.scan_enabled = True
-    return (await _owned_out(db, [diary], user))[0]
+    return (await _diaries_out(db, [diary], user))[0]
