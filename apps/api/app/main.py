@@ -68,11 +68,13 @@ def create_app() -> FastAPI:
         profile,
         rules,
         scan,
+        sharing,
     )
 
     app.include_router(auth.router, prefix="/v1")
     app.include_router(profile.router, prefix="/v1")
     app.include_router(diaries.router, prefix="/v1")
+    app.include_router(sharing.router, prefix="/v1")
     app.include_router(entries.router, prefix="/v1")
     app.include_router(calendar_events.router, prefix="/v1")
     app.include_router(integrations.router, prefix="/v1")
