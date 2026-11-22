@@ -48,6 +48,14 @@ describe('InvitePage', () => {
     expect(mockAccept).toHaveBeenCalledWith('tok')
   })
 
+  it('disables Open diary while accepting', async () => {
+    mockPreview.mockResolvedValue(pending)
+    mockAccept.mockReturnValue(new Promise(() => {}))
+    render(<InvitePage />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Open diary' }))
+    expect(await screen.findByRole('button', { name: 'Opening…' })).toBeDisabled()
+  })
+
   it('shows an error when accept fails', async () => {
     mockPreview.mockResolvedValue(pending)
     mockAccept.mockRejectedValue(new ApiError(500, 'boom'))

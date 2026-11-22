@@ -1,13 +1,23 @@
 import { safeNext } from '../nextPath'
 
 describe('safeNext', () => {
-  it('keeps a local path', () => {
-    expect(safeNext('/invite/abc')).toBe('/invite/abc')
+  it.each(['/invite/abc', '/invite/abc?x=1#y'])('keeps %p', (raw) => {
+    expect(safeNext(raw)).toBe(raw)
   })
-  it.each(['//evil.example', 'https://evil.example', '/\\evil.example', null, ''])(
-    'falls back for %p',
-    (raw) => {
-      expect(safeNext(raw)).toBe('/diaries')
-    },
-  )
+  it('keeps an encoded double slash on-site, as resolved', () => {
+    expect(safeNext('/%2F%2Fevil.example')).toBe('/%2F%2Fevil.example')
+  })
+  it.each([
+    '//evil.example',
+    'https://evil.example',
+    '/\\evil.example',
+    '/\t/evil.example',
+    '/\n/evil.example',
+    '/\r/evil.example',
+    '/\t\\evil.example',
+    null,
+    '',
+  ])('falls back for %p', (raw) => {
+    expect(safeNext(raw)).toBe('/diaries')
+  })
 })
