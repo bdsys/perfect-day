@@ -17,6 +17,13 @@ async def _name_owner(db_session, email, name="Andrew"):
     await db_session.commit()
 
 
+async def _rename_diary(client, headers, did) -> str:
+    secret = f"Secret-{uuid.uuid4().hex[:8]}"
+    r = await client.patch(f"/v1/diaries/{did}", json={"name": secret}, headers=headers)
+    assert r.status_code == 200, r.text
+    return secret
+
+
 @pytest.mark.asyncio
 async def test_accept_creates_permission_and_opens(client, db_session):
     owner, did = await make_shared_diary(client, "sa1@example.com")
@@ -59,6 +66,7 @@ async def test_accept_matches_email_case_insensitively(client):
 @pytest.mark.asyncio
 async def test_wrong_email_is_refused_without_diary_name(client, db_session):
     owner, did = await make_shared_diary(client, "sa3@example.com")
+    secret = await _rename_diary(client, owner, did)
     await _name_owner(db_session, "sa3@example.com")
     created = await invite(client, owner, did, "mom@example.com")
     other = await register(client, "other@example.com")
@@ -70,7 +78,8 @@ async def test_wrong_email_is_refused_without_diary_name(client, db_session):
         d = r.json()["detail"]
         assert d["code"] == "invite_wrong_email"
         assert d["details"] == {"masked_email": "m•••@example.com", "owner_name": "Andrew"}
-        assert "Shared" not in r.text
+        assert secret not in r.text
+        assert did not in r.text
     perms = (await db_session.execute(select(DiaryPermission))).scalars().all()
     assert perms == []
 
@@ -92,6 +101,7 @@ async def test_link_works_once(client):
 @pytest.mark.asyncio
 async def test_expired_link_410(client, db_session):
     owner, did = await make_shared_diary(client, "sa5@example.com")
+    secret = await _rename_diary(client, owner, did)
     await _name_owner(db_session, "sa5@example.com")
     created = await invite(client, owner, did, "guest5@example.com")
     await db_session.execute(
@@ -107,7 +117,8 @@ async def test_expired_link_410(client, db_session):
         d = r.json()["detail"]
         assert d["code"] == "invite_expired"
         assert d["details"] == {"owner_name": "Andrew"}
-        assert "Shared" not in r.text
+        assert secret not in r.text
+        assert did not in r.text
 
 
 @pytest.mark.asyncio
@@ -154,3 +165,37 @@ async def test_signed_out_gets_401(client):
         assert r.status_code == 401
         assert "Shared" not in r.text
         assert "guest8" not in r.text
+
+
+@pytest.mark.asyncio
+async def test_deleted_diary_invite_404(client, db_session):
+    owner, did = await make_shared_diary(client, "sa9@example.com")
+    created = await invite(client, owner, did, "guest9@example.com")
+    guest = await register(client, "guest9@example.com")
+    d = await client.delete(f"/v1/diaries/{did}", headers=owner)
+    assert d.status_code in (200, 204), d.text
+    for r in (
+        await client.get(f"/v1/invitations/{created['token']}", headers=guest),
+        await accept(client, guest, created["token"]),
+        await client.get(f"/v1/invitations/{created['token']}", headers=owner),
+        await accept(client, owner, created["token"]),
+    ):
+        assert r.status_code == 404, r.text
+        assert r.json()["detail"]["code"] == "invite_not_found"
+    perms = (await db_session.execute(select(DiaryPermission))).scalars().all()
+    assert perms == []
+
+
+@pytest.mark.asyncio
+async def test_revoke_of_accepted_invite_404_keeps_member(client, db_session):
+    owner, did = await make_shared_diary(client, "sa10@example.com")
+    created = await invite(client, owner, did, "guest10@example.com")
+    guest = await register(client, "guest10@example.com")
+    assert (await accept(client, guest, created["token"])).status_code == 200
+    for r in (
+        await client.delete(f"/v1/diaries/{did}/invitations/{created['id']}", headers=owner),
+        await client.post(f"/v1/diaries/{did}/invitations/{created['id']}/new-link", headers=owner),
+    ):
+        assert r.status_code == 404, r.text
+    perms = (await db_session.execute(select(DiaryPermission))).scalars().all()
+    assert len(perms) == 1

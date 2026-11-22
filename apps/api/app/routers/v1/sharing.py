@@ -146,6 +146,9 @@ async def create_invitation(
 
 
 async def _get_invitation(db: AsyncSession, diary: Diary, invitation_id: uuid.UUID) -> Invitation:
+    # Take the sharing lock before reading, so an accept in flight finishes first and a
+    # revoke that loses the race finds the invitation accepted and returns 404.
+    await lock_diary_sharing(db, diary)
     inv = (
         await db.execute(
             select(Invitation).where(
@@ -357,12 +360,23 @@ async def _resolve_invitation(
     caller whose email does not match.
     """
     query = select(Invitation).where(Invitation.token == hash_token(token))
-    if lock:
-        query = query.with_for_update()
     inv = (await db.execute(query)).scalar_one_or_none()
     if inv is None:
         raise _invite_error(404, "invite_not_found")
-    diary = (await db.execute(select(Diary).where(Diary.id == inv.diary_id))).scalar_one()
+    diary = (
+        await db.execute(select(Diary).where(Diary.id == inv.diary_id, Diary.deleted_at.is_(None)))
+    ).scalar_one_or_none()
+    if diary is None:
+        raise _invite_error(404, "invite_not_found")
+    if lock:
+        # Same order as revoke and new-link: the diary's sharing lock first, then the row
+        # lock, so accept and revoke are strictly ordered and cannot deadlock.
+        await lock_diary_sharing(db, diary)
+        inv = (
+            await db.execute(query.with_for_update().execution_options(populate_existing=True))
+        ).scalar_one_or_none()
+        if inv is None:
+            raise _invite_error(404, "invite_not_found")
 
     if diary.owner_user_id == user.id:
         return inv, diary, "owner", "owner"
