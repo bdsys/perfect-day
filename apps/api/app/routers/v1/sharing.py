@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user
 from app.core.database import get_db
+from app.core.security import hash_token
 from app.models import Diary, DiaryPermission, Invitation, User
 from app.routers.v1.diaries import _get_diary_or_404
 from app.services.read_only import ensure_diary_writable
@@ -22,6 +23,7 @@ from app.services.sharing import (
     ensure_editor_allowed,
     ensure_room_for_person,
     lock_diary_sharing,
+    mask_email,
     new_invite_token,
     normalize_email,
     person_name,
@@ -30,6 +32,8 @@ from app.services.sharing import (
 router = APIRouter(prefix="/diaries", tags=["sharing"])
 
 ShareRole = Literal["viewer", "editor"]
+
+invitee_router = APIRouter(prefix="/invitations", tags=["sharing"])
 
 
 class InvitationCreate(BaseModel):
@@ -321,3 +325,98 @@ async def remove_member(
         diary.handover_to_user_id = None
     await db.flush()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+class InvitePreviewOut(BaseModel):
+    diary_id: uuid.UUID
+    diary_name: str
+    owner_name: str
+    role: str
+    status: Literal["pending", "member", "owner"]
+
+
+class InviteAcceptOut(BaseModel):
+    diary_id: uuid.UUID
+
+
+def _invite_error(
+    status_code: int, code: str, details: dict[str, str] | None = None
+) -> HTTPException:
+    detail: dict[str, object] = {"code": code}
+    if details is not None:
+        detail["details"] = details
+    return HTTPException(status_code=status_code, detail=detail)
+
+
+async def _resolve_invitation(
+    db: AsyncSession, token: str, user: User, *, lock: bool = False
+) -> tuple[Invitation, Diary, Literal["pending", "member", "owner"], str]:
+    """Apply the invite rules in order; return (invitation, diary, status, role to show).
+
+    Raises the 404/403/410 invite errors. Nothing about the diary leaves here for a
+    caller whose email does not match.
+    """
+    query = select(Invitation).where(Invitation.token == hash_token(token))
+    if lock:
+        query = query.with_for_update()
+    inv = (await db.execute(query)).scalar_one_or_none()
+    if inv is None:
+        raise _invite_error(404, "invite_not_found")
+    diary = (await db.execute(select(Diary).where(Diary.id == inv.diary_id))).scalar_one()
+
+    if diary.owner_user_id == user.id:
+        return inv, diary, "owner", "owner"
+    perm = (
+        await db.execute(
+            select(DiaryPermission).where(
+                DiaryPermission.diary_id == diary.id, DiaryPermission.user_id == user.id
+            )
+        )
+    ).scalar_one_or_none()
+    if perm is not None:
+        return inv, diary, "member", perm.role
+    if inv.accepted_at is not None:
+        raise _invite_error(404, "invite_not_found")
+
+    owner = (await db.execute(select(User).where(User.id == diary.owner_user_id))).scalar_one()
+    if normalize_email(user.email) != normalize_email(inv.invited_email):
+        raise _invite_error(
+            403,
+            "invite_wrong_email",
+            {"masked_email": mask_email(inv.invited_email), "owner_name": person_name(owner)},
+        )
+    if inv.expires_at <= datetime.now(UTC):
+        raise _invite_error(410, "invite_expired", {"owner_name": person_name(owner)})
+    return inv, diary, "pending", inv.role
+
+
+@invitee_router.get("/{token}", response_model=InvitePreviewOut)
+async def look_at_invitation(
+    token: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db, scope="function"),
+) -> InvitePreviewOut:
+    inv, diary, state, role = await _resolve_invitation(db, token, user)
+    owner = (await db.execute(select(User).where(User.id == diary.owner_user_id))).scalar_one()
+    return InvitePreviewOut(
+        diary_id=diary.id,
+        diary_name=diary.name,
+        owner_name=person_name(owner),
+        role=role,
+        status=state,
+    )
+
+
+@invitee_router.post("/{token}/accept", response_model=InviteAcceptOut)
+async def accept_invitation(
+    token: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db, scope="function"),
+) -> InviteAcceptOut:
+    inv, diary, state, _ = await _resolve_invitation(db, token, user, lock=True)
+    if state == "pending":
+        db.add(DiaryPermission(diary_id=diary.id, user_id=user.id, role=inv.role))
+        inv.accepted_at = datetime.now(UTC)
+        inv.accepted_by_user_id = user.id
+        await db.flush()
+    return InviteAcceptOut(diary_id=diary.id)
