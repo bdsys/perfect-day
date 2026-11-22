@@ -593,7 +593,7 @@ function EntryDetailPageInner() {
               </div>
             ) : (
               <div className="empty-state">
-                <p>No content yet. Trigger a scan or regenerate to generate a draft.</p>
+                <p>{entry.can_edit ? 'No content yet. Trigger a scan or regenerate to generate a draft.' : 'Nothing written for this day yet.'}</p>
               </div>
             )}
 
@@ -641,7 +641,7 @@ function EntryDetailPageInner() {
                         onClick={() => setLightboxIndex(i)}
                         className="thumbnail"
                       />
-                      <button
+                      {entry.can_edit && <button
                         type="button"
                         className="thumbnail-action"
                         aria-label="Remove photo from entry"
@@ -662,7 +662,7 @@ function EntryDetailPageInner() {
                         }}
                       >
                         ×
-                      </button>
+                      </button>}
                     </li>
                   ))}
                 </ul>

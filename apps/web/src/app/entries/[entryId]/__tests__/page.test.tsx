@@ -558,7 +558,7 @@ describe('entry page: AI button label (row 27)', () => {
 describe('entry page: a viewer', () => {
   it('sees the entry without controls, rule links or AI notes', async () => {
     get.mockResolvedValue({
-      ...entry([]),
+      ...entry([{ id: 'p1' }]),
       status: 'published',
       body_source: 'fallback',
       can_edit: false,
@@ -573,6 +573,14 @@ describe('entry page: a viewer', () => {
     expect(screen.queryByRole('link', { name: 'Soccer' })).toBeNull()
     expect(screen.queryByText(/LLM draft/)).toBeNull()
     expect(screen.queryByText('published')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Remove photo from entry' })).toBeNull()
+  })
+
+  it('gets reader copy for an empty entry', async () => {
+    get.mockResolvedValue({ ...entry([]), status: 'published', body_markdown: '', can_edit: false })
+    render(<EntryDetailPage />)
+    expect(await screen.findByText('Nothing written for this day yet.')).toBeInTheDocument()
+    expect(screen.queryByText(/Trigger a scan/)).toBeNull()
   })
 
   it('an editor still sees them', async () => {
