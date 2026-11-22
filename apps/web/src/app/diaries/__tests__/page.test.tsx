@@ -117,6 +117,16 @@ const base = {
 }
 
 describe('DiariesPage sharing', () => {
+  it('shows no creation prompts while the list is still loading', async () => {
+    ;(api.diaries.list as jest.Mock).mockReturnValue(new Promise(() => {}))
+    ;(api.auth.myPlan as jest.Mock).mockResolvedValue({ ...plusPlan, tier: 'free', plan_name: 'Free', diaries_limit: 1, diaries_used: 0 })
+    render(<DiariesPage />)
+    await waitFor(() => expect(api.auth.myPlan).toHaveBeenCalled())
+    await new Promise((r) => setTimeout(r, 0))
+    expect(screen.queryByText('New diary')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Diaries:/ })).not.toBeInTheDocument()
+  })
+
   it('shows the owner on a shared card, the counter on an owned one, and the read-only line', async () => {
     ;(api.diaries.list as jest.Mock).mockResolvedValue([
       { ...base, id: 'a', name: 'Mine', role: 'owner', owner_name: 'Me', people: { used: 2, limit: 3 } },
@@ -135,13 +145,14 @@ describe('DiariesPage sharing', () => {
     ;(api.diaries.list as jest.Mock).mockResolvedValue([
       { ...base, id: 'c', name: 'Moms', role: 'viewer', owner_name: 'Mom', people: null },
     ])
-    ;(api.auth.myPlan as jest.Mock).mockResolvedValue({ ...plusPlan, tier: 'free', plan_name: 'Free', diaries_limit: 1, diaries_used: 0 })
+    ;(api.auth.myPlan as jest.Mock).mockResolvedValue({ ...plusPlan, tier: 'free', plan_name: 'Free', diaries_limit: 1, diaries_used: 1 })
     render(<DiariesPage />)
     expect(await screen.findByText('Shared by Mom')).toBeInTheDocument()
     expect(screen.queryByText(/New diary/)).not.toBeInTheDocument()
     expect(screen.queryByRole('link', { name: 'Photos' })).not.toBeInTheDocument()
     expect(screen.queryByRole('link', { name: 'Deleted diaries' })).not.toBeInTheDocument()
     expect(screen.queryByText(/Diaries:/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Diaries: |Free plan: 1 diary/)).not.toBeInTheDocument()
     expect(screen.queryByText(/Create your first one/)).not.toBeInTheDocument()
     expect(screen.getByText(/Want a diary of your own\?/)).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Create one' })).toHaveAttribute('href', '/diaries/new')

@@ -397,7 +397,7 @@ export default function ProfilePage() {
                   type="button"
                   className="btn btn-secondary"
                   disabled={busy === 'delete'}
-                  onClick={() => { setConfirming(false); setConfirmText(''); setDeleteError('') }}
+                  onClick={() => { setConfirming(false); setConfirmText(''); setDeleteError(''); setHandovers({}) }}
                 >
                   Cancel
                 </button>
