@@ -6,6 +6,7 @@ All planning deliverables for the PoC. These are authoritative — use them as t
 
 | File | Topic |
 |---|---|
+| [00-vision.md](00-vision.md) | The core goal, in Andrew's words: weigh every decision against it |
 | [01-architecture.md](01-architecture.md) | Component diagram, service topology, flow notes |
 | [02-data-model.md](02-data-model.md) | Full Postgres schema (all tables + corrections from later deliverables) |
 | [03-api-surface.md](03-api-surface.md) | All FastAPI endpoints, cross-cutting concerns, breadcrumb stubs |
