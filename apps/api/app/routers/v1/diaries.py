@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import deletion_state, get_current_user
 from app.core.database import get_db
 from app.models import AuditLog, Diary, DiaryPermission, ScanJob, User
+from app.services.diary_slugs import unique_slug
 from app.services.plan_view import OwnerPlanOut, owner_plan_out
 from app.services.read_only import ensure_diary_writable
 from app.services.sharing import effective_role, people_counts, person_name
@@ -291,18 +292,7 @@ async def create_diary(
     if current >= limit:
         raise tier_limit_error(source="diary", limit=limit, current=current, needed=current + 1)
 
-    slug = _slugify(body.name)
-    # Ensure unique slug per owner
-    base_slug = slug
-    suffix = 1
-    while True:
-        exists = await db.execute(
-            select(Diary).where(Diary.owner_user_id == user.id, Diary.slug == slug)
-        )
-        if exists.scalar_one_or_none() is None:
-            break
-        slug = f"{base_slug}-{suffix}"
-        suffix += 1
+    slug = await unique_slug(db, user.id, _slugify(body.name))
 
     diary = Diary(
         owner_user_id=user.id,
@@ -440,24 +430,8 @@ async def restore_diary(
     current = count_result.scalar_one()
     if current >= limit:
         raise tier_limit_error(source="diary", limit=limit, current=current, needed=current + 1)
-    # If the slug is now taken by a different active diary, assign a new unique one
-    slug = diary.slug
-    base_slug = slug
-    suffix = 1
-    while True:
-        conflict = await db.execute(
-            select(Diary).where(
-                Diary.owner_user_id == user.id,
-                Diary.slug == slug,
-                Diary.id != diary_id,
-                Diary.deleted_at.is_(None),
-            )
-        )
-        if conflict.scalar_one_or_none() is None:
-            break
-        slug = f"{base_slug}-{suffix}"
-        suffix += 1
-    diary.slug = slug
+    # If the slug is now taken by another of the owner's diaries, assign a new unique one
+    diary.slug = await unique_slug(db, user.id, diary.slug, exclude_diary_id=diary_id)
     diary.deleted_at = None
     diary.hard_delete_after = None
     diary.scan_enabled = True

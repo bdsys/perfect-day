@@ -322,6 +322,17 @@ async def remove_member(
     diary, role = await _get_diary_or_404(diary_id, user, db)
     if role is not None and user_id != user.id:
         raise HTTPException(status_code=403, detail="forbidden")
+    # Lock the diary row before the permission row, the order the hand-over at the
+    # hard delete takes them in (workers/handover.py); the reverse could deadlock.
+    # A hand-over that committed first has already removed the recipient's row: 404.
+    # FOR NO KEY UPDATE still waits for the hand-over's FOR UPDATE, without blocking
+    # the KEY SHARE locks that inserting entries into this diary take.
+    await db.execute(
+        select(Diary)
+        .where(Diary.id == diary.id)
+        .with_for_update(key_share=True)
+        .execution_options(populate_existing=True)
+    )
     perm = await _get_permission(db, diary, user_id)
     await db.delete(perm)
     if diary.handover_to_user_id == user_id:

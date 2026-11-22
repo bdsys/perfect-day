@@ -160,6 +160,16 @@ async def hard_delete_user(user_id: uuid.UUID) -> None:
             log.info("hard_delete_user_skipped_not_due", user_id=str(user_id))
             return
 
+    # The hand-over (design: diary sharing). First the diaries the owner chose a
+    # recipient for change hands; then their photos still attached in diaries they
+    # don't own (those just handed over included) move to those diaries' owners. Both
+    # re-check state and only copy objects, so a failure is finished by the next run;
+    # the old copies go with the prefix scrub below.
+    from app.workers.handover import move_departing_photos, transfer_chosen_diaries
+
+    await transfer_chosen_diaries(user_id)
+    await move_departing_photos(user_id)
+
     async with db_session() as db:
         # Hard delete all owned diaries first
         diary_result = await db.execute(select(Diary.id).where(Diary.owner_user_id == user_id))
