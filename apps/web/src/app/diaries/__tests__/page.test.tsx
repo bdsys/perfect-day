@@ -32,7 +32,7 @@ jest.mock('next/navigation', () => ({
 const plusPlan = {
   tier: 'plus', plan_name: 'Plus', diaries_limit: 2, diaries_used: 0, ai_drafts_limit: null, ai_drafts_used: 0,
   ai_drafts_left: null, resets_on: '2026-12-01', photos_per_entry: null, read_only_diary_ids: [],
-  backfill: true, scan_past_days_max: null,
+  backfill: true, scan_past_days_max: null, people_per_diary: 3, editors: false,
 } as MyPlan
 
 // GoogleStatusBanner uses Suspense + useSearchParams; supress console errors

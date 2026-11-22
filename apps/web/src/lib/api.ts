@@ -251,6 +251,62 @@ export interface MyPlan {
   read_only_diary_ids: string[]
   backfill: boolean
   scan_past_days_max: number | null
+  /** People allowed per shared diary; null = unlimited */
+  people_per_diary: number | null
+  /** Whether the plan allows editors */
+  editors: boolean
+}
+
+export type DiaryRole = 'owner' | 'editor' | 'viewer'
+
+/** Members plus pending invitations; limit null = unlimited. Owner only. */
+export interface PeopleCount {
+  used: number
+  limit: number | null
+}
+
+/** The owner is deleting their account (members only). */
+export interface DeletionNotice {
+  owner_name: string
+  deletes_on: string
+  becomes_yours: boolean
+}
+
+export interface Invitation {
+  id: string
+  invited_email: string
+  role: string
+  expires_at: string
+  status: 'pending' | 'expired'
+  /** Only in the create and new-link responses */
+  token: string | null
+}
+
+export interface Member {
+  user_id: string
+  name: string
+  email: string
+  role: string
+  effective_role: string
+}
+
+export interface InvitePreview {
+  diary_id: string
+  diary_name: string
+  owner_name: string
+  role: string
+  status: 'pending' | 'member' | 'owner'
+}
+
+export interface HandoverOption {
+  diary_id: string
+  diary_name: string
+  members: { user_id: string; name: string }[]
+}
+
+/** The link to send someone: where they accept an invitation. */
+export function inviteUrl(token: string): string {
+  return `${window.location.origin}/invite/${token}`
 }
 
 export interface Diary {
@@ -273,6 +329,13 @@ export interface Diary {
   created_at: string
   /** The owner's plan; only on the single-diary GET */
   plan?: OwnerPlan | null
+  /** The caller's effective role */
+  role: DiaryRole
+  owner_name: string
+  /** Owner only */
+  people?: PeopleCount | null
+  /** Members only */
+  deletion_notice?: DeletionNotice | null
 }
 
 /** A place from the city search (GET /v1/geocode). */
@@ -560,14 +623,59 @@ export const api = {
     async logoutAll(): Promise<void> {
       return apiFetch('/v1/auth/logout-all', { method: 'POST' })
     },
-    async deleteAccount(): Promise<{ deletion_scheduled_for: string }> {
-      return apiFetch('/v1/auth/account', { method: 'DELETE' })
+    async deleteAccount(handovers?: Record<string, string>): Promise<{ deletion_scheduled_for: string }> {
+      return apiFetch('/v1/auth/account', {
+        method: 'DELETE',
+        ...(handovers ? { body: JSON.stringify({ handovers }) } : {}),
+      })
+    },
+    async handoverOptions(): Promise<HandoverOption[]> {
+      return apiFetch('/v1/auth/account/handover-options')
     },
     async restoreAccount(): Promise<void> {
       return apiFetch('/v1/auth/account/restore', { method: 'POST' })
     },
     async myPlan(): Promise<MyPlan> {
       return apiFetch('/v1/auth/me/plan')
+    },
+  },
+
+  sharing: {
+    async invite(diaryId: string, email: string, role: string): Promise<Invitation> {
+      return apiFetch(`/v1/diaries/${diaryId}/invitations`, {
+        method: 'POST',
+        body: JSON.stringify({ email, role }),
+      })
+    },
+    async invitations(diaryId: string): Promise<Invitation[]> {
+      return apiFetch(`/v1/diaries/${diaryId}/invitations`)
+    },
+    async revoke(diaryId: string, invId: string): Promise<void> {
+      return apiFetch(`/v1/diaries/${diaryId}/invitations/${invId}`, { method: 'DELETE' })
+    },
+    async newLink(diaryId: string, invId: string): Promise<Invitation> {
+      return apiFetch(`/v1/diaries/${diaryId}/invitations/${invId}/new-link`, { method: 'POST' })
+    },
+    async members(diaryId: string): Promise<Member[]> {
+      return apiFetch(`/v1/diaries/${diaryId}/permissions`)
+    },
+    async setRole(diaryId: string, userId: string, role: string): Promise<Member> {
+      return apiFetch(`/v1/diaries/${diaryId}/permissions/${userId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ role }),
+      })
+    },
+    async remove(diaryId: string, userId: string): Promise<void> {
+      return apiFetch(`/v1/diaries/${diaryId}/permissions/${userId}`, { method: 'DELETE' })
+    },
+    async preview(token: string): Promise<InvitePreview> {
+      return apiFetch(`/v1/invitations/${encodeURIComponent(token)}`)
+    },
+    async accept(token: string): Promise<{ diary_id: string }> {
+      return apiFetch(`/v1/invitations/${encodeURIComponent(token)}/accept`, { method: 'POST' })
+    },
+    async decline(diaryId: string): Promise<void> {
+      return apiFetch(`/v1/diaries/${diaryId}/handover/decline`, { method: 'POST' })
     },
   },
 

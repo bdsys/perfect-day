@@ -1,15 +1,26 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { ApiError } from '@/lib/api'
 import { useAuth } from '@/lib/auth-context'
 import GoogleSignInButton from '@/components/GoogleSignInButton'
 import { authErrorMessage } from '@/lib/authErrors'
+import { safeNext } from '@/lib/nextPath'
 
 export default function RegisterPage() {
+  return (
+    <Suspense>
+      <RegisterForm />
+    </Suspense>
+  )
+}
+
+function RegisterForm() {
   const router = useRouter()
+  const next = safeNext(useSearchParams().get('next'))
+  const nextQuery = next === '/diaries' ? '' : `?next=${encodeURIComponent(next)}`
   const { user, loading: authLoading, register, loginWithGoogle } = useAuth()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -19,9 +30,9 @@ export default function RegisterPage() {
 
   useEffect(() => {
     if (!authLoading && user) {
-      router.replace('/diaries')
+      router.replace(next)
     }
-  }, [authLoading, user, router])
+  }, [authLoading, user, router, next])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -29,7 +40,7 @@ export default function RegisterPage() {
     setLoading(true)
     try {
       await register(email, password, displayName || undefined)
-      router.push('/diaries')
+      router.push(next)
     } catch (err: unknown) {
       setError(authErrorMessage(err, 'Registration failed'))
     } finally {
@@ -42,7 +53,7 @@ export default function RegisterPage() {
     setLoading(true)
     try {
       await loginWithGoogle(idToken)
-      router.push('/diaries')
+      router.push(next)
     } catch (err: unknown) {
       if (err instanceof ApiError && err.status === 409) {
         setError('An account with this email exists. Sign in with email and password instead.')
@@ -115,7 +126,7 @@ export default function RegisterPage() {
         </div>
         <GoogleSignInButton onCredential={handleGoogleCredential} />
         <p style={{ marginTop: '1rem', fontSize: '0.875rem', textAlign: 'center', color: 'var(--text-muted)' }}>
-          Already have an account? <Link href="/login">Sign in</Link>
+          Already have an account? <Link href={`/login${nextQuery}`}>Sign in</Link>
         </p>
       </div>
     </div>

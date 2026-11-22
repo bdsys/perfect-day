@@ -8,6 +8,7 @@ import { useAuth } from '@/lib/auth-context'
 import GoogleSignInButton from '@/components/GoogleSignInButton'
 import { authErrorMessage } from '@/lib/authErrors'
 import { formatDeadline } from '@/lib/deadline'
+import { safeNext } from '@/lib/nextPath'
 
 /** After deleting an account, /login?deleted=<iso> says when it will be deleted. */
 function DeletionNotice() {
@@ -21,8 +22,18 @@ function DeletionNotice() {
 }
 
 export default function LoginPage() {
+  return (
+    <Suspense>
+      <LoginForm />
+    </Suspense>
+  )
+}
+
+function LoginForm() {
   const { user, loading: authLoading, login, loginWithGoogle } = useAuth()
   const router = useRouter()
+  const next = safeNext(useSearchParams().get('next'))
+  const nextQuery = next === '/diaries' ? '' : `?next=${encodeURIComponent(next)}`
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
@@ -30,9 +41,9 @@ export default function LoginPage() {
 
   useEffect(() => {
     if (!authLoading && user) {
-      router.replace('/diaries')
+      router.replace(next)
     }
-  }, [authLoading, user, router])
+  }, [authLoading, user, router, next])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -40,7 +51,7 @@ export default function LoginPage() {
     setLoading(true)
     try {
       await login(email, password)
-      router.push('/diaries')
+      router.push(next)
     } catch (err: unknown) {
       setError(authErrorMessage(err, 'Login failed'))
     } finally {
@@ -53,7 +64,7 @@ export default function LoginPage() {
     setLoading(true)
     try {
       await loginWithGoogle(idToken)
-      router.push('/diaries')
+      router.push(next)
     } catch (err: unknown) {
       if (err instanceof ApiError && err.status === 409) {
         setError('An account with this email exists. Sign in with email and password instead.')
@@ -118,7 +129,7 @@ export default function LoginPage() {
         </div>
         <GoogleSignInButton onCredential={handleGoogleCredential} />
         <p style={{ marginTop: '1rem', fontSize: '0.875rem', textAlign: 'center', color: 'var(--text-muted)' }}>
-          No account? <Link href="/register">Register</Link>
+          No account? <Link href={`/register${nextQuery}`}>Register</Link>
         </p>
       </div>
     </div>
