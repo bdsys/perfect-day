@@ -61,15 +61,24 @@ All endpoints prefixed `/v1/`. JSON. Auth via `Authorization: Bearer <jwt>` unle
 
 ## Diary sharing
 
+Built 2026-11-22 (item 19). People limits count members plus pending, unexpired invites per diary: Free 3, Plus 10, Family unlimited; editors are Family only. Over a limit: 403 `tier_limit` with `source` `people` or `editor`. Errors that carry a code use the body `{"detail": {"code": ..., "details": {...}}}`.
+
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/v1/diaries/{id}/permissions` | List members. Owner only. |
-| POST | `/v1/diaries/{id}/invitations` | Invite by email. Owner only. |
-| GET | `/v1/diaries/{id}/invitations` | List pending invitations. Owner only. |
-| DELETE | `/v1/diaries/{id}/invitations/{invitationId}` | Revoke invite. Owner only. |
-| POST | `/v1/invitations/{token}/accept` | Auth required. Creates `diary_permissions` row. |
-| PATCH | `/v1/diaries/{id}/permissions/{userId}` | Change role. Owner only. |
-| DELETE | `/v1/diaries/{id}/permissions/{userId}` | Remove member. Owner only or self. |
+| POST | `/v1/diaries/{id}/invitations` | Owner only. Body `{email, role}` (`viewer` default, or `editor`). 201 with `{id, invited_email, role, expires_at, status, token}`: `token` is the raw link token, shown here and in new-link only; the page builds `{origin}/invite/{token}`. 422 `cannot_invite_self`, 409 `already_member`, 409 `already_invited`, 403 `tier_limit`. Refused on a read-only diary. |
+| GET | `/v1/diaries/{id}/invitations` | Owner only. Unaccepted invites, newest first, `status` `pending` or `expired`, no token. |
+| POST | `/v1/diaries/{id}/invitations/{invitationId}/new-link` | Owner only. A new token and 7 more days; the old link stops working. Returns the invitation with the new raw `token`. An expired invite takes a seat again, so the limits are re-checked. |
+| DELETE | `/v1/diaries/{id}/invitations/{invitationId}` | Owner only. Cancel an unaccepted invite. 204; 404 once accepted. |
+| GET | `/v1/diaries/{id}/permissions` | Owner only. Members `{user_id, name, email, role, effective_role}`; `effective_role` is `viewer` for an editor whose owner is not on Family. |
+| PATCH | `/v1/diaries/{id}/permissions/{userId}` | Owner only. Body `{role}`. 403 `tier_limit` (`editor`) off Family. |
+| DELETE | `/v1/diaries/{id}/permissions/{userId}` | The owner removes anyone; a member removes only themself (leave). 403 `forbidden` for any other member. 204. |
+| GET | `/v1/invitations/{token}` | Signed in. Preview `{diary_id, diary_name, owner_name, role, status}`, `status` `pending`, `member` or `owner` (the web page then goes straight to the diary). Errors, checked in this order: 404 `invite_not_found` (unknown token, accepted by someone else, or diary deleted); 403 `invite_wrong_email` with `details.masked_email` and `details.owner_name`; 410 `invite_expired` with `details.owner_name`. Nothing about the diary is returned before the email check passes. |
+| POST | `/v1/invitations/{token}/accept` | Signed in, email must match (case-insensitive). Creates the `diary_permissions` row, marks the invite accepted. 200 `{diary_id}`; the same errors as the preview; repeating it as a member is a no-op. |
+| POST | `/v1/diaries/{id}/handover/decline` | The person the owner chose to receive the diary, during the 7-day grace. 204 and the diary will be deleted with the account. 404 unless the caller is the chosen recipient and the owner's deletion is pending. |
+| GET | `/v1/auth/account/handover-options` | Owned live diaries with at least one active member: `[{diary_id, diary_name, members: [{user_id, name}]}]`. |
+| DELETE | `/v1/auth/account` | Optional body `{handovers: {diaryId: recipientUserId}}`. Default is no hand-over (every diary is deleted). The whole request is validated first and replaces any earlier choice; 422 `invalid_handover` for a diary that is not theirs, a recipient who is not a member or is not active, or themself. |
+
+`GET /v1/diaries` and `GET /v1/diaries/{id}` return `role` (`owner`, `editor`, `viewer`; the caller's effective role), `owner_name`, `people` (`{used, limit}`, owner only; `limit` null is unlimited) and `deletion_notice` (`{owner_name, deletes_on, becomes_yours}`, members only, while the owner's account deletion is pending). Viewers get published entries only.
 
 ## Entries
 

@@ -70,6 +70,8 @@ users ──┬──< social_identities
 - `photos_backfill_days_max` int NOT NULL DEFAULT 90  *(per-diary override; effective limit is user-tier config — Phase 2 will move this to tier config)*
 - `deleted_at` timestamptz NULL
 - `hard_delete_after` timestamptz NULL  *(set on diary deletion request; 30-day grace)*
+- `owned_since` timestamptz NOT NULL  *(when the current owner got the diary: creation, or the hand-over at an account deletion)*
+- `handover_to_user_id` UUID FK → users NULL, ON DELETE SET NULL  *(the member the owner chose to receive this diary when their account is hard-deleted; cleared on restore, on Decline, and when that member is removed. NULL means the diary is deleted with the account.)*
 
 App-layer check: per-user diary count vs tier (free=1, plus=2, family=4).
 
@@ -88,7 +90,7 @@ Display URLs: `perfectday.andrewlass.com/d/{slug}/entries/{entry_date}`. Interna
 - `diary_id` UUID FK → diaries
 - `invited_email` citext NOT NULL
 - `role` text NOT NULL  *(`viewer | editor`)*
-- `token` text NOT NULL UNIQUE  *(opaque, single-use)*
+- `token` text NOT NULL UNIQUE  *(the SHA-256 hash of the link token, never the token itself; the raw token is returned only when the invite is created or given a new link. Single-use, 7 days.)*
 - `expires_at` timestamptz NOT NULL
 - `accepted_at` timestamptz NULL
 - `accepted_by_user_id` UUID FK → users NULL
@@ -312,7 +314,7 @@ INDEX on (`diary_id`, `entry_date` DESC) for timeline. Timeline order: `entry_da
 ## Behavior decisions locked
 
 - **Sharing visibility:** Owner sees raw `events` + drafts + published. Editors see drafts + published. Viewers see published entries + their attached photos only. Enforced at API layer.
-- **Photo ownership on account deletion:** Photos die with the owner. Shared-diary edge case documented as known; "transfer ownership before delete" UX deferred to v2.
+- **Photo ownership on account deletion (2026-11-22):** Photos stay with the diary they are in. When an account is hard-deleted, each diary the owner chose a recipient for moves to that person; then every photo of the departing user that is attached to an entry in someone else's diary moves to the owner of the diary holding its earliest attachment (`entries.created_at`, then id). A move re-wraps the photo's DEK for the new owner and copies the objects server-side to the new owner's prefix; the old copies go with the prefix scrub. A diary with no chosen recipient is deleted with the account, and its photos with it unless another diary still links them. Migration `0021_diary_sharing`.
 - **Photo attribution heuristic (PoC):** Time + location only. Layered roadmap:
   - L1 (PoC): time + location heuristic — narrower entry range wins.
   - L2 (PoC if cheap, else v1.1): surface ambiguous attachments in draft review UI.
