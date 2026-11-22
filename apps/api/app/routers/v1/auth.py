@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Body, Cookie, Depends, HTTPException, Request, Response, status
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token as google_id_token
 from pydantic import BaseModel, EmailStr, field_validator
@@ -26,10 +26,19 @@ from app.core.security import (
     verify_password,
 )
 from app.middleware.rate_limit import auth_limiter
-from app.models import NotificationPreferences, OAuthToken, RefreshToken, SocialIdentity, User
+from app.models import (
+    Diary,
+    DiaryPermission,
+    NotificationPreferences,
+    OAuthToken,
+    RefreshToken,
+    SocialIdentity,
+    User,
+)
 from app.services.google_revoke import revoke_and_forget_google
 from app.services.plan_view import MyPlanOut, my_plan_out
 from app.services.profile import UserProfile, user_profile
+from app.services.sharing import person_name
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -416,9 +425,59 @@ class AccountDeletionOut(BaseModel):
     deletion_scheduled_for: datetime
 
 
+class AccountDeletionIn(BaseModel):
+    handovers: dict[uuid.UUID, uuid.UUID] = {}
+
+
+class HandoverMemberOut(BaseModel):
+    user_id: uuid.UUID
+    name: str
+
+
+class HandoverOptionOut(BaseModel):
+    diary_id: uuid.UUID
+    diary_name: str
+    members: list[HandoverMemberOut]
+
+
+@router.get("/account/handover-options", response_model=list[HandoverOptionOut])
+async def handover_options(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db, scope="function"),
+) -> list[HandoverOptionOut]:
+    """Owned live diaries that have at least one member whose account is active."""
+    rows = (
+        await db.execute(
+            select(Diary, User)
+            .join(DiaryPermission, DiaryPermission.diary_id == Diary.id)
+            .join(User, User.id == DiaryPermission.user_id)
+            .where(Diary.owner_user_id == user.id, Diary.deleted_at.is_(None))
+            .order_by(Diary.name, Diary.id)
+        )
+    ).all()
+    by_diary: dict[uuid.UUID, HandoverOptionOut] = {}
+    for diary, member in rows:
+        if deletion_state(member) != "active":
+            continue
+        option = by_diary.setdefault(
+            diary.id, HandoverOptionOut(diary_id=diary.id, diary_name=diary.name, members=[])
+        )
+        option.members.append(HandoverMemberOut(user_id=member.id, name=person_name(member)))
+    for option in by_diary.values():
+        option.members.sort(key=lambda m: (m.name.casefold(), str(m.user_id)))
+    return list(by_diary.values())
+
+
+def _invalid_handover() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="invalid_handover"
+    )
+
+
 @router.delete("/account", response_model=AccountDeletionOut)
 async def delete_account(
     response: Response,
+    body: AccountDeletionIn | None = Body(default=None),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> AccountDeletionOut:
@@ -431,6 +490,35 @@ async def delete_account(
         .with_for_update(key_share=True)
         .execution_options(populate_existing=True)
     )
+    handovers = body.handovers if body is not None else {}
+    # Validate every pair before writing anything: the account stays untouched on a bad one.
+    for diary_id, recipient_id in handovers.items():
+        owned = (
+            await db.execute(
+                select(Diary.id).where(
+                    Diary.id == diary_id,
+                    Diary.owner_user_id == user.id,
+                    Diary.deleted_at.is_(None),
+                )
+            )
+        ).scalar_one_or_none()
+        recipient = (
+            await db.execute(
+                select(User)
+                .join(DiaryPermission, DiaryPermission.user_id == User.id)
+                .where(DiaryPermission.diary_id == diary_id, User.id == recipient_id)
+            )
+        ).scalar_one_or_none()
+        if owned is None or recipient is None or deletion_state(recipient) != "active":
+            raise _invalid_handover()
+    # The request is the whole choice: drop any older one, then record this one.
+    await db.execute(
+        update(Diary).where(Diary.owner_user_id == user.id).values(handover_to_user_id=None)
+    )
+    for diary_id, recipient_id in handovers.items():
+        await db.execute(
+            update(Diary).where(Diary.id == diary_id).values(handover_to_user_id=recipient_id)
+        )
     now = datetime.now(tz=UTC)
     deadline = now + timedelta(days=7)
     user.deleted_at = now
@@ -475,3 +563,7 @@ async def restore_account(
         raise account_unavailable()
     fresh_user.deleted_at = None
     fresh_user.hard_delete_after = None
+    # Restoring means nothing changes: any hand-over choice goes with the deletion.
+    await db.execute(
+        update(Diary).where(Diary.owner_user_id == user.id).values(handover_to_user_id=None)
+    )
