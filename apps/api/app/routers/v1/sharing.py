@@ -21,6 +21,7 @@ from app.services.sharing import (
     effective_role,
     ensure_editor_allowed,
     ensure_room_for_person,
+    lock_diary_sharing,
     new_invite_token,
     normalize_email,
     person_name,
@@ -75,6 +76,39 @@ async def _owner_tier(db: AsyncSession, diary: Diary) -> str:
     return tier or "free"
 
 
+async def _ensure_not_member_or_invited(
+    db: AsyncSession,
+    diary: Diary,
+    normalized_email: str,
+    *,
+    exclude_invitation_id: uuid.UUID | None = None,
+) -> None:
+    """409 already_member / already_invited. Call under the sharing lock."""
+    already_member = (
+        await db.execute(
+            select(DiaryPermission.id)
+            .join(User, User.id == DiaryPermission.user_id)
+            .where(
+                DiaryPermission.diary_id == diary.id,
+                func.lower(User.email) == normalized_email,
+            )
+        )
+    ).first()
+    if already_member is not None:
+        raise HTTPException(status_code=409, detail="already_member")
+
+    pending = select(Invitation.id).where(
+        Invitation.diary_id == diary.id,
+        Invitation.invited_email == normalized_email,
+        Invitation.accepted_at.is_(None),
+        Invitation.expires_at > func.now(),
+    )
+    if exclude_invitation_id is not None:
+        pending = pending.where(Invitation.id != exclude_invitation_id)
+    if (await db.execute(pending)).first() is not None:
+        raise HTTPException(status_code=409, detail="already_invited")
+
+
 async def create_invitation(
     db: AsyncSession, diary: Diary, owner: User, email: str, role: str
 ) -> tuple[Invitation, str]:
@@ -86,28 +120,8 @@ async def create_invitation(
     if normalized == normalize_email(owner.email):
         raise HTTPException(status_code=422, detail="cannot_invite_self")
 
-    already_member = (
-        await db.execute(
-            select(DiaryPermission.id)
-            .join(User, User.id == DiaryPermission.user_id)
-            .where(DiaryPermission.diary_id == diary.id, func.lower(User.email) == normalized)
-        )
-    ).first()
-    if already_member is not None:
-        raise HTTPException(status_code=409, detail="already_member")
-
-    already_invited = (
-        await db.execute(
-            select(Invitation.id).where(
-                Invitation.diary_id == diary.id,
-                Invitation.invited_email == normalized,
-                Invitation.accepted_at.is_(None),
-                Invitation.expires_at > func.now(),
-            )
-        )
-    ).first()
-    if already_invited is not None:
-        raise HTTPException(status_code=409, detail="already_invited")
+    await lock_diary_sharing(db, diary)
+    await _ensure_not_member_or_invited(db, diary, normalized)
 
     owner_tier = await _owner_tier(db, diary)
     if role == "editor":
@@ -202,11 +216,17 @@ async def new_invitation_link(
     await ensure_diary_writable(db, diary)
     inv = await _get_invitation(db, diary, invitation_id)
     owner_tier = await _owner_tier(db, diary)
-    if inv.expires_at <= datetime.now(UTC):
+    expired = inv.expires_at <= datetime.now(UTC)
+    if expired:
         # An expired invite no longer holds a seat; a new link takes one again.
-        await ensure_room_for_person(db, diary, owner_tier, exclude_invitation_id=inv.id)
+        await lock_diary_sharing(db, diary)
+        await _ensure_not_member_or_invited(
+            db, diary, normalize_email(inv.invited_email), exclude_invitation_id=inv.id
+        )
     if inv.role == "editor":
         ensure_editor_allowed(owner_tier)
+    if expired:
+        await ensure_room_for_person(db, diary, owner_tier, exclude_invitation_id=inv.id)
     raw, hashed = new_invite_token()
     inv.token = hashed
     inv.expires_at = datetime.now(UTC) + INVITE_TTL

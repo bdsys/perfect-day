@@ -70,6 +70,17 @@ async def people_used(
     return members + (await db.execute(pending)).scalar_one()
 
 
+async def lock_diary_sharing(db: AsyncSession, diary: Diary) -> None:
+    """Take the per-diary sharing lock, held to the end of the transaction.
+
+    Re-entrant within a session, so callers may take it again.
+    """
+    await db.execute(
+        text("SELECT pg_advisory_xact_lock(hashtext('share:' || :diary_id))"),
+        {"diary_id": str(diary.id)},
+    )
+
+
 async def ensure_room_for_person(
     db: AsyncSession,
     diary: Diary,
@@ -82,10 +93,7 @@ async def ensure_room_for_person(
     Takes a per-diary advisory lock (held to the end of the transaction) so two
     concurrent invites cannot both pass the check.
     """
-    await db.execute(
-        text("SELECT pg_advisory_xact_lock(hashtext('share:' || :diary_id))"),
-        {"diary_id": str(diary.id)},
-    )
+    await lock_diary_sharing(db, diary)
     limit = limits_for(owner_tier).people_per_diary
     if limit is None:
         return

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -245,3 +246,153 @@ async def test_downgrade_keeps_people_and_blocks_new_invites(client, db_session)
     )
     assert r.status_code == 403, r.text
     assert r.json()["detail"]["details"]["source"] == "people"
+
+
+async def _expire(db_session, invitation_id):
+    await db_session.execute(
+        update(Invitation)
+        .where(Invitation.id == uuid.UUID(invitation_id))
+        .values(expires_at=datetime.now(UTC) - timedelta(days=1))
+    )
+    await db_session.commit()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_invites_for_same_email_make_one(client, db_session):
+    owner, did = await make_shared_diary(client, "so13@example.com")
+    url = f"/v1/diaries/{did}/invitations"
+    rs = await asyncio.gather(
+        *[client.post(url, json={"email": "dup@example.com"}, headers=owner) for _ in range(2)]
+    )
+    assert sorted(r.status_code for r in rs) == [201, 409], [r.text for r in rs]
+    rows = (await db_session.execute(select(Invitation))).scalars().all()
+    assert len(rows) == 1
+
+
+@pytest.mark.asyncio
+async def test_new_link_on_expired_invite_refused_when_reinvited(client, db_session):
+    owner, did = await make_shared_diary(client, "so14@example.com", tier="plus")
+    old = await invite(client, owner, did, "mom@example.com")
+    await _expire(db_session, old["id"])
+    await invite(client, owner, did, "mom@example.com")
+    r = await client.post(f"/v1/diaries/{did}/invitations/{old['id']}/new-link", headers=owner)
+    assert r.status_code == 409, r.text
+    assert r.json()["error"]["message"] == "already_invited"
+
+
+@pytest.mark.asyncio
+async def test_new_link_on_expired_invite_refused_when_already_member(client, db_session):
+    owner, did = await make_shared_diary(client, "so15@example.com", tier="plus")
+    old = await invite(client, owner, did, "mom@example.com")
+    await _expire(db_session, old["id"])
+    await register(client, "mom@example.com")
+    await _add_member(db_session, did, "mom@example.com")
+    r = await client.post(f"/v1/diaries/{did}/invitations/{old['id']}/new-link", headers=owner)
+    assert r.status_code == 409, r.text
+    assert r.json()["error"]["message"] == "already_member"
+
+
+@pytest.mark.asyncio
+async def test_new_link_on_editor_invite_checks_plan_before_room(client, db_session):
+    owner, did = await make_shared_diary(client, "so16@example.com", tier="family")
+    inv = await invite(client, owner, did, "ed@example.com", role="editor")
+    await _expire(db_session, inv["id"])
+    await set_tier("so16@example.com", "plus")
+    r = await client.post(f"/v1/diaries/{did}/invitations/{inv['id']}/new-link", headers=owner)
+    assert r.status_code == 403, r.text
+    assert r.json()["detail"]["details"]["source"] == "editor"
+
+
+@pytest.mark.asyncio
+async def test_viewer_gets_403_on_patch_delete_invitation_and_new_link(client, db_session):
+    owner, did = await make_shared_diary(client, "so17@example.com")
+    viewer = await register(client, "v17@example.com")
+    uv = await _add_member(db_session, did, "v17@example.com")
+    inv = await invite(client, owner, did, "g@example.com")
+    r = await client.patch(
+        f"/v1/diaries/{did}/permissions/{uv.id}", json={"role": "viewer"}, headers=viewer
+    )
+    assert r.status_code == 403, r.text
+    r = await client.delete(f"/v1/diaries/{did}/invitations/{inv['id']}", headers=viewer)
+    assert r.status_code == 403, r.text
+    r = await client.post(f"/v1/diaries/{did}/invitations/{inv['id']}/new-link", headers=viewer)
+    assert r.status_code == 403, r.text
+
+
+@pytest.mark.asyncio
+async def test_owner_deleting_own_user_id_is_404(client, db_session):
+    owner, did = await make_shared_diary(client, "so18@example.com")
+    me = (
+        await db_session.execute(select(User).where(User.email == "so18@example.com"))
+    ).scalar_one()
+    r = await client.delete(f"/v1/diaries/{did}/permissions/{me.id}", headers=owner)
+    assert r.status_code == 404, r.text
+
+
+@pytest.mark.asyncio
+async def test_invitation_from_another_diary_is_404(client):
+    owner, did = await make_shared_diary(client, "so19@example.com", tier="plus")
+    r = await client.post("/v1/diaries", json={"name": "Two", "timezone": "UTC"}, headers=owner)
+    other = r.json()["id"]
+    inv = await invite(client, owner, other, "g@example.com")
+    r = await client.delete(f"/v1/diaries/{did}/invitations/{inv['id']}", headers=owner)
+    assert r.status_code == 404, r.text
+    r = await client.post(f"/v1/diaries/{did}/invitations/{inv['id']}/new-link", headers=owner)
+    assert r.status_code == 404, r.text
+
+
+@pytest.mark.asyncio
+async def test_invite_on_read_only_diary_refused(client):
+    owner, _ = await make_shared_diary(client, "so20@example.com", tier="plus")
+    r = await client.post("/v1/diaries", json={"name": "Two", "timezone": "UTC"}, headers=owner)
+    second = r.json()["id"]
+    await set_tier("so20@example.com", "free")
+    r = await client.post(
+        f"/v1/diaries/{second}/invitations", json={"email": "g@example.com"}, headers=owner
+    )
+    assert r.status_code == 403, r.text
+    d = r.json()["detail"]
+    assert d["code"] == "tier_limit"
+    assert d["details"]["source"] == "diary_read_only"
+
+
+@pytest.mark.asyncio
+async def test_free_limit_counts_two_members_plus_one_pending(client, db_session):
+    owner, did = await make_shared_diary(client, "so21@example.com")
+    for i in range(2):
+        await register(client, f"m21-{i}@example.com")
+        await _add_member(db_session, did, f"m21-{i}@example.com")
+    await invite(client, owner, did, "p21@example.com")
+    r = await client.post(
+        f"/v1/diaries/{did}/invitations", json={"email": "x21@example.com"}, headers=owner
+    )
+    assert r.status_code == 403, r.text
+    assert r.json()["detail"]["details"]["source"] == "people"
+
+
+@pytest.mark.asyncio
+async def test_share_lock_is_taken_before_the_duplicate_checks(client):
+    """Deterministic pin: the concurrent test above cannot prove ordering by itself."""
+    from unittest.mock import patch
+
+    from app.routers.v1 import sharing as router_mod
+
+    calls: list[str] = []
+    real_lock = router_mod.lock_diary_sharing
+    real_check = router_mod._ensure_not_member_or_invited
+
+    async def lock(*a, **kw):
+        calls.append("lock")
+        return await real_lock(*a, **kw)
+
+    async def check(*a, **kw):
+        calls.append("check")
+        return await real_check(*a, **kw)
+
+    owner, did = await make_shared_diary(client, "so22@example.com")
+    with (
+        patch.object(router_mod, "lock_diary_sharing", lock),
+        patch.object(router_mod, "_ensure_not_member_or_invited", check),
+    ):
+        await invite(client, owner, did, "g@example.com")
+    assert calls == ["lock", "check"]
