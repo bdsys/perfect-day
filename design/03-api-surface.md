@@ -61,7 +61,7 @@ All endpoints prefixed `/v1/`. JSON. Auth via `Authorization: Bearer <jwt>` unle
 
 ## Diary sharing
 
-Built 2026-11-22 (item 19). People limits count members plus pending, unexpired invites per diary: Free 3, Plus 10, Family unlimited; editors are Family only. Over a limit: 403 `tier_limit` with `source` `people` or `editor`. Errors that carry a code use the body `{"detail": {"code": ..., "details": {...}}}`.
+Built 2026-11-22 (item 19). People limits count members plus pending, unexpired invites per diary: Free 3, Plus 10, Family unlimited; editors are Family only. Over a limit: 403 `tier_limit` with `source` `people` or `editor`. Errors come in two shapes. Plain-string errors (`already_member`, `already_invited`, `cannot_invite_self`, `forbidden`, `not_found`, `invalid_handover`) come back as `{"error": {"code": "http_error", "message": "<code>"}}`: the code is in `message`. Errors with details (`tier_limit`, `invite_not_found`, `invite_wrong_email`, `invite_expired`) come back as `{"detail": {"code": ..., "details": {...}}}`; `tier_limit` details are `limit`, `current`, `source` and `required_tier`. The `403`/`404`/`409`/`410`/`422` codes below name the code in the matching shape.
 
 | Method | Path | Purpose |
 |---|---|---|

@@ -73,6 +73,7 @@ test.describe('Diary sharing', () => {
     await mom.fill('#email', momEmail)
     await mom.fill('#password', password)
     await mom.getByRole('button', { name: 'Create account' }).click()
+    // Matches only because register honours next (URI-encoded /invite/<token>) and returns here.
     await mom.waitForURL(/\/invite\//, { timeout: 10_000 })
     await mom.getByRole('button', { name: 'Open diary' }).click()
     await mom.waitForURL(`**/diaries/${diaryId}`, { timeout: 10_000 })
