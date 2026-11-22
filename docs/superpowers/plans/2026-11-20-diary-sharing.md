@@ -419,7 +419,7 @@
   - `COMPETITION.md:91-115`: the tier matrix row "Family sharing" becomes "People who can read: 3 / 10 per diary / Unlimited"; add a row "Editors: — / — / ✓"; note the co-parent's calendar as planned for Family;
   - `design/02-data-model.md`: `owned_since`, `handover_to_user_id`, the invitation token hash, and who owns photos after a deletion;
   - `design/03-api-surface.md` § Diary sharing: the actual endpoints, codes and responses from Tasks 3–6;
-  - `design/08-security-privacy.md`: the deletion flow with hand-over, the token hash, and the accepted unverified-email gap, quoting Andrew's "the risk seems low" and that project 2 closes it;
+  - `design/08-security-privacy.md`: the deletion flow with hand-over, the token hash, and the accepted unverified-email gap, quoting Andrew's "the risk seems low" (2026-11-20) and that project 2 closes it;
   - `design/09-poc-scope.md:59` (#19 done, with the PR);
   - `POC_PHASE2_TODO.md`: row 67 gets "must also re-apply hand-overs (2026-11-22)", plus a new row for the sharing PR;
   - `apps/api/app/routers/v1/auth.py` docstrings only if they mention what deletion removes.

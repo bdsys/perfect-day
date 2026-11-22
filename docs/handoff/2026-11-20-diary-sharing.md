@@ -21,7 +21,7 @@ Andrew's own words: an automated online diary he doesn't have to touch much (cal
 5. **Plans:** Free needs sharing. Agreed table: people who can read Free 3 / Plus 10 per diary / Family unlimited; editors Family only; co-parent's calendar feeds the diary on Family (later project); notifications, the share settings and the hand-over on every plan. The 3 and 10 are my numbers. Separate audiences ("highlights for wider family") logged for later, not built.
 6. **Docs, the `/plans` page and limit counters** must all be updated ("People: 2 of 3" next to the existing Diaries and AI drafts counters).
 7. **Order, option A:** sharing first with a copy-and-text invite link; then notifications; then the per-rule setting; then the co-parent calendar.
-8. **Unverified email risk accepted** ("the risk seems low"): until project 2, the invite's email match doesn't prove ownership (password registration doesn't verify email). Project 2 closes it.
+8. **Unverified email risk accepted** (Andrew, 2026-11-20: "the risk seems low"): until project 2, the invite's email match doesn't prove ownership (password registration doesn't verify email). Project 2 closes it.
 
 ## Research findings (code facts, checked 2026-11-20)
 
