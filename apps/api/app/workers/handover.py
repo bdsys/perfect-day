@@ -13,7 +13,7 @@ import uuid
 from datetime import UTC, datetime
 
 import structlog
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, select, text, update
 
 from app.core.auth import deletion_state
 from app.core.photo_crypto import unwrap_dek, wrap_dek
@@ -74,10 +74,13 @@ async def _transfer_one(diary_id: uuid.UUID, departing_user_id: uuid.UUID) -> bo
         diary = (await db.execute(select(Diary).where(Diary.id == diary_id))).scalar_one_or_none()
         if diary is None:
             return False
-        # Lock order, the same as the sharing endpoints: the diary's advisory share lock
-        # (accept and revoke take it first), then the diary row (decline and remove_member
-        # take it before touching a permission), then the recipient's permission row,
-        # then the recipient's user row (FOR SHARE, so their own account delete waits).
+        # Lock order (the same as the sharing and diary endpoints):
+        #   1. the diary's advisory share lock (accept, revoke and new-link take it first);
+        #   2. the diary row (decline and remove_member take it before a permission row);
+        #   3. the recipient's permission row;
+        #   4. the recipient's user row, FOR SHARE (their own account delete waits);
+        #   5. the recipient's per-user creation lock (create_diary and restore_diary
+        #      take it and then touch only the recipient's own diaries, never this one).
         await lock_diary_sharing(db, diary)
         diary = (
             await db.execute(
@@ -95,9 +98,10 @@ async def _transfer_one(diary_id: uuid.UUID, departing_user_id: uuid.UUID) -> bo
             return False  # already handed over on an earlier run, or declined
         recipient_id = diary.handover_to_user_id
 
-        reason: str | None = None
         if diary.deleted_at is not None:
-            reason = "diary_deleted"
+            # Return before any permission-row lock: hard_delete_diary, which deletes a
+            # soft-deleted diary, takes the permission rows before the diary row.
+            return _skip(diary, "diary_deleted")
         perm = (
             await db.execute(
                 select(DiaryPermission)
@@ -108,8 +112,8 @@ async def _transfer_one(diary_id: uuid.UUID, departing_user_id: uuid.UUID) -> bo
                 .with_for_update()
             )
         ).scalar_one_or_none()
-        if reason is None and perm is None:
-            reason = "not_member"
+        if perm is None:
+            return _skip(diary, "not_member")
         recipient = (
             await db.execute(
                 select(User)
@@ -118,14 +122,13 @@ async def _transfer_one(diary_id: uuid.UUID, departing_user_id: uuid.UUID) -> bo
                 .execution_options(populate_existing=True)
             )
         ).scalar_one_or_none()
-        if reason is None and (recipient is None or deletion_state(recipient) != "active"):
-            reason = "recipient_not_active"
-        if reason is not None:
-            # The diary is then deleted with the rest of the account, as without a choice.
-            diary.handover_to_user_id = None
-            log.info("handover_skipped", diary_id=str(diary.id), reason=reason)
-            return False
-        assert perm is not None  # reason would be "not_member"
+        if recipient is None or deletion_state(recipient) != "active":
+            return _skip(diary, "recipient_not_active")
+        # A diary the recipient creates or restores at this moment can't take the slug
+        # chosen below (it would fail on uq_diaries_owner_slug).
+        await db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:uid))").bindparams(uid=str(recipient_id))
+        )
 
         # Before the owner changes: a query here autoflushes, and the new owner's
         # slugs are what must not clash (uq_diaries_owner_slug).
@@ -176,9 +179,31 @@ async def _transfer_one(diary_id: uuid.UUID, departing_user_id: uuid.UUID) -> bo
     return True
 
 
+def _skip(diary: Diary, reason: str) -> bool:
+    """Clear the choice; the diary is then deleted with the account, as without one."""
+    diary.handover_to_user_id = None
+    log.info("handover_skipped", diary_id=str(diary.id), reason=reason)
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Photos
 # ---------------------------------------------------------------------------
+
+
+def _earliest_target(departing_user_id: uuid.UUID):
+    """(photo id, owner of the diary holding its earliest attachment outside the
+    departing user's diaries), one row per photo: DISTINCT ON keeps the first entry
+    by Entry.created_at, Entry.id. Soft-deleted entries and diaries count."""
+    return (
+        select(Photo.id, Diary.owner_user_id)
+        .join(EntryPhoto, EntryPhoto.photo_id == Photo.id)
+        .join(Entry, Entry.id == EntryPhoto.entry_id)
+        .join(Diary, Diary.id == Entry.diary_id)
+        .where(Diary.owner_user_id != departing_user_id)
+        .order_by(Photo.id, Entry.created_at, Entry.id)
+        .distinct(Photo.id)
+    )
 
 
 async def move_departing_photos(departing_user_id: uuid.UUID) -> int:
@@ -188,29 +213,37 @@ async def move_departing_photos(departing_user_id: uuid.UUID) -> int:
     entries and diaries included) in a diary they don't own. Each goes to the owner of
     the diary holding its earliest attachment, by Entry.created_at, Entry.id. Run after
     transfer_chosen_diaries, so a handed-over diary already counts as not theirs.
-    Returns how many photos were processed.
+    Returns how many photos changed owner (a Google Photos duplicate merged into the
+    new owner's copy counts; a photo skipped or with its original missing does not).
     """
     async with db_session() as db:
         rows = (
             await db.execute(
-                select(Photo.id, Diary.owner_user_id)
-                .join(EntryPhoto, EntryPhoto.photo_id == Photo.id)
-                .join(Entry, Entry.id == EntryPhoto.entry_id)
-                .join(Diary, Diary.id == Entry.diary_id)
-                .where(
+                _earliest_target(departing_user_id).where(
                     Photo.user_id == departing_user_id,
                     Photo.finalized_at.is_not(None),
                     Photo.deleted_at.is_(None),
                     Photo.dek_ciphertext.is_not(None),
-                    Diary.owner_user_id != departing_user_id,
                 )
-                .order_by(Photo.id, Entry.created_at, Entry.id)
-                .distinct(Photo.id)
             )
         ).all()
+    moved = 0
     for photo_id, new_owner_id in rows:
-        await _move_photo(photo_id, departing_user_id, new_owner_id)
-    return len(rows)
+        if await _move_photo(photo_id, departing_user_id, new_owner_id):
+            moved += 1
+    return moved
+
+
+class HandoverTargetUnavailable(RuntimeError):
+    """The photo's new owner is being deleted too: the next run works it out again."""
+
+
+def _past_deadline(user: User) -> bool:
+    return (
+        user.deleted_at is not None
+        and user.hard_delete_after is not None
+        and user.hard_delete_after <= datetime.now(tz=UTC)
+    )
 
 
 def _moved_key(key: str, departing_user_id: uuid.UUID, new_owner_id: uuid.UUID) -> str:
@@ -231,8 +264,14 @@ def _is_missing_source(exc: Exception) -> bool:
 
 async def _move_photo(
     photo_id: uuid.UUID, departing_user_id: uuid.UUID, new_owner_id: uuid.UUID
-) -> None:
-    """Make *new_owner_id* the photo's owner. Safe to run again after any failure."""
+) -> bool:
+    """Give the photo to the owner of its earliest other diary. True when it moved.
+
+    *new_owner_id* is what move_departing_photos worked out; it is worked out again
+    under the photo's row lock, and used only while that account is not past its own
+    deletion deadline (else HandoverTargetUnavailable). Safe to run again after any
+    failure.
+    """
     from app.core.config import get_settings
     from app.core.dependencies import get_s3
 
@@ -246,9 +285,31 @@ async def _move_photo(
             )
         ).scalar_one_or_none()
         if photo is None or photo.user_id != departing_user_id:
-            return  # moved (or merged) on an earlier run
+            return False  # moved (or merged) on an earlier run
         if photo.dek_ciphertext is None:
-            return
+            return False
+
+        # Defence in depth behind the single-flight hard-delete lock: never hand a
+        # photo to an account the hourly job may be deleting (its deadline has passed:
+        # the same test as hard_delete_user's row-54 check), or the photo is scrubbed
+        # with it. An account inside its grace window is fine: its own hard delete
+        # later treats the photo as its own. So is one the admin CLI soft-deleted with
+        # no deadline, which the job never deletes; refusing it would stall this
+        # deletion for good.
+        target = (
+            await db.execute(_earliest_target(departing_user_id).where(Photo.id == photo.id))
+        ).first()
+        if target is None:
+            return False  # no longer in anyone else's diary: it goes with the account
+        if target.owner_user_id != new_owner_id:
+            log.info("handover_photo_target_changed", photo_id=str(photo_id))
+            new_owner_id = target.owner_user_id
+        new_owner = (
+            await db.execute(select(User).where(User.id == new_owner_id))
+        ).scalar_one_or_none()
+        if new_owner is None or _past_deadline(new_owner):
+            log.warning("handover_photo_target_unavailable", photo_id=str(photo_id))
+            raise HandoverTargetUnavailable(str(photo_id))
 
         if photo.source == "google_photos" and photo.external_id is not None:
             existing_id = (
@@ -285,7 +346,7 @@ async def _move_photo(
                 log.info(
                     "handover_photo_moved", photo_id=str(photo_id), to_user_id=str(new_owner_id)
                 )
-                return
+                return True
 
         # Copy first; a row only ever points at objects that exist. A copy left behind
         # by a run that failed before the commit is overwritten by the next one.
@@ -310,7 +371,7 @@ async def _move_photo(
                     # missing thumbnail or display copy is dropped from the row.
                     log.warning("handover_photo_source_missing", photo_id=str(photo_id), kind=attr)
                     if attr == "s3_key":
-                        return
+                        return False
                     new_keys[attr] = None
                     continue
                 log.warning(
@@ -326,3 +387,4 @@ async def _move_photo(
             setattr(photo, attr, key)
         photo.user_id = new_owner_id
     log.info("handover_photo_moved", photo_id=str(photo_id), to_user_id=str(new_owner_id))
+    return True

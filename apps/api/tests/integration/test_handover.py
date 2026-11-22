@@ -570,6 +570,10 @@ async def test_missing_objects_do_not_block_the_delete(
     await _delete_account(client, owner, {did: m.id})
     owner_id = await _make_due(db_session, "t7k@example.com")
 
+    from app.workers.handover import move_departing_photos, transfer_chosen_diaries
+
+    assert await transfer_chosen_diaries(owner_id) == [uuid.UUID(did)]
+    assert await move_departing_photos(owner_id) == 1  # the lost one is not counted
     await hard_delete_user(owner_id)
 
     assert (await db_session.execute(select(User.id).where(User.id == owner_id))).first() is None
@@ -603,3 +607,303 @@ async def test_photo_goes_to_owner_of_earliest_attachment(client, db_session):
 
     photo = await _photo(db_session, pid)
     assert photo is not None and photo.user_id == first_user.id
+
+
+# ---------------------------------------------------------------------------
+# Review round 1: overlapping runs, sweeps and creates
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_google_clash_counts_as_moved(client, db_session):
+    from app.workers.handover import move_departing_photos, transfer_chosen_diaries
+    from tests.fixtures.factories import make_entry, make_entry_photo, make_photo
+
+    owner, did = await _owner_with_diary(client, "t7m@example.com")
+    await _add_member(client, owner, did, "t7m-m@example.com")
+    owner_user = await _user(db_session, "t7m@example.com")
+    m = await _user(db_session, "t7m-m@example.com")
+    mine = await make_photo(db_session, user=m, source="google_photos")
+    theirs = await make_photo(db_session, user=owner_user, source="google_photos")
+    mine.external_id = theirs.external_id = "g-count"
+    await db_session.commit()
+    entry = await make_entry(db_session, await _diary(db_session, did))
+    await make_entry_photo(db_session, entry=entry, photo=theirs)
+    await db_session.commit()
+    await _delete_account(client, owner, {did: m.id})
+    owner_id = await _make_due(db_session, "t7m@example.com")
+
+    await transfer_chosen_diaries(owner_id)
+    assert await move_departing_photos(owner_id) == 1
+    assert await move_departing_photos(owner_id) == 0  # nothing left to move
+
+
+@pytest.mark.asyncio
+async def test_second_pass_skips_while_lock_held(client, db_session, db_engine):
+    from sqlalchemy import text
+
+    from app.workers.beat_tasks import _process_hard_deletes
+    from tests.fixtures.factories import make_user, mark_due_for_hard_delete
+
+    user = await make_user(db_session, email="t7n@example.com")
+    await mark_due_for_hard_delete(db_session, user)
+    user_id = user.id
+
+    async with db_engine.connect() as other_pass:
+        await other_pass.execute(text("SELECT pg_advisory_lock(hashtext('hard_delete_pass'), 0)"))
+        await other_pass.commit()
+        with (
+            capture_logs() as logs,
+            patch("app.workers.beat_tasks.log", structlog.get_logger()),
+        ):
+            await _process_hard_deletes()
+        assert [e["event"] for e in logs] == ["process_hard_deletes_skipped_locked"]
+        assert (await db_session.execute(select(User.id).where(User.id == user_id))).first()
+        await other_pass.execute(text("SELECT pg_advisory_unlock(hashtext('hard_delete_pass'), 0)"))
+        await other_pass.commit()
+
+    await _process_hard_deletes()  # the lock is free again: this pass does the work
+    assert (await db_session.execute(select(User.id).where(User.id == user_id))).first() is None
+
+
+@pytest.mark.asyncio
+async def test_pass_releases_lock_after_failure(client, db_session, db_engine):
+    from unittest.mock import AsyncMock
+
+    from sqlalchemy import text
+
+    from app.workers.beat_tasks import _process_hard_deletes
+
+    with patch("app.workers.beat_tasks._run_hard_deletes", new=AsyncMock(side_effect=OSError)):
+        with pytest.raises(OSError):
+            await _process_hard_deletes()
+    async with db_engine.connect() as conn:
+        got = (
+            await conn.execute(text("SELECT pg_try_advisory_lock(hashtext('hard_delete_pass'), 0)"))
+        ).scalar_one()
+        assert got is True
+        await conn.execute(text("SELECT pg_advisory_unlock(hashtext('hard_delete_pass'), 0)"))
+        await conn.commit()
+
+
+@pytest.mark.asyncio
+async def test_failure_log_has_no_row_values(client, db_session):
+    from unittest.mock import AsyncMock
+
+    from app.workers.beat_tasks import _process_hard_deletes
+    from tests.fixtures.factories import make_user, mark_due_for_hard_delete
+
+    user = await make_user(db_session, email="t7o@example.com")
+    await mark_due_for_hard_delete(db_session, user)
+    boom = RuntimeError("Key (owner_user_id, slug)=(x, emmas-diary) already exists")
+    with (
+        patch("app.workers.hard_delete.hard_delete_user", new=AsyncMock(side_effect=boom)),
+        capture_logs() as logs,
+        patch("app.workers.beat_tasks.log", structlog.get_logger()),
+    ):
+        await _process_hard_deletes()
+    failed = [e for e in logs if e["event"] == "hard_delete_user_failed"]
+    assert len(failed) == 1
+    assert set(failed[0]) <= {"event", "log_level", "user_id", "error", "where"}
+    assert failed[0]["error"] == "RuntimeError"
+    assert "emmas" not in str(failed[0])
+
+
+async def _editor_photo_in_owners_diary(client, db_session, prefix: str, body: bytes):
+    owner, did = await _owner_with_diary(client, f"{prefix}@example.com", tier="family")
+    editor = await _add_member(client, owner, did, f"{prefix}-e@example.com", role="editor")
+    pid = await upload_photo(
+        client, editor, body, content_type="image/heic" if body[4:8] == b"ftyp" else "image/jpeg"
+    )
+    await _entry_with_photo(client, editor, did, pid, publish=False)
+    return owner, editor, did, pid
+
+
+@pytest.mark.asyncio
+async def test_move_refuses_a_target_past_its_own_deadline(client, db_session):
+    from app.workers.handover import HandoverTargetUnavailable
+    from app.workers.hard_delete import hard_delete_user
+
+    owner, editor, did, pid = await _editor_photo_in_owners_diary(
+        client, db_session, "t7p", jpeg_with_exif()
+    )
+    await _delete_account(client, editor)
+    editor_id = await _make_due(db_session, "t7p-e@example.com")
+    owner_id = await _make_due(db_session, "t7p@example.com")  # being deleted too
+
+    with pytest.raises(HandoverTargetUnavailable):
+        await hard_delete_user(editor_id)
+    photo = await _photo(db_session, pid)
+    assert photo is not None and photo.user_id == editor_id  # not handed to a dying account
+
+    await hard_delete_user(owner_id)  # the owner's diary, and the photo only it held, go
+    await hard_delete_user(editor_id)  # the next run works it out again and finishes
+    assert await _photo(db_session, pid) is None
+    assert (await db_session.execute(select(User.id).where(User.id == editor_id))).first() is None
+
+
+@pytest.mark.asyncio
+async def test_move_to_target_in_grace_window_is_allowed(client, db_session):
+    from app.workers.hard_delete import hard_delete_user
+
+    owner, editor, did, pid = await _editor_photo_in_owners_diary(
+        client, db_session, "t7q", jpeg_with_exif()
+    )
+    owner_user = await _user(db_session, "t7q@example.com")
+    await _delete_account(client, editor)
+    editor_id = await _make_due(db_session, "t7q-e@example.com")
+    await _delete_account(client, owner)  # pending: may still restore
+
+    await hard_delete_user(editor_id)
+
+    photo = await _photo(db_session, pid)
+    assert photo is not None and photo.user_id == owner_user.id
+
+
+@pytest.mark.asyncio
+async def test_move_to_admin_soft_deleted_target_is_allowed(client, db_session):
+    """No deadline: the hourly job never deletes it, so refusing would stall for good."""
+    from datetime import UTC, datetime
+
+    from app.workers.hard_delete import hard_delete_user
+
+    owner, editor, did, pid = await _editor_photo_in_owners_diary(
+        client, db_session, "t7v", jpeg_with_exif()
+    )
+    owner_user = await _user(db_session, "t7v@example.com")
+    await _delete_account(client, editor)
+    editor_id = await _make_due(db_session, "t7v-e@example.com")
+    await db_session.execute(
+        update(User)
+        .where(User.id == owner_user.id)
+        .values(deleted_at=datetime.now(tz=UTC), hard_delete_after=None)
+    )
+    await db_session.commit()
+
+    await hard_delete_user(editor_id)
+
+    photo = await _photo(db_session, pid)
+    assert photo is not None and photo.user_id == owner_user.id
+
+
+@pytest.mark.asyncio
+async def test_move_rederives_target_under_the_lock(client, db_session):
+    from app.workers.handover import _move_photo
+
+    owner, editor, did, pid = await _editor_photo_in_owners_diary(
+        client, db_session, "t7r", jpeg_with_exif()
+    )
+    owner_user = await _user(db_session, "t7r@example.com")
+    editor_user = await _user(db_session, "t7r-e@example.com")
+    await register(client, "t7r-s@example.com")
+    stranger_user = await _user(db_session, "t7r-s@example.com")
+
+    # A stale choice (the stranger owns no diary holding the photo) is corrected.
+    assert await _move_photo(uuid.UUID(pid), editor_user.id, stranger_user.id) is True
+    photo = await _photo(db_session, pid)
+    assert photo is not None and photo.user_id == owner_user.id
+
+
+@pytest.mark.asyncio
+async def test_transfer_waits_for_recipients_creation_lock(client, db_session, db_engine):
+    import asyncio
+
+    from sqlalchemy import text
+
+    from app.workers.handover import transfer_chosen_diaries
+
+    owner, did = await _owner_with_diary(client, "t7s@example.com")
+    await _add_member(client, owner, did, "t7s-m@example.com")
+    m = await _user(db_session, "t7s-m@example.com")
+    await _delete_account(client, owner)
+    owner_user = await _user(db_session, "t7s@example.com")
+    await db_session.execute(
+        update(Diary).where(Diary.id == uuid.UUID(did)).values(handover_to_user_id=m.id)
+    )
+    await db_session.commit()
+
+    async with db_engine.connect() as creating:  # the recipient's create_diary, mid-way
+        await creating.execute(
+            text("SELECT pg_advisory_lock(hashtext(:uid))").bindparams(uid=str(m.id))
+        )
+        await creating.commit()
+        task = asyncio.create_task(transfer_chosen_diaries(owner_user.id))
+        await asyncio.sleep(1.0)
+        assert not task.done()
+        await creating.execute(
+            text("SELECT pg_advisory_unlock(hashtext(:uid))").bindparams(uid=str(m.id))
+        )
+        await creating.commit()
+        assert await asyncio.wait_for(task, timeout=10) == [uuid.UUID(did)]
+
+
+@pytest.mark.asyncio
+async def test_soft_deleted_diary_is_not_handed_over(client, db_session):
+    from datetime import UTC, datetime
+
+    from app.workers.hard_delete import hard_delete_user
+
+    owner, did = await _owner_with_diary(client, "t7t@example.com")
+    await _add_member(client, owner, did, "t7t-m@example.com")
+    m = await _user(db_session, "t7t-m@example.com")
+    await _delete_account(client, owner, {did: m.id})
+    await db_session.execute(
+        update(Diary).where(Diary.id == uuid.UUID(did)).values(deleted_at=datetime.now(tz=UTC))
+    )
+    await db_session.commit()
+    owner_id = await _make_due(db_session, "t7t@example.com")
+
+    with capture_logs() as logs, patch("app.workers.handover.log", structlog.get_logger()):
+        await hard_delete_user(owner_id)
+
+    skipped = [(e["diary_id"], e["reason"]) for e in logs if e["event"] == "handover_skipped"]
+    assert skipped == [(did, "diary_deleted")]
+    assert await _diary(db_session, did) is None
+
+
+@pytest.mark.asyncio
+async def test_display_sweep_does_not_point_a_moved_photo_at_the_old_prefix(
+    client, db_session, s3_client, photos_bucket
+):
+    """The sweep read the photo, a hand-over moved it, then the sweep wrote its key."""
+    import asyncio
+
+    import app.services.photos as photos_service
+    from app.workers.beat_tasks import create_missing_display_copies
+    from app.workers.handover import _move_photo
+    from tests.integration.photo_helpers import heic_bytes
+
+    owner, editor, did, pid = await _editor_photo_in_owners_diary(
+        client, db_session, "t7u", heic_bytes()
+    )
+    owner_user = await _user(db_session, "t7u@example.com")
+    editor_user = await _user(db_session, "t7u-e@example.com")
+    await db_session.execute(
+        update(Photo).where(Photo.id == uuid.UUID(pid)).values(display_s3_key=None)
+    )
+    await db_session.commit()
+
+    loop = asyncio.get_running_loop()
+    real_get = photos_service.get_object_bytes
+
+    def get_then_move(key):
+        data = real_get(key)
+        # The hand-over runs while the sweep is between its read and its write.
+        asyncio.run_coroutine_threadsafe(
+            _move_photo(uuid.UUID(pid), editor_user.id, owner_user.id), loop
+        ).result(timeout=30)
+        return data
+
+    with patch.object(photos_service, "get_object_bytes", side_effect=get_then_move):
+        assert await create_missing_display_copies() == 0
+
+    photo = await _photo(db_session, pid)
+    assert photo is not None and photo.user_id == owner_user.id
+    assert photo.display_s3_key is None  # never a key under the editor's prefix
+
+    assert await create_missing_display_copies() == 1  # the next sweep, for the new owner
+    photo = await _photo(db_session, pid)
+    assert photo is not None and photo.display_s3_key == f"{owner_user.id}/{pid}_display.enc"
+    r = await client.get(f"/v1/photos/{pid}", params={"kind": "full"}, headers=owner)
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"] == "image/jpeg"

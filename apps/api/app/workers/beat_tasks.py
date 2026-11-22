@@ -63,7 +63,29 @@ def process_hard_deletes() -> None:
 
 
 async def _process_hard_deletes() -> None:
+    from app.workers.hard_delete import hard_delete_lock
 
+    # Single-flight: an overlapping pass (the worker runs two at once) could move a
+    # photo to an account the other pass is deleting, and lose it.
+    async with hard_delete_lock(wait=False) as held:
+        if not held:
+            log.info("process_hard_deletes_skipped_locked")
+            return
+        await _run_hard_deletes()
+
+
+def _failure_site(e: BaseException) -> str:
+    """file:line where *e* was raised: enough to find it, with no message or values."""
+    import traceback
+    from pathlib import Path
+
+    frames = traceback.extract_tb(e.__traceback__)
+    if not frames:
+        return "unknown"
+    return f"{Path(frames[-1].filename).name}:{frames[-1].lineno}"
+
+
+async def _run_hard_deletes() -> None:
     from sqlalchemy import func, select
 
     from app.models import Diary, User
@@ -104,8 +126,15 @@ async def _process_hard_deletes() -> None:
     for user_id in user_ids:
         try:
             await hard_delete_user(user_id)
-        except Exception:
-            log.exception("hard_delete_user_failed", user_id=str(user_id))
+        except Exception as e:
+            # Error type and place only: a database error's text can carry row values,
+            # such as a diary slug made from a child's name during a hand-over.
+            log.error(
+                "hard_delete_user_failed",
+                user_id=str(user_id),
+                error=type(e).__name__,
+                where=_failure_site(e),
+            )
 
 
 @celery_app.task(name="app.workers.beat_tasks.sweep_stuck_photo_imports")
@@ -201,7 +230,7 @@ async def create_missing_display_copies(limit: int = 20) -> int:
     """Give HEIC/HEIF photos that lack a JPEG display copy one. Returns how many were made."""
     import asyncio
 
-    from sqlalchemy import func, select
+    from sqlalchemy import func, select, update
 
     from app.core.photo_crypto import PURPOSE_DISPLAY, decrypt_stream, encrypt_stream, unwrap_dek
     from app.models import Photo
@@ -228,9 +257,10 @@ async def create_missing_display_copies(limit: int = 20) -> int:
         for photo in photos:
             # Stamped on every attempt so a failing photo goes behind untried ones.
             photo.display_attempted_at = func.now()
+            owner_id = photo.user_id
             try:
-                dek = unwrap_dek(photo.dek_ciphertext, photo.user_id)
-                key = f"{photo.user_id}/{photo.id}_display.enc"
+                dek = unwrap_dek(photo.dek_ciphertext, owner_id)
+                key = f"{owner_id}/{photo.id}_display.enc"
 
                 def _build(photo=photo, dek=dek, key=key) -> bool:
                     original = decrypt_stream(get_object_bytes(photo.s3_key), dek)
@@ -241,8 +271,25 @@ async def create_missing_display_copies(limit: int = 20) -> int:
                     return True
 
                 if await loop.run_in_executor(None, _build):
-                    photo.display_s3_key = key
-                    made += 1
+                    # Only if the photo is still where it was read. A hand-over at an
+                    # account deletion may have moved it to another owner meanwhile
+                    # (workers/handover.py); a key under the old owner's prefix would
+                    # be scrubbed with that account. The copy made here is then left
+                    # for that scrub, and the next sweep makes one for the new owner.
+                    written = await db.execute(
+                        update(Photo)
+                        .where(
+                            Photo.id == photo.id,
+                            Photo.user_id == owner_id,
+                            Photo.display_s3_key.is_(None),
+                        )
+                        .values(display_s3_key=key)
+                        .execution_options(synchronize_session=False)
+                    )
+                    if written.rowcount == 1:  # type: ignore[attr-defined]
+                        made += 1
+                    else:
+                        log.info("display_copy_photo_moved", photo_id=str(photo.id))
             except Exception:  # noqa: BLE001 — one bad photo must not stop the rest
                 log.warning("display_copy_failed", photo_id=str(photo.id))
     log.info("create_missing_display_copies", made=made)
