@@ -423,6 +423,8 @@ async def my_plan(
 
 class AccountDeletionOut(BaseModel):
     deletion_scheduled_for: datetime
+    # What was recorded, so the page can tell a request body lost on the way here.
+    handovers: dict[uuid.UUID, uuid.UUID] = {}
 
 
 class AccountDeletionIn(BaseModel):
@@ -547,7 +549,7 @@ async def delete_account(
     if token is not None:
         await revoke_and_forget_google(db, token, user_id=user.id)
     response.delete_cookie(REFRESH_COOKIE, path="/v1/auth")
-    return AccountDeletionOut(deletion_scheduled_for=deadline)
+    return AccountDeletionOut(deletion_scheduled_for=deadline, handovers=dict(handovers))
 
 
 @router.post("/account/restore", status_code=status.HTTP_204_NO_CONTENT)

@@ -270,14 +270,14 @@ async def test_concurrent_invites_for_same_email_make_one(client, db_session):
 
 
 @pytest.mark.asyncio
-async def test_new_link_on_expired_invite_refused_when_reinvited(client, db_session):
+async def test_new_link_on_replaced_expired_invite_is_gone_when_reinvited(client, db_session):
     owner, did = await make_shared_diary(client, "so14@example.com", tier="plus")
     old = await invite(client, owner, did, "mom@example.com")
     await _expire(db_session, old["id"])
     await invite(client, owner, did, "mom@example.com")
     r = await client.post(f"/v1/diaries/{did}/invitations/{old['id']}/new-link", headers=owner)
-    assert r.status_code == 409, r.text
-    assert r.json()["error"]["message"] == "already_invited"
+    # Re-inviting replaced the expired row, so its id is gone.
+    assert r.status_code == 404, r.text
 
 
 @pytest.mark.asyncio
@@ -396,3 +396,16 @@ async def test_share_lock_is_taken_before_the_duplicate_checks(client):
     ):
         await invite(client, owner, did, "g@example.com")
     assert calls == ["lock", "check"]
+
+
+@pytest.mark.asyncio
+async def test_reinviting_an_expired_email_replaces_the_old_row(client, db_session):
+    owner, did = await make_shared_diary(client, "so40@example.com")
+    await invite(client, owner, did, "g40@example.com")
+    await db_session.execute(
+        update(Invitation).values(expires_at=datetime.now(UTC) - timedelta(days=1))
+    )
+    await db_session.commit()
+    await invite(client, owner, did, "G40@example.com")
+    listed = (await client.get(f"/v1/diaries/{did}/invitations", headers=owner)).json()
+    assert [i["invited_email"] for i in listed] == ["g40@example.com"]

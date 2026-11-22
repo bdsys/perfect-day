@@ -199,3 +199,23 @@ async def test_revoke_of_accepted_invite_404_keeps_member(client, db_session):
         assert r.status_code == 404, r.text
     perms = (await db_session.execute(select(DiaryPermission))).scalars().all()
     assert len(perms) == 1
+
+
+@pytest.mark.asyncio
+async def test_unnamed_owner_is_masked_in_wrong_email_and_expired(client, db_session):
+    owner, did = await make_shared_diary(client, "sa30@example.com")
+    created = await invite(client, owner, did, "guest30@example.com")
+    other = await register(client, "other30@example.com")
+    r = await accept(client, other, created["token"])
+    assert r.status_code == 403
+    assert r.json()["detail"]["details"]["owner_name"] == "s•••@example.com"
+    assert "sa30@example.com" not in r.text
+    await db_session.execute(
+        update(Invitation).values(expires_at=datetime.now(UTC) - timedelta(days=1))
+    )
+    await db_session.commit()
+    guest = await register(client, "guest30@example.com")
+    r = await accept(client, guest, created["token"])
+    assert r.status_code == 410
+    assert r.json()["detail"]["details"]["owner_name"] == "s•••@example.com"
+    assert "sa30@example.com" not in r.text

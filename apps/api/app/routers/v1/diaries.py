@@ -86,6 +86,7 @@ class DeletionNoticeOut(BaseModel):
     owner_name: str
     deletes_on: datetime
     becomes_yours: bool  # the caller is the person the owner chose to receive the diary
+    goes_to_name: str | None = None  # who the owner chose to receive it, if anyone
 
 
 class _DiaryFields(BaseModel):
@@ -166,6 +167,7 @@ def _diary_out(
     owner: User,
     caller: User,
     people: PeopleOut | None = None,
+    goes_to: User | None = None,
 ) -> DiaryOut:
     """Serialize a diary for `caller`. Home coordinates go to the owner only (TR-20),
     like photo and entry coordinates (S-12); co-parents get the place name.
@@ -189,6 +191,7 @@ def _diary_out(
             owner_name=out.owner_name,
             deletes_on=deadline,
             becomes_yours=diary.handover_to_user_id == caller.id,
+            goes_to_name=person_name(goes_to) if goes_to is not None else None,
         )
     return out
 
@@ -205,6 +208,15 @@ async def _diaries_out(
         u.id: u for u in (await db.execute(select(User).where(User.id.in_(owner_ids)))).scalars()
     }
     counts = await people_counts(db, [d.id for d in diaries if d.owner_user_id == user.id])
+    recipient_ids = {d.handover_to_user_id for d in diaries if d.handover_to_user_id is not None}
+    recipients = (
+        {
+            u.id: u
+            for u in (await db.execute(select(User).where(User.id.in_(recipient_ids)))).scalars()
+        }
+        if recipient_ids
+        else {}
+    )
     result = []
     for d in diaries:
         owner = owners[d.owner_user_id]
@@ -221,7 +233,17 @@ async def _diaries_out(
             )
         else:
             role = effective_role((roles or {}).get(d.id, "viewer"), owner.subscription_tier)
-            result.append(_diary_out(d, role=role, owner=owner, caller=user))
+            result.append(
+                _diary_out(
+                    d,
+                    role=role,
+                    owner=owner,
+                    caller=user,
+                    goes_to=recipients.get(d.handover_to_user_id)
+                    if d.handover_to_user_id
+                    else None,
+                )
+            )
     return result
 
 

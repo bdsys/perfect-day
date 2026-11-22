@@ -8,7 +8,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, EmailStr
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import deletion_state, get_current_user
@@ -126,6 +126,15 @@ async def create_invitation(
 
     await lock_diary_sharing(db, diary)
     await _ensure_not_member_or_invited(db, diary, normalized)
+    # Anything still listed for this email is expired (a live one was refused above).
+    await db.execute(
+        delete(Invitation).where(
+            Invitation.diary_id == diary.id,
+            Invitation.invited_email == normalized,
+            Invitation.accepted_at.is_(None),
+            Invitation.expires_at <= func.now(),
+        )
+    )
 
     owner_tier = await _owner_tier(db, diary)
     if role == "editor":
@@ -404,14 +413,16 @@ async def _resolve_invitation(
         raise _invite_error(404, "invite_not_found")
 
     owner = (await db.execute(select(User).where(User.id == diary.owner_user_id))).scalar_one()
+    # Someone who isn't the invitee gets no full email address, only a display name or a mask.
+    owner_label = (owner.display_name or "").strip() or mask_email(owner.email)
     if normalize_email(user.email) != normalize_email(inv.invited_email):
         raise _invite_error(
             403,
             "invite_wrong_email",
-            {"masked_email": mask_email(inv.invited_email), "owner_name": person_name(owner)},
+            {"masked_email": mask_email(inv.invited_email), "owner_name": owner_label},
         )
     if inv.expires_at <= datetime.now(UTC):
-        raise _invite_error(410, "invite_expired", {"owner_name": person_name(owner)})
+        raise _invite_error(410, "invite_expired", {"owner_name": owner_label})
     return inv, diary, "pending", inv.role
 
 

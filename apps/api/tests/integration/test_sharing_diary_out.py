@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -96,6 +97,8 @@ async def test_members_see_deletion_notice(client, db_session):
     nb = (await client.get(f"/v1/diaries/{did}", headers=b)).json()["deletion_notice"]
     assert na["becomes_yours"] is True
     assert nb["becomes_yours"] is False
+    assert na["goes_to_name"] == "do4a@example.com"
+    assert nb["goes_to_name"] == "do4a@example.com"
     assert datetime.fromisoformat(na["deletes_on"]) == deadline
     listed = next(d for d in (await client.get("/v1/diaries", headers=a)).json() if d["id"] == did)
     assert listed["deletion_notice"]["becomes_yours"] is True
@@ -188,3 +191,57 @@ async def test_member_get_has_no_people(client):
     got = (await client.get(f"/v1/diaries/{did}", headers=guest)).json()
     assert got["people"] is None
     assert got["role"] == "viewer"
+
+
+@pytest.mark.asyncio
+async def test_notice_has_no_goes_to_name_without_handover(client, db_session):
+    owner, did = await make_shared_diary(client, "do9@example.com", "plus")
+    b = await _join(client, owner, did, "do9b@example.com")
+    await _owner_deleting(db_session, "do9@example.com", did, None)
+    nb = (await client.get(f"/v1/diaries/{did}", headers=b)).json()["deletion_notice"]
+    assert nb["becomes_yours"] is False
+    assert nb["goes_to_name"] is None
+
+
+@pytest.mark.asyncio
+async def test_viewer_entry_has_no_rule_or_ai_details(client, db_session):
+    from app.models import AutoCreationRule, EntryRuleMatch, LLMGeneration
+
+    owner, did = await make_shared_diary(client, "do10@example.com")
+    viewer = await _join(client, owner, did, "do10v@example.com")
+    r = await client.post(
+        f"/v1/diaries/{did}/entries", json={"entry_date": "2025-06-01"}, headers=owner
+    )
+    eid = r.json()["id"]
+    assert (await client.post(f"/v1/entries/{eid}/publish", headers=owner)).status_code == 200
+    rule = AutoCreationRule(
+        diary_id=uuid.UUID(did),
+        name="Soccer",
+        condition={"op": "AND", "children": []},
+        options={},
+        enabled=True,
+    )
+    db_session.add(rule)
+    await db_session.flush()
+    db_session.add(EntryRuleMatch(entry_id=uuid.UUID(eid), rule_id=rule.id))
+    db_session.add(
+        LLMGeneration(
+            entry_id=uuid.UUID(eid),
+            model="m",
+            prompt_hash="h",
+            status="failed",
+            mode="events",
+            error="boom",
+        )
+    )
+    await db_session.commit()
+
+    mine = (await client.get(f"/v1/entries/{eid}", headers=owner)).json()
+    assert len(mine["rule_matches"]) == 1
+    assert mine["last_generation"] is not None
+    seen = (await client.get(f"/v1/entries/{eid}", headers=viewer)).json()
+    assert seen["rule_matches"] == []
+    assert seen["last_generation"] is None
+    listed = (await client.get(f"/v1/diaries/{did}/entries", headers=viewer)).json()
+    assert listed[0]["rule_matches"] == []
+    assert listed[0]["last_generation"] is None

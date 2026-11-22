@@ -69,6 +69,7 @@ async def test_delete_with_handover_records_choice(client, db_session):
         "DELETE", ACCOUNT, json={"handovers": {did: str(member_user.id)}}, headers=owner
     )
     assert r.status_code == 200, r.text
+    assert r.json()["handovers"] == {did: str(member_user.id)}
     assert (await _user(db_session, "ho2@example.com")).deleted_at is not None
     assert await _handover(db_session, did) == member_user.id
 
