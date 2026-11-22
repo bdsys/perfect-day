@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import select, update
 
-from app.models import Diary, User
+from app.models import Diary, RefreshToken, User
 from tests.integration.sharing_helpers import accept, invite, make_shared_diary, register
 
 ACCOUNT = "/v1/auth/account"
@@ -87,6 +88,7 @@ async def test_delete_without_body_unchanged(client, db_session):
 async def test_handover_to_non_member_422_and_account_not_deleted(client, db_session):
     owner, _member, did = await _share(client, "ho4@example.com", "ho4m@example.com")
     await register(client, "ho4x@example.com")
+    stranger_owner = await _user(db_session, "ho4@example.com")
     stranger = await _user(db_session, "ho4x@example.com")
 
     r = await client.request(
@@ -96,8 +98,18 @@ async def test_handover_to_non_member_422_and_account_not_deleted(client, db_ses
     assert "invalid_handover" in r.text
     assert (await _user(db_session, "ho4@example.com")).deleted_at is None
     assert await _handover(db_session, did) is None
-    # Still signed in: tokens were not revoked.
-    assert (await client.get("/v1/auth/me", headers=owner)).status_code == 200
+    # Nothing was revoked: every refresh token of the caller is still live.
+    tokens = (
+        (
+            await db_session.execute(
+                select(RefreshToken).where(RefreshToken.user_id == stranger_owner.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert tokens
+    assert all(t.revoked_at is None for t in tokens)
 
 
 @pytest.mark.asyncio
@@ -152,3 +164,28 @@ async def test_new_request_replaces_stale_choice(client, db_session):
     await db_session.commit()
     assert (await client.delete(ACCOUNT, headers=owner)).status_code == 200
     assert await _handover(db_session, did) is None
+
+
+@pytest.mark.asyncio
+async def test_handover_unknown_deleted_or_self_422(client, db_session):
+    owner, _member, did = await _share(client, "ho9@example.com", "ho9m@example.com")
+    me = await _user(db_session, "ho9@example.com")
+    member_user = await _user(db_session, "ho9m@example.com")
+    bad = [
+        {str(uuid.uuid4()): str(member_user.id)},
+        {did: str(me.id)},
+    ]
+    for handovers in bad:
+        r = await client.request("DELETE", ACCOUNT, json={"handovers": handovers}, headers=owner)
+        assert r.status_code == 422, r.text
+        assert "invalid_handover" in r.text
+        assert (await _user(db_session, "ho9@example.com")).deleted_at is None
+    await db_session.execute(
+        update(Diary).where(Diary.id == uuid.UUID(did)).values(deleted_at=datetime.now(tz=UTC))
+    )
+    await db_session.commit()
+    r = await client.request(
+        "DELETE", ACCOUNT, json={"handovers": {did: str(member_user.id)}}, headers=owner
+    )
+    assert r.status_code == 422, r.text
+    assert (await _user(db_session, "ho9@example.com")).deleted_at is None

@@ -470,7 +470,7 @@ async def handover_options(
 
 def _invalid_handover() -> HTTPException:
     return HTTPException(
-        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="invalid_handover"
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="invalid_handover"
     )
 
 
@@ -509,7 +509,12 @@ async def delete_account(
                 .where(DiaryPermission.diary_id == diary_id, User.id == recipient_id)
             )
         ).scalar_one_or_none()
-        if owned is None or recipient is None or deletion_state(recipient) != "active":
+        if (
+            recipient_id == user.id
+            or owned is None
+            or recipient is None
+            or deletion_state(recipient) != "active"
+        ):
             raise _invalid_handover()
     # The request is the whole choice: drop any older one, then record this one.
     await db.execute(
@@ -517,7 +522,9 @@ async def delete_account(
     )
     for diary_id, recipient_id in handovers.items():
         await db.execute(
-            update(Diary).where(Diary.id == diary_id).values(handover_to_user_id=recipient_id)
+            update(Diary)
+            .where(Diary.id == diary_id, Diary.owner_user_id == user.id)
+            .values(handover_to_user_id=recipient_id)
         )
     now = datetime.now(tz=UTC)
     deadline = now + timedelta(days=7)
