@@ -96,9 +96,7 @@ async def test_members_see_deletion_notice(client, db_session):
     nb = (await client.get(f"/v1/diaries/{did}", headers=b)).json()["deletion_notice"]
     assert na["becomes_yours"] is True
     assert nb["becomes_yours"] is False
-    assert datetime.fromisoformat(na["deletes_on"]) == deadline.replace(
-        microsecond=deadline.microsecond
-    )
+    assert datetime.fromisoformat(na["deletes_on"]) == deadline
     listed = next(d for d in (await client.get("/v1/diaries", headers=a)).json() if d["id"] == did)
     assert listed["deletion_notice"]["becomes_yours"] is True
 
@@ -139,9 +137,9 @@ async def test_non_recipient_decline_404(client, db_session):
     r = await client.post(f"/v1/diaries/{did}/handover/decline", headers=b)
     assert r.status_code == 404
     assert r.json()["error"]["message"] == "not_found"
-    assert (
-        await client.post(f"/v1/diaries/{did}/handover/decline", headers=owner)
-    ).status_code in (403, 404)
+    r = await client.post(f"/v1/diaries/{did}/handover/decline", headers=owner)
+    assert r.status_code == 403
+    assert r.json()["error"]["message"] == "account_pending_deletion"
 
 
 @pytest.mark.asyncio
