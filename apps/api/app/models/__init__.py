@@ -216,6 +216,13 @@ class Diary(TimestampMixin, SoftDeleteMixin, Base):
     lat: Mapped[float | None] = mapped_column(Numeric(9, 6))
     lon: Mapped[float | None] = mapped_column(Numeric(9, 6))
     location_name: Mapped[str | None] = mapped_column(Text)  # home place, item 24
+    owned_since: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    handover_to_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL", name="fk_diaries_handover_to_user_id_users"),
+    )
 
     owner: Mapped[User] = relationship(back_populates="diaries", foreign_keys=[owner_user_id])
     entries: Mapped[list[Entry]] = relationship(

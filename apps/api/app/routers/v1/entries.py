@@ -222,6 +222,7 @@ def _entry_out_from_orm(
         [_event_out_from_orm(e, exact_places=exact_places) for e in entry.events],
         key=lambda e: e.occurred_at or datetime.min.replace(tzinfo=UTC),
     )
+    # Viewers get no capture rule and no AI details: an entry reads as the owner's own.
     rule_matches_out = [
         RuleMatchOut(
             rule_id=match.rule_id,
@@ -229,8 +230,9 @@ def _entry_out_from_orm(
             matched_at=match.matched_at,
         )
         for match in entry.rule_matches
+        if can_edit
     ]
-    gens = entry.llm_generations
+    gens = entry.llm_generations if can_edit else []
     last_gen: LLMGenerationSummaryOut | None = None
     if gens:
         latest = sorted(gens, key=lambda g: g.created_at, reverse=True)[0]

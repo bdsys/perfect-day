@@ -238,9 +238,11 @@ def users_delete(email: str, hard: bool) -> None:
                 db.query(Entry).filter(Entry.diary_id.in_(diary_ids)).update({"deleted_at": now})
         db.commit()
     if hard:
-        from app.workers.hard_delete import hard_delete_user
+        from app.workers.hard_delete import hard_delete_user_now
 
-        _run_app_hard_delete("user", lambda: hard_delete_user(hard_user_id))
+        # Waits for a running hourly pass: two deletions side by side can lose a
+        # photo handed from one account to the other (workers/handover.py).
+        _run_app_hard_delete("user", lambda: hard_delete_user_now(hard_user_id))
     click.echo(f"{'Hard-deleted' if hard else 'Soft-deleted'} user {email}.")
 
 

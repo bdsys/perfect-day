@@ -105,7 +105,6 @@ class TestListDeletedDiaries:
         assert r.status_code == 200
         assert all(d["id"] != diary["id"] for d in r.json())
 
-
     async def test_restore_gets_new_slug_when_original_taken(
         self, client, db_session: AsyncSession
     ):
@@ -133,7 +132,6 @@ class TestListDeletedDiaries:
         assert restored["deleted_at"] is None
         # Both diaries are active, slugs must differ
         assert restored["slug"] != replacement["slug"]
-
 
     async def test_deleted_entry_appears_in_trash(self, client):
         token = await _register_and_login(client, "tel1@example.com")
@@ -199,9 +197,7 @@ class TestListDeletedDiaries:
         await _delete_entry(client, auth, entry["id"])
 
         # Deleted entry from diary1 should not show under a random diary UUID
-        r = await client.get(
-            f"/v1/diaries/{uuid.uuid4()}/entries/trash", headers=auth
-        )
+        r = await client.get(f"/v1/diaries/{uuid.uuid4()}/entries/trash", headers=auth)
         assert r.status_code == 404
 
 
@@ -276,6 +272,13 @@ class TestRestoreEntryPermissions:
         diary = await _create_diary(client, owner_auth)
         entry = await _create_entry(client, owner_auth, diary["id"])
         await _delete_entry(client, owner_auth, entry["id"])
+        owner = (
+            await db_session.execute(
+                select(User).where(User.email == f"{prefix}-owner@example.com")
+            )
+        ).scalar_one()
+        owner.subscription_tier = "family"  # editors only act as editors on Family
+        await db_session.commit()
         result = await db_session.execute(select(User).where(User.email == other_email))
         other = result.scalar_one()
         db_session.add(

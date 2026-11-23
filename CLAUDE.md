@@ -9,6 +9,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
+**Core goal:** [`design/00-vision.md`](design/00-vision.md), in Andrew's words. Weigh every design decision against it, and say in the design which part of the goal a choice serves or costs.
+
 **Perfect Day** is an automated diary app that synthesizes data from Google Calendar, Google Photos, weather, and Spotify into warm, narrative diary entries using an LLM. Entries are always saved as drafts for human review before publishing. The LLM must only use facts present in source data — never infer or fabricate emotional states or details.
 
 Primary use case: a parent's diary of their child's life.

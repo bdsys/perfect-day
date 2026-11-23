@@ -257,8 +257,10 @@ class TestWeatherFollowsThePlace:
         await _refresh(db_session, entry, weather=weather)
 
         rows = (
-            await db_session.execute(select(Enrichment).where(Enrichment.entry_id == entry_id))
-        ).scalars().all()
+            (await db_session.execute(select(Enrichment).where(Enrichment.entry_id == entry_id)))
+            .scalars()
+            .all()
+        )
         assert [r.payload for r in rows] == [WEATHER]
         lat, lon, day = weather.await_args.args
         assert (round(lat, 5), round(lon, 5), day) == (
@@ -283,8 +285,10 @@ class TestWeatherFollowsThePlace:
         await _refresh(db_session, entry, weather=weather)
 
         rows = (
-            await db_session.execute(select(Enrichment).where(Enrichment.entry_id == entry_id))
-        ).scalars().all()
+            (await db_session.execute(select(Enrichment).where(Enrichment.entry_id == entry_id)))
+            .scalars()
+            .all()
+        )
         assert [r.payload for r in rows] == [{"old": True}]
         weather.assert_not_awaited()
 
@@ -315,10 +319,13 @@ class TestPhotoChangesQueueARefresh:
 
         def _on_queue(entry_id, *args, **kwargs):
             with sync_engine.connect() as conn:
-                seen["linked"] = conn.execute(
-                    text("SELECT 1 FROM entry_photos WHERE entry_id = :e AND photo_id = :p"),
-                    {"e": entry["id"], "p": str(photo.id)},
-                ).first() is not None
+                seen["linked"] = (
+                    conn.execute(
+                        text("SELECT 1 FROM entry_photos WHERE entry_id = :e AND photo_id = :p"),
+                        {"e": entry["id"], "p": str(photo.id)},
+                    ).first()
+                    is not None
+                )
             seen["entry_id"] = entry_id
 
         with patch("app.workers.tasks.refresh_entry_location.delay", side_effect=_on_queue):
@@ -341,10 +348,13 @@ class TestPhotoChangesQueueARefresh:
 
         def _on_queue(entry_id, *args, **kwargs):
             with sync_engine.connect() as conn:
-                seen["linked"] = conn.execute(
-                    text("SELECT 1 FROM entry_photos WHERE entry_id = :e AND photo_id = :p"),
-                    {"e": entry["id"], "p": str(photo.id)},
-                ).first() is not None
+                seen["linked"] = (
+                    conn.execute(
+                        text("SELECT 1 FROM entry_photos WHERE entry_id = :e AND photo_id = :p"),
+                        {"e": entry["id"], "p": str(photo.id)},
+                    ).first()
+                    is not None
+                )
             seen["entry_id"] = entry_id
 
         with patch("app.workers.tasks.refresh_entry_location.delay", side_effect=_on_queue):
@@ -420,7 +430,7 @@ class TestParentSetsThePlace:
     async def test_null_location_returns_to_automatic(self, client, db_session):
         auth, diary, entry = await _api_entry(client, "t4-auto@example.com")
         await _patch(client, entry["id"], auth, {"location": PLACE_IN})
-        home = (await db_session.execute(select(Diary).where(Diary.id == _uuid.UUID(diary["id"]))))
+        home = await db_session.execute(select(Diary).where(Diary.id == _uuid.UUID(diary["id"])))
         home = home.scalar_one()
         home.lat, home.lon, home.location_name = HOME[0], HOME[1], "Everett, Washington"
         await db_session.commit()
@@ -453,9 +463,7 @@ class TestParentSetsThePlace:
 
         assert r.status_code == 403
 
-    async def test_entry_out_shows_place_to_a_viewer_of_a_published_entry(
-        self, client, db_session
-    ):
+    async def test_entry_out_shows_place_to_a_viewer_of_a_published_entry(self, client, db_session):
         owner_auth, diary, entry = await _api_entry(client, "t4-show@example.com")
         await _patch(client, entry["id"], owner_auth, {"location": PLACE_IN})
         await client.post(f"/v1/entries/{entry['id']}/publish", headers=owner_auth)
@@ -500,6 +508,8 @@ class TestCoordinatesStayWithTheOwner:
         stored.lat, stored.lon, stored.location_source = PHOTO[0], PHOTO[1], "photo"
         await db_session.commit()
         await client.post(f"/v1/entries/{entry['id']}/publish", headers=owner_auth)
+        owner.subscription_tier = "family"  # editors only act as editors on Family
+        await db_session.commit()
         r = await client.post(
             "/v1/auth/register",
             json={"email": f"{prefix}-{role}@example.com", "password": "Password1!"},
@@ -777,9 +787,7 @@ class TestJobsThatOverlap:
 
         assert (await _reload(db_session, entry_id)).updated_at == first
 
-    async def test_a_place_the_parent_sets_mid_run_is_kept(
-        self, client, db_session, sync_engine
-    ):
+    async def test_a_place_the_parent_sets_mid_run_is_kept(self, client, db_session, sync_engine):
         _, _, entry = await _entry_in_diary(db_session)
         await make_event(db_session, entry=entry, payload={"summary": "x",
                          "location": "Mukilteo Library, Mukilteo, WA"})  # fmt: skip
@@ -856,8 +864,10 @@ class TestJobsThatOverlap:
         await _refresh(db_session, entry, weather=_place_moves_during_the_fetch)
 
         rows = (
-            await db_session.execute(select(Enrichment).where(Enrichment.entry_id == entry_id))
-        ).scalars().all()
+            (await db_session.execute(select(Enrichment).where(Enrichment.entry_id == entry_id)))
+            .scalars()
+            .all()
+        )
         assert seen == {"moved": True}
         assert rows == []
 
@@ -904,9 +914,12 @@ class TestMoreChangesQueueARefresh:
 
         def _on_queue(entry_id, *args, **kwargs):
             with sync_engine.connect() as conn:
-                exists = conn.execute(
-                    text_sql("SELECT 1 FROM entries WHERE id = :e"), {"e": entry_id}
-                ).first() is not None
+                exists = (
+                    conn.execute(
+                        text_sql("SELECT 1 FROM entries WHERE id = :e"), {"e": entry_id}
+                    ).first()
+                    is not None
+                )
             seen.append((entry_id, exists))
 
         with patch("app.workers.tasks.refresh_entry_location.delay", side_effect=_on_queue):

@@ -1,15 +1,25 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import LoginPage from '../page'
 
 let mockSearch = ''
+const mockPush = jest.fn()
+const mockLogin = jest.fn()
 jest.mock('next/navigation', () => ({
-  useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
+  useRouter: () => ({ push: mockPush, replace: jest.fn() }),
   useSearchParams: () => new URLSearchParams(mockSearch),
 }))
 jest.mock('@/lib/auth-context', () => ({
-  useAuth: () => ({ user: null, loading: false, login: jest.fn(), loginWithGoogle: jest.fn() }),
+  useAuth: () => ({ user: null, loading: false, login: mockLogin, loginWithGoogle: mockLoginWithGoogle }),
 }))
-jest.mock('@/components/GoogleSignInButton', () => ({ __esModule: true, default: () => null }))
+const mockLoginWithGoogle = jest.fn()
+let mockCredential: ((t: string) => void) | undefined
+jest.mock('@/components/GoogleSignInButton', () => ({
+  __esModule: true,
+  default: ({ onCredential }: { onCredential: (t: string) => void }) => {
+    mockCredential = onCredential
+    return null
+  },
+}))
 
 describe('LoginPage deletion notice', () => {
   it('shows the deletion notice', () => {
@@ -30,5 +40,43 @@ describe('LoginPage deletion notice', () => {
     mockSearch = ''
     render(<LoginPage />)
     expect(screen.queryByText(/will be deleted/)).not.toBeInTheDocument()
+  })
+})
+
+describe('LoginPage return path', () => {
+  beforeEach(() => mockPush.mockClear())
+
+  it('never leaves the site', async () => {
+    mockSearch = 'next=/%09/evil.example'
+    mockLogin.mockResolvedValue(undefined)
+    render(<LoginPage />)
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'a@b.com' } })
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'password1' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in' }))
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith('/diaries'))
+  })
+
+  it('goes to next after Google sign-in', async () => {
+    mockSearch = 'next=/invite/tok'
+    mockLoginWithGoogle.mockResolvedValue(undefined)
+    render(<LoginPage />)
+    mockCredential!('id-token')
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith('/invite/tok'))
+  })
+
+  it('goes to next after login', async () => {
+    mockSearch = 'next=/invite/tok'
+    mockLogin.mockResolvedValue(undefined)
+    render(<LoginPage />)
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'a@b.com' } })
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'password1' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in' }))
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith('/invite/tok'))
+  })
+
+  it('carries next to the register link', () => {
+    mockSearch = 'next=/invite/tok'
+    render(<LoginPage />)
+    expect(screen.getByRole('link', { name: 'Register' })).toHaveAttribute('href', '/register?next=%2Finvite%2Ftok')
   })
 })

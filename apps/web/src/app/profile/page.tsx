@@ -6,7 +6,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import AppHeader from '@/components/AppHeader'
 import Avatar from '@/components/Avatar'
 import {
-  api, ApiError, setAccessToken, type AvatarChoice, type AvatarIconName, type Integration, type TemperatureUnit,
+  api, ApiError, setAccessToken, type AvatarChoice, type AvatarIconName, type HandoverOption, type Integration, type TemperatureUnit,
 } from '@/lib/api'
 import { useAuth } from '@/lib/auth-context'
 import { AVATAR_ICONS, TONES } from '@/lib/avatarIcons'
@@ -72,6 +72,12 @@ export default function ProfilePage() {
   const [confirming, setConfirming] = useState(false)
   const [confirmText, setConfirmText] = useState('')
   const [deleteError, setDeleteError] = useState('')
+  // Shared diaries the owner can hand over instead of deleting; null until loaded.
+  const [handoverOptions, setHandoverOptions] = useState<HandoverOption[] | null>(null)
+  const [handoverFailed, setHandoverFailed] = useState(false)
+  const [handovers, setHandovers] = useState<Record<string, string>>({})
+  // Set when the server's record of the hand-over choice differs from what was sent.
+  const [handoverLostUntil, setHandoverLostUntil] = useState<string | null>(null)
 
   useEffect(() => {
     if (!authLoading && !user) router.replace('/login')
@@ -184,12 +190,22 @@ export default function ProfilePage() {
     navigateTo('/login')
   }
 
+  useEffect(() => {
+    if (!confirming) return
+    let cancelled = false
+    api.auth.handoverOptions()
+      .then((o) => { if (!cancelled) setHandoverOptions(o) })
+      .catch(() => { if (!cancelled) setHandoverFailed(true) })
+    return () => { cancelled = true }
+  }, [confirming])
+
   async function deleteAccount() {
-    if (busy || confirmText !== 'DELETE') return
+    if (busy || confirmText !== 'DELETE' || handoverOptions === null) return
     setBusy('delete')
     setDeleteError('')
     try {
-      const { deletion_scheduled_for } = await api.auth.deleteAccount()
+      const sent = handovers
+      const { deletion_scheduled_for, handovers: recorded } = await api.auth.deleteAccount(Object.keys(sent).length ? sent : undefined)
       // Not the context logout(): it clears `user`, and this page's signed-out effect would
       // router.replace('/login') and can drop ?deleted= (WebKit). navigateTo reloads the context.
       try {
@@ -198,9 +214,28 @@ export default function ProfilePage() {
         // the server already revoked every session
       }
       setAccessToken('')
+      // A proxy can drop a DELETE body. Then the account is scheduled without the choice.
+      const echoed = recorded ?? {}
+      const kept = Object.keys(sent).length === Object.keys(echoed).length
+        && Object.entries(sent).every(([d, m]) => echoed[d] === m)
+      if (!kept) {
+        setHandoverLostUntil(deletion_scheduled_for)
+        setBusy(null)
+        return
+      }
       navigateTo('/login?deleted=' + encodeURIComponent(deletion_scheduled_for))
-    } catch {
-      setDeleteError("Couldn't delete your account. Try again.")
+    } catch (e: unknown) {
+      if (e instanceof ApiError && e.code === 'invalid_handover') {
+        // Someone left after the choices loaded: show the current people, pick again.
+        setHandovers({})
+        setHandoverOptions(null)
+        setDeleteError('Someone you chose no longer has access. Check your choices and try again.')
+        api.auth.handoverOptions()
+          .then(setHandoverOptions)
+          .catch(() => setHandoverFailed(true))
+      } else {
+        setDeleteError("Couldn't delete your account. Try again.")
+      }
       setBusy(null)
     }
   }
@@ -331,8 +366,21 @@ export default function ProfilePage() {
         <section className="card profile-section" aria-labelledby="delete-h">
           <h2 id="delete-h">Delete account</h2>
           <p>Your diaries, entries and photos are deleted after 7 days. Log in during those 7 days to undo it.</p>
-          {!confirming ? (
-            <button type="button" className="btn btn-danger" style={{ marginTop: '0.75rem' }} onClick={() => setConfirming(true)}>
+          {handoverLostUntil !== null ? (
+            <div style={{ marginTop: '0.75rem' }}>
+              <p className="error-message" role="alert">
+                Your choice of who gets your shared diaries didn&apos;t save. Restore your account from the sign-in page and try again.
+              </p>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => navigateTo('/login?deleted=' + encodeURIComponent(handoverLostUntil))}
+              >
+                Go to sign-in
+              </button>
+            </div>
+          ) : !confirming ? (
+            <button type="button" className="btn btn-danger" style={{ marginTop: '0.75rem' }} onClick={() => { setHandoverOptions(null); setHandoverFailed(false); setHandovers({}); setConfirming(true) }}>
               Delete account…
             </button>
           ) : (
@@ -345,11 +393,37 @@ export default function ProfilePage() {
                 autoComplete="off"
                 onChange={(e) => setConfirmText(e.target.value)}
               />
+              {handoverFailed && <p className="error-message" role="alert">Couldn&apos;t load your shared diaries. Try again.</p>}
+              {handoverOptions?.map((o) => (
+                <fieldset key={o.diary_id} style={{ border: 'none', padding: 0, marginTop: '0.75rem' }}>
+                  <legend>{o.diary_name} is shared with {o.members.map((m) => m.name).join(', ')}.</legend>
+                  <label style={{ display: 'block' }}>
+                    <input
+                      type="radio"
+                      name={`handover-${o.diary_id}`}
+                      checked={!handovers[o.diary_id]}
+                      onChange={() => setHandovers((h) => Object.fromEntries(Object.entries(h).filter(([k]) => k !== o.diary_id)))}
+                    />{' '}
+                    Delete it
+                  </label>
+                  {o.members.map((m) => (
+                    <label key={m.user_id} style={{ display: 'block' }}>
+                      <input
+                        type="radio"
+                        name={`handover-${o.diary_id}`}
+                        checked={handovers[o.diary_id] === m.user_id}
+                        onChange={() => setHandovers((h) => ({ ...h, [o.diary_id]: m.user_id }))}
+                      />{' '}
+                      Give it to {m.name}
+                    </label>
+                  ))}
+                </fieldset>
+              ))}
               <div className="profile-row" style={{ marginTop: '0.75rem' }}>
                 <button
                   type="button"
                   className="btn btn-danger"
-                  disabled={confirmText !== 'DELETE' || busy === 'delete'}
+                  disabled={confirmText !== 'DELETE' || busy === 'delete' || handoverOptions === null}
                   onClick={deleteAccount}
                 >
                   Delete my account
@@ -358,7 +432,7 @@ export default function ProfilePage() {
                   type="button"
                   className="btn btn-secondary"
                   disabled={busy === 'delete'}
-                  onClick={() => { setConfirming(false); setConfirmText(''); setDeleteError('') }}
+                  onClick={() => { setConfirming(false); setConfirmText(''); setDeleteError(''); setHandovers({}) }}
                 >
                   Cancel
                 </button>

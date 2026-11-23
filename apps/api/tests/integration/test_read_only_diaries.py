@@ -39,6 +39,7 @@ async def _diary(db: AsyncSession, owner: User, name: str, age_days: int) -> Dia
         tone_hint="warm",
         subject_relation="self",
         created_at=datetime.now(tz=UTC) - timedelta(days=age_days),
+        owned_since=datetime.now(tz=UTC) - timedelta(days=age_days),
     )
     db.add(d)
     db.add(ScanJob(diary=d))
@@ -150,13 +151,20 @@ async def test_upgrade_reactivates_read_only_diary(
 async def test_editor_sees_owner_read_only(
     client: AsyncClient, db_session: AsyncSession, world: World
 ) -> None:
+    # Editors only act as editors on Family: put the owner there and over its 4-diary limit.
+    world.owner.subscription_tier = "family"
+    for i in range(3):
+        await _diary(db_session, world.owner, f"Old{i}", 30 + i)
     editor = await make_user(db_session)
     db_session.add(DiaryPermission(diary_id=world.b.id, user_id=editor.id, role="editor"))
     await db_session.commit()
     r = await client.patch(
         f"/v1/entries/{world.entry_b.id}", json={"title": "t"}, headers=_auth(editor)
     )
-    _assert_read_only(r)
+    assert r.status_code == 403, r.text
+    details = r.json()["detail"]["details"]
+    assert details["source"] == "diary_read_only"
+    assert (details["limit"], details["current"]) == (4, 5)
 
 
 async def test_workers_skip_read_only(
@@ -179,9 +187,9 @@ async def test_workers_skip_read_only(
 
     count = (
         await db_session.execute(
-            select(func.count()).select_from(LLMGeneration).where(
-                LLMGeneration.entry_id == world.entry_b.id
-            )
+            select(func.count())
+            .select_from(LLMGeneration)
+            .where(LLMGeneration.entry_id == world.entry_b.id)
         )
     ).scalar_one()
     assert count == 0
@@ -190,9 +198,7 @@ async def test_workers_skip_read_only(
     assert await _can_still_edit(db_session, world.entry_a.id, world.owner.id) is True
 
 
-async def test_beat_dispatches_only_writable_diaries(
-    client: AsyncClient, world: World
-) -> None:
+async def test_beat_dispatches_only_writable_diaries(client: AsyncClient, world: World) -> None:
     from unittest.mock import MagicMock
 
     from app.workers.beat_tasks import _dispatch_due_scans
@@ -233,7 +239,8 @@ async def _run_on_read_only_diary(db_session: AsyncSession, world: World, status
 
 
 async def test_read_only_backfill_run_finishes(
-    client: AsyncClient, db_session: AsyncSession, world: World) -> None:
+    client: AsyncClient, db_session: AsyncSession, world: World
+) -> None:
     from app.models import BackfillRun
     from app.workers.tasks import _backfill_diary
 
@@ -249,8 +256,7 @@ async def test_read_only_backfill_run_finishes(
 
 
 async def test_cancelled_backfill_run_stays_cancelled_when_read_only(
-    client: AsyncClient,
-    db_session: AsyncSession, world: World
+    client: AsyncClient, db_session: AsyncSession, world: World
 ) -> None:
     from app.models import BackfillRun
     from app.workers.tasks import _backfill_diary
@@ -263,3 +269,15 @@ async def test_cancelled_backfill_run_stays_cancelled_when_read_only(
     run = rows.scalar_one()
     assert run.status == "cancelled"
     assert run.error == "earlier"
+
+
+async def test_received_diary_goes_read_only_not_own(db_session: AsyncSession) -> None:
+    from app.services.read_only import read_only_diary_ids
+
+    user = await make_user(db_session, subscription_tier="free")
+    own = await _diary(db_session, user, "Own", 0)
+    received = await _diary(db_session, user, "Received", 365)
+    received.owned_since = datetime.now(tz=UTC) + timedelta(seconds=1)
+    await db_session.commit()
+    assert await read_only_diary_ids(db_session, user.id, "free") == {received.id}
+    assert own.id != received.id

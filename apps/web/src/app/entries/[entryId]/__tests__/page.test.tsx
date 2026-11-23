@@ -554,3 +554,45 @@ describe('entry page: AI button label (row 27)', () => {
     expect(await screen.findByRole('button', { name: running })).toBeDisabled()
   })
 })
+
+describe('entry page: a viewer', () => {
+  it('sees the entry without controls, rule links or AI notes', async () => {
+    get.mockResolvedValue({
+      ...entry([{ id: 'p1' }]),
+      status: 'published',
+      body_source: 'fallback',
+      can_edit: false,
+      rule_matches: [{ rule_id: 'r1', rule_name: 'Soccer', matched_at: '2026-05-16T00:00:00Z' }],
+    })
+    render(<EntryDetailPage />)
+    await screen.findByText('Body')
+    for (const name of [/^Edit$/, 'Unpublish', 'Publish', 'Delete', /regenerate|polish|generate/i]) {
+      expect(screen.queryByRole('button', { name })).toBeNull()
+    }
+    expect(screen.queryByText(/Captured by rule/)).toBeNull()
+    expect(screen.queryByRole('link', { name: 'Soccer' })).toBeNull()
+    expect(screen.queryByText(/LLM draft/)).toBeNull()
+    expect(screen.queryByText('published')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Remove photo from entry' })).toBeNull()
+  })
+
+  it('gets reader copy for an empty entry', async () => {
+    get.mockResolvedValue({ ...entry([]), status: 'published', body_markdown: '', can_edit: false })
+    render(<EntryDetailPage />)
+    expect(await screen.findByText('Nothing written for this day yet.')).toBeInTheDocument()
+    expect(screen.queryByText(/Trigger a scan/)).toBeNull()
+  })
+
+  it('an editor still sees them', async () => {
+    get.mockResolvedValue({
+      ...entry([]),
+      body_source: 'fallback',
+      rule_matches: [{ rule_id: 'r1', rule_name: 'Soccer', matched_at: '2026-05-16T00:00:00Z' }],
+    })
+    render(<EntryDetailPage />)
+    await screen.findByText('Body')
+    expect(screen.getByRole('button', { name: 'Edit' })).toBeInTheDocument()
+    expect(screen.getByText(/Captured by rule/)).toBeInTheDocument()
+    expect(screen.getByText(/LLM draft was not available/)).toBeInTheDocument()
+  })
+})

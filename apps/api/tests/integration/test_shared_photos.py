@@ -13,7 +13,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from PIL import Image
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from app.models import DiaryPermission, User
 from tests.fixtures.factories import make_photo
@@ -54,6 +54,13 @@ async def _setup(client, db_session, prefix, published, body=None):
     owner = await _register(client, f"{prefix}-owner@example.com")
     editor = await _register(client, f"{prefix}-editor@example.com")
     viewer = await _register(client, f"{prefix}-viewer@example.com")
+    # Editors only act as editors while the owner is on Family.
+    await db_session.execute(
+        update(User)
+        .where(User.email == f"{prefix}-owner@example.com")
+        .values(subscription_tier="family")
+    )
+    await db_session.commit()
     diary = (
         await client.post("/v1/diaries", json={"name": "D", "timezone": "UTC"}, headers=owner)
     ).json()
@@ -154,9 +161,7 @@ async def test_library_near_date_orders_closest_first(client, db_session):
     await db_session.commit()
     r = await client.get("/v1/photos?near=2026-06-15", headers=auth)
     assert r.status_code == 200, r.text
-    assert [p["id"] for p in r.json()] == [
-        str(near.id), str(mid.id), str(far.id), str(undated.id)
-    ]
+    assert [p["id"] for p in r.json()] == [str(near.id), str(mid.id), str(far.id), str(undated.id)]
 
 
 # ---------------------------------------------------------------------------
@@ -227,7 +232,13 @@ async def test_viewer_of_published_entry_cannot_read_photo_only_on_other_diarys_
     auth, _, _ = await _setup(client, db_session, prefix, published=True)  # diary A, published
     viewer = auth["viewer"]
     # Diary B: the same viewer may view it, but the only entry holding the photo is a draft.
-    owner_b = await _register(client, f"{prefix}-owner-b@example.com")  # free tier: one diary each
+    owner_b = await _register(client, f"{prefix}-owner-b@example.com")  # own owner, own diary
+    await db_session.execute(
+        update(User)
+        .where(User.email == f"{prefix}-owner-b@example.com")
+        .values(subscription_tier="family")
+    )
+    await db_session.commit()
     diary_b = (
         await client.post("/v1/diaries", json={"name": "B", "timezone": "UTC"}, headers=owner_b)
     ).json()

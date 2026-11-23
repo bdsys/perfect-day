@@ -123,7 +123,31 @@ Day 7:   Celery process_hard_deletes():
            Hard delete users row.
 ```
 
+### Account deletion with hand-over (built 2026-11-22)
+
+Deletion cascades (above); a hand-over is the only exception, and only by the owner's explicit choice. The default for every diary is Delete.
+
+- **The choice.** When the owner deletes their account, `GET /v1/auth/account/handover-options` lists each owned diary that has an active member. For each one the owner picks a recipient or leaves it as Delete. `DELETE /v1/auth/account` takes `{handovers: {diary_id: user_id}}`, validates every pair before writing anything, and records the choice in `diaries.handover_to_user_id`.
+- **The grace week.** The recipient sees "[Owner] is deleting their account. [Diary] becomes yours on [date]." and can **Decline** (`POST /v1/diaries/{id}/handover/decline`); the diary is then deleted with the account. Removing the recipient from the diary also clears the choice.
+- **Restore.** Restoring the account clears every hand-over choice: nothing changes hands.
+- **Day 7.** The hourly hard delete first moves the chosen diaries (`workers/handover.py`): the recipient becomes owner, `owned_since` is set, their membership row goes, the old owner's calendar filters, unattached events, scan cursors, pending backfills and unaccepted invites are removed, scanning is turned off (the new owner connects their own Google account), and an `audit_log` row `diary.handover` is written. If the recipient is gone, no longer a member or themself being deleted, the choice is cleared and the diary is deleted as without one.
+- **Photos.** Photos stay with the diary they are in. Each photo of the departing user attached to an entry in someone else's diary moves to that diary's owner (earliest attachment wins): the DEK is re-wrapped for the new owner and the objects are copied server-side first, so a row only ever points at objects that exist. The old copies go with the `{user_id}/*` prefix scrub at the end. A Google Photos duplicate the new owner already has is merged into their copy. A photo whose original is missing from the store is not moved.
+- **Retry-safe, not one transaction.** Each diary and each photo is its own step that re-checks state, so any step may fail and the next hourly run finishes the job.
+- **Single-flight.** The hourly hard-delete pass holds a Postgres advisory lock for the whole pass (`hard_delete_lock`); a second pass skips. The admin CLI's hard delete waits for it. Without it, one deletion could move a photo to an account the other deletion is erasing.
+- **GPS after a move.** The new owner sees the photo's GPS: the original with its EXIF, plus latitude and longitude in their photo library and `/metadata`. This follows "coordinates to the owner only": the owner of the photo changed.
+- **Wrong-email refusal.** `invite_wrong_email` and `invite_expired` name the owner by display name, or by a masked address (`a•••@example.com`) when the owner has no display name. The full address is never sent to someone who is not the invitee.
+- A restore from backup rolls hand-overs back with everything else; tracker row 67 covers re-applying them.
+
 Cross-diary photo check: the `photos` row and its stored objects are deleted only when no entry in another diary still links the photo through `entry_photos` (`apps/api/app/workers/hard_delete.py`). The `diary_photos` table is not consulted.
+
+## Diary sharing (built 2026-11-22)
+
+- **Invite tokens.** Only the SHA-256 hash is stored (`invitations.token`). The raw token appears in exactly two responses: creating an invite and making a new link. It lives in the page's memory only, never in storage. A new link replaces the old token, so the old link stops working. An invite works once, for 7 days.
+- **Email binding.** An invite works only for a signed-in account whose email matches `invited_email`, case-insensitive. A wrong or signed-out visitor learns nothing about the diary: not its name, not its owner. The wrong-email page shows a masked address (`m•••@example.com`).
+- **Accepted gap: unverified email (Andrew).** Registration does not verify an email address, so someone who learns a link could register the invited address first. Andrew, 2026-11-20: "the risk seems low" (the link goes to one person and works once). Project 2 (email verification) closes it.
+- **Link in the URL (open).** Invite links carry the raw token in the URL path (`/invite/{token}`), so it can appear in logs. Three places record it: the proxy's access log, uvicorn's own access log (`apps/api/Dockerfile` line 18 and `docker-compose.yml` line 94 run it with access logging on), and the API's error handler (`apps/api/app/core/errors.py`, which logs `request.url.path`). It is single-use, valid 7 days and bound to the invited email. Whether to redact it from these logs is an open decision; nothing redacts it today.
+- **What people see.** Viewers see published entries and their photos only, with no AI badge. Coordinates go to the owner only. Removing a person, or a person leaving, ends access at once. While the owner's deletion is pending, other members see the chosen recipient's name (their email when the recipient has no display name) in the deletion notice.
+- **Limits and downgrade.** Enforced in the API, per diary, members plus pending invites: Free 3, Plus 10, Family unlimited; editors Family only. On a downgrade nobody loses access; an editor whose owner is not on Family acts as a viewer.
 
 ## GDPR/CCPA posture
 

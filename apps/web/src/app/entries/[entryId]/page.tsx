@@ -428,7 +428,7 @@ function EntryDetailPageInner() {
         )}
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.25rem', flexWrap: 'wrap' }}>
-          <span className={`status-badge status-${entry.status}`}>{entry.status}</span>
+          {entry.can_edit && <span className={`status-badge status-${entry.status}`}>{entry.status}</span>}
           <span style={{ fontSize: '0.875rem', color: 'var(--text-muted)' }}>{formatDateRange(entry.entry_date, entry.entry_end_date)}</span>
           <WeatherBadge enrichments={entry.enrichments ?? []} unit={unit} />
         </div>
@@ -506,7 +506,7 @@ function EntryDetailPageInner() {
               {entry.title ?? <span style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>(no title yet)</span>}
             </h1>
 
-            {entry.rule_matches && entry.rule_matches.length > 0 && (
+            {entry.can_edit && entry.rule_matches && entry.rule_matches.length > 0 && (
               <div style={{ marginBottom: '0.75rem', fontSize: '0.85rem', color: '#555' }}>
                 Captured by rule{entry.rule_matches.length !== 1 ? 's' : ''}:{' '}
                 {entry.rule_matches.map((m, i) => (
@@ -520,7 +520,7 @@ function EntryDetailPageInner() {
               </div>
             )}
 
-            {entry.body_source === 'fallback' && (
+            {entry.can_edit && entry.body_source === 'fallback' && (
               <p style={{ fontStyle: 'italic', color: '#888', marginBottom: '1rem', fontSize: '0.85rem' }}>
                 Generated from calendar events — LLM draft was not available. Edit or regenerate.
               </p>
@@ -593,7 +593,7 @@ function EntryDetailPageInner() {
               </div>
             ) : (
               <div className="empty-state">
-                <p>No content yet. Trigger a scan or regenerate to generate a draft.</p>
+                <p>{entry.can_edit ? 'No content yet. Trigger a scan or regenerate to generate a draft.' : 'Nothing written for this day yet.'}</p>
               </div>
             )}
 
@@ -641,7 +641,7 @@ function EntryDetailPageInner() {
                         onClick={() => setLightboxIndex(i)}
                         className="thumbnail"
                       />
-                      <button
+                      {entry.can_edit && <button
                         type="button"
                         className="thumbnail-action"
                         aria-label="Remove photo from entry"
@@ -662,7 +662,7 @@ function EntryDetailPageInner() {
                         }}
                       >
                         ×
-                      </button>
+                      </button>}
                     </li>
                   ))}
                 </ul>
@@ -719,7 +719,7 @@ function EntryDetailPageInner() {
                 onDismiss={() => { setRegenResult(null); setRegenStartTime(null) }}
               />
             )}
-            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1.25rem', flexWrap: 'wrap' }}>
+            {entry.can_edit && <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1.25rem', flexWrap: 'wrap' }}>
               <button className="btn btn-secondary" onClick={startEdit} disabled={readOnly}>
                 Edit
               </button>
@@ -744,7 +744,7 @@ function EntryDetailPageInner() {
               <button className="btn btn-danger" onClick={handleDelete} disabled={deleting}>
                 {deleting ? 'Deleting…' : 'Delete'}
               </button>
-            </div>
+            </div>}
             {aiOut && plan && <LimitNote id="ai-limit-note">{aiLimitNote(plan.resets_on)}</LimitNote>}
           </>
         )}

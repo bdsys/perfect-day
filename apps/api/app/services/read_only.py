@@ -1,4 +1,4 @@
-"""Diaries over the owner's plan limit are read-only (oldest diaries stay writable)."""
+"""Diaries over the owner's plan limit are read-only (the diaries owned longest stay writable)."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ async def _active_diary_ids(db: AsyncSession, owner_user_id: uuid.UUID) -> list[
     result = await db.execute(
         select(Diary.id)
         .where(Diary.owner_user_id == owner_user_id, Diary.deleted_at.is_(None))
-        .order_by(Diary.created_at.asc(), Diary.id.asc())
+        .order_by(Diary.owned_since.asc(), Diary.created_at.asc(), Diary.id.asc())
     )
     return list(result.scalars())
 
@@ -23,7 +23,7 @@ async def _active_diary_ids(db: AsyncSession, owner_user_id: uuid.UUID) -> list[
 async def read_only_diary_ids(
     db: AsyncSession, owner_user_id: uuid.UUID, tier: str
 ) -> set[uuid.UUID]:
-    """The owner's diaries past the first `limits_for(tier).diaries`, oldest first."""
+    """The owner's diaries past the first `limits_for(tier).diaries`, longest-owned first."""
     ids = await _active_diary_ids(db, owner_user_id)
     return set(ids[limits_for(tier).diaries :])
 

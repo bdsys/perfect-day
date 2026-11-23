@@ -8,7 +8,9 @@ from typing import Any, Literal
 
 from fastapi import HTTPException
 
-LimitSource = Literal["diary", "ai_draft", "photo", "diary_read_only", "backfill"]
+LimitSource = Literal[
+    "diary", "ai_draft", "photo", "diary_read_only", "backfill", "people", "editor"
+]
 
 
 @dataclass(frozen=True)
@@ -18,6 +20,8 @@ class PlanLimits:
     photos_per_entry: int | None  # None = unlimited
     backfill: bool
     scan_past_days: int | None  # how far back a scan or rule apply may look; None = unlimited
+    people_per_diary: int | None  # members plus pending invites, per diary; None = unlimited
+    editors: bool  # may the owner give someone the editor role
 
 
 # Ordered cheapest first: required_tier() returns the first plan that fits.
@@ -28,6 +32,8 @@ PLAN_LIMITS: dict[str, PlanLimits] = {
         photos_per_entry=1,
         backfill=False,
         scan_past_days=90,
+        people_per_diary=3,
+        editors=False,
     ),
     "plus": PlanLimits(
         diaries=2,
@@ -35,6 +41,8 @@ PLAN_LIMITS: dict[str, PlanLimits] = {
         photos_per_entry=None,
         backfill=True,
         scan_past_days=None,
+        people_per_diary=10,
+        editors=False,
     ),
     "family": PlanLimits(
         diaries=4,
@@ -42,6 +50,8 @@ PLAN_LIMITS: dict[str, PlanLimits] = {
         photos_per_entry=None,
         backfill=True,
         scan_past_days=None,
+        people_per_diary=None,
+        editors=True,
     ),
 }
 
@@ -62,6 +72,10 @@ def _limit_for_source(limits: PlanLimits, source: LimitSource) -> int | None:
         return limits.ai_drafts_per_month
     if source == "backfill":
         return limits.scan_past_days
+    if source == "people":
+        return limits.people_per_diary
+    if source == "editor":
+        return None if limits.editors else 0
     return limits.photos_per_entry
 
 

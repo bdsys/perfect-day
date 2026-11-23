@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
 import structlog
@@ -10,6 +12,59 @@ import structlog
 from app.workers.utils import db_session
 
 log = structlog.get_logger()
+
+# Two-key form, so it can never collide with the one-key advisory locks taken elsewhere
+# (the per-user creation lock and the per-diary sharing lock): Postgres keeps the two
+# key spaces apart.
+_RUN_LOCK_KEYS = "hashtext('hard_delete_pass'), 0"
+
+
+@asynccontextmanager
+async def hard_delete_lock(*, wait: bool) -> AsyncIterator[bool]:
+    """Single-flight for hard deletes: yields True while this caller holds the lock.
+
+    Two deletions running side by side can lose a photo: one moves it to an account
+    the other is deleting at that moment (workers/handover.py). The lock is
+    session-level and held on its own connection for the whole pass, so it lasts as
+    long as the work, and Postgres drops it if the worker dies. With wait=False a
+    caller that finds it held gets False and should skip.
+    """
+    from sqlalchemy import text
+
+    from app.core.database import get_engine
+
+    conn = await get_engine().connect()
+    held = False
+    try:
+        if wait:
+            await conn.execute(text(f"SELECT pg_advisory_lock({_RUN_LOCK_KEYS})"))
+            held = True
+        else:
+            held = bool(
+                (
+                    await conn.execute(text(f"SELECT pg_try_advisory_lock({_RUN_LOCK_KEYS})"))
+                ).scalar_one()
+            )
+        await conn.commit()  # the lock outlives the transaction; don't sit idle in one
+        yield held
+    finally:
+        try:
+            if held:
+                await conn.execute(text(f"SELECT pg_advisory_unlock({_RUN_LOCK_KEYS})"))
+                await conn.commit()
+            await conn.close()
+        except Exception as e:
+            # Never hand a connection still holding the lock back to the pool:
+            # dropping it ends the session, and Postgres releases the lock with it.
+            log.warning("hard_delete_lock_release_failed", error=type(e).__name__)
+            await conn.invalidate()
+            await conn.close()
+
+
+async def hard_delete_user_now(user_id: uuid.UUID) -> None:
+    """hard_delete_user for the admin CLI: waits for any running pass first."""
+    async with hard_delete_lock(wait=True):
+        await hard_delete_user(user_id)
 
 
 async def hard_delete_diary(diary_id: uuid.UUID) -> None:
@@ -159,6 +214,16 @@ async def hard_delete_user(user_id: uuid.UUID) -> None:
         ):
             log.info("hard_delete_user_skipped_not_due", user_id=str(user_id))
             return
+
+    # The hand-over (design: diary sharing). First the diaries the owner chose a
+    # recipient for change hands; then their photos still attached in diaries they
+    # don't own (those just handed over included) move to those diaries' owners. Both
+    # re-check state and only copy objects, so a failure is finished by the next run;
+    # the old copies go with the prefix scrub below.
+    from app.workers.handover import move_departing_photos, transfer_chosen_diaries
+
+    await transfer_chosen_diaries(user_id)
+    await move_departing_photos(user_id)
 
     async with db_session() as db:
         # Hard delete all owned diaries first

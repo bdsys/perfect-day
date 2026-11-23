@@ -13,6 +13,10 @@ describe('PlansPage', () => {
     }
     const backfill = screen.getByRole('rowheader', { name: 'Backfill' }).closest('tr')!
     expect(Array.from(backfill.querySelectorAll('td')).map(td => td.textContent)).toEqual(['—', '✓', '✓'])
+    const values = (name: string) =>
+      Array.from(screen.getByRole('rowheader', { name }).closest('tr')!.querySelectorAll('td')).map(td => td.textContent)
+    expect(values('People who can read')).toEqual(['3', '10 per diary', 'Unlimited'])
+    expect(values('Editors')).toEqual(['—', '—', '✓'])
     expect(screen.getByText('Paid plans are coming soon.')).toBeInTheDocument()
   })
 })

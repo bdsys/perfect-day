@@ -39,6 +39,7 @@ from app.services.google_photos import (
 )
 from app.services.photo_limits import photo_room
 from app.services.read_only import is_diary_read_only
+from app.services.sharing import effective_role
 
 log = structlog.get_logger()
 
@@ -105,7 +106,9 @@ async def delete_session_quietly(db: AsyncSession, imp: PhotoImport) -> None:
         token = await access_token_for(db, imp.user_id)
         await google_photos.GooglePhotosClient(token).delete_session(imp.google_session_id)
     except Exception as exc:  # noqa: BLE001 — never fail an import over clean-up
-        log.info("photo_import_session_delete_failed", import_id=str(imp.id), error=type(exc).__name__)
+        log.info(
+            "photo_import_session_delete_failed", import_id=str(imp.id), error=type(exc).__name__
+        )
 
 
 async def _load(db: AsyncSession, import_id: uuid.UUID) -> PhotoImport | None:
@@ -345,7 +348,9 @@ async def _entry_is_full(db: AsyncSession, entry_id: uuid.UUID, *, lock: bool = 
     """True when the diary owner's plan leaves the entry no room for another photo."""
     owner_id = (
         await db.execute(
-            select(Diary.owner_user_id).join(Entry, Entry.diary_id == Diary.id).where(Entry.id == entry_id)
+            select(Diary.owner_user_id)
+            .join(Entry, Entry.diary_id == Diary.id)
+            .where(Entry.id == entry_id)
         )
     ).scalar_one_or_none()
     owner = await db.get(User, owner_id, populate_existing=True) if owner_id is not None else None
@@ -357,16 +362,17 @@ async def _entry_is_full(db: AsyncSession, entry_id: uuid.UUID, *, lock: bool = 
 async def _can_still_edit(db: AsyncSession, entry_id: uuid.UUID, user_id: uuid.UUID) -> bool:
     """One scalar query mirroring _get_entry_or_404(require_editor=True).
 
-    The entry and its diary are not deleted and the user owns the diary or holds a
-    permission that is not "viewer". Scalars, not ORM objects, so a role changed
+    The entry and its diary are not deleted and the user owns the diary or holds an
+    editor permission that counts (effective_role: the owner is on Family). Scalars, not ORM objects, so a role changed
     since an earlier load is never served from the identity map. A diary over its
     owner's plan limit is read-only, so nobody can edit it.
     """
     row = (
         await db.execute(
-            select(Diary.id, Diary.owner_user_id, DiaryPermission.role)
+            select(Diary.id, Diary.owner_user_id, DiaryPermission.role, User.subscription_tier)
             .select_from(Entry)
             .join(Diary, Diary.id == Entry.diary_id)
+            .join(User, User.id == Diary.owner_user_id)
             .outerjoin(
                 DiaryPermission,
                 and_(DiaryPermission.diary_id == Diary.id, DiaryPermission.user_id == user_id),
@@ -376,8 +382,12 @@ async def _can_still_edit(db: AsyncSession, entry_id: uuid.UUID, user_id: uuid.U
     ).first()
     if row is None:
         return False
-    diary_id, owner_id, role = row
-    if not (owner_id == user_id or (role is not None and role != "viewer")):
+    diary_id, owner_id, role, owner_tier = row
+    # An editor whose owner is off Family acts as a viewer (effective_role).
+    if not (
+        owner_id == user_id
+        or (role is not None and effective_role(role, owner_tier or "free") != "viewer")
+    ):
         return False
     diary = await db.get(Diary, diary_id)
     if diary is not None and await is_diary_read_only(db, diary):
@@ -409,7 +419,9 @@ async def _attach(db: AsyncSession, entry_id: uuid.UUID, photo_id: uuid.UUID) ->
     """Link the photo to the entry; False if it was already there."""
     existing = (
         await db.execute(
-            select(EntryPhoto).where(EntryPhoto.entry_id == entry_id, EntryPhoto.photo_id == photo_id)
+            select(EntryPhoto).where(
+                EntryPhoto.entry_id == entry_id, EntryPhoto.photo_id == photo_id
+            )
         )
     ).scalar_one_or_none()
     if existing is not None:
@@ -443,7 +455,9 @@ async def sweep_stuck_imports() -> int:
         )
         failed = await db.execute(
             update(PhotoImport)
-            .where(and_(PhotoImport.status == "copying", PhotoImport.updated_at < now - COPYING_IDLE))
+            .where(
+                and_(PhotoImport.status == "copying", PhotoImport.updated_at < now - COPYING_IDLE)
+            )
             .values(status="failed")
         )
         await db.commit()

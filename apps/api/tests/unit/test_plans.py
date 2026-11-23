@@ -18,9 +18,9 @@ from app.services.tier import (
 
 
 def test_limits_per_plan() -> None:
-    assert limits_for("free") == PlanLimits(1, 5, 1, False, 90)
-    assert limits_for("plus") == PlanLimits(2, None, None, True, None)
-    assert limits_for("family") == PlanLimits(4, None, None, True, None)
+    assert limits_for("free") == PlanLimits(1, 5, 1, False, 90, 3, False)
+    assert limits_for("plus") == PlanLimits(2, None, None, True, None, 10, False)
+    assert limits_for("family") == PlanLimits(4, None, None, True, None, None, True)
 
 
 def test_unknown_tier_is_free() -> None:
@@ -83,3 +83,13 @@ def test_backfill_allowed() -> None:
 
     with pytest.raises(HTTPException):
         ensure_backfill_allowed("tier1", 91)  # unknown tier is free
+
+
+def test_people_limits() -> None:
+    assert limits_for("free").people_per_diary == 3
+    assert limits_for("plus").people_per_diary == 10
+    assert limits_for("family").people_per_diary is None
+    assert [limits_for(t).editors for t in ("free", "plus", "family")] == [False, False, True]
+    assert required_tier("people", 4) == "plus"
+    assert required_tier("people", 11) == "family"
+    assert required_tier("editor", 1) == "family"

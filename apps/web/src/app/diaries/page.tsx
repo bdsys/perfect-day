@@ -9,7 +9,7 @@ import { googleStatusMessage } from '@/lib/googleStatus'
 import AppHeader from '@/components/AppHeader'
 import PlanBadge from '@/components/PlanBadge'
 import LimitNote from '@/components/LimitNote'
-import { diaryLimitNote, formatResetDate } from '@/lib/plan'
+import { diaryLimitNote, formatResetDate, peopleCounter } from '@/lib/plan'
 
 function GoogleStatusBanner() {
   const searchParams = useSearchParams()
@@ -43,6 +43,10 @@ function planDetails(plan: MyPlan) {
     label: 'Photos per entry',
     text: plan.photos_per_entry == null ? 'Unlimited' : String(plan.photos_per_entry),
   })
+  details.push({
+    label: 'People per diary',
+    text: plan.people_per_diary == null ? 'Unlimited' : String(plan.people_per_diary),
+  })
   return details
 }
 
@@ -71,7 +75,11 @@ export default function DiariesPage() {
     }
   }, [user])
 
-  const atLimit = plan != null && plan.diaries_used >= plan.diaries_limit
+  // Someone who was only invited owns nothing yet: no plan chrome, just what was shared with them.
+  const ownsNone = diaries.length > 0 && !diaries.some((d) => d.role === 'owner')
+  // Nothing that invites creating a diary shows until the list says whether they own one.
+  const showPlanChrome = !loading && !ownsNone
+  const atLimit = showPlanChrome && plan != null && plan.diaries_used >= plan.diaries_limit
 
   if (authLoading) return <div className="loading">Loading…</div>
   if (!user) return null
@@ -82,7 +90,7 @@ export default function DiariesPage() {
       <div className="container" style={{ paddingTop: '1.5rem' }}>
         <div className="page-header">
           <h1 className="page-title">Your diaries</h1>
-          <div className="page-actions">
+          {showPlanChrome && <div className="page-actions">
             {atLimit ? (
               <button type="button" className="btn btn-primary" disabled aria-describedby="diary-limit-note">New diary</button>
             ) : (
@@ -90,10 +98,10 @@ export default function DiariesPage() {
             )}
             <Link href="/photos" className="btn btn-secondary">Photos</Link>
             <Link href="/diaries/restore" className="btn btn-secondary">Deleted diaries</Link>
-          </div>
+          </div>}
         </div>
 
-        {plan?.tier === 'free' && (
+        {showPlanChrome && plan?.tier === 'free' && (
           <div style={{ marginBottom: '0.75rem' }}>
             <PlanBadge label="Diaries" used={plan.diaries_used} limit={plan.diaries_limit} details={planDetails(plan)} />
           </div>
@@ -118,11 +126,26 @@ export default function DiariesPage() {
                 <div className="card" style={{ cursor: 'pointer', transition: 'border-color 0.15s' }}>
                   <div style={{ fontWeight: 600, fontSize: '1rem' }}>{d.name}</div>
                   <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
-                    {d.timezone} · Scan every {d.scan_interval_minutes} min
+                    {d.role === 'owner' ? `${d.timezone} · Scan every ${d.scan_interval_minutes} min` : `Shared by ${d.owner_name}`}
                   </div>
+                  {d.role === 'owner' && d.people != null && d.people.used > 0 && (
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
+                      {peopleCounter(d.people.used, d.people.limit)}
+                    </div>
+                  )}
+                  {d.role === 'owner' && plan?.read_only_diary_ids.includes(d.id) && (
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
+                      Read-only on the {plan.plan_name} plan
+                    </div>
+                  )}
                 </div>
               </Link>
             ))}
+            {ownsNone && (
+              <p style={{ marginTop: '1.5rem', color: 'var(--text-muted)' }}>
+                Want a diary of your own? <Link href="/diaries/new">Create one</Link>
+              </p>
+            )}
           </div>
         )}
 

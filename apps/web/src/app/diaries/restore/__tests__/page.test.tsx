@@ -24,7 +24,7 @@ jest.mock('next/navigation', () => {
 const plan = (tier: string, planName: string, limit: number) => ({
   tier, plan_name: planName, diaries_limit: limit, diaries_used: limit, ai_drafts_limit: null,
   ai_drafts_used: 0, ai_drafts_left: null, resets_on: '2026-12-01', photos_per_entry: null,
-  read_only_diary_ids: [], backfill: false, scan_past_days_max: 90,
+  read_only_diary_ids: [], backfill: false, scan_past_days_max: 90, people_per_diary: 3, editors: false,
 }) as MyPlan
 
 beforeEach(() => {
