@@ -15,11 +15,11 @@ Weigh every design decision against this page. A change that doesn't move Perfec
 3. **Private and deliberate.** Only people the parent invited can see anything, never "anyone with the link", never public, because it's a child's life. Nothing private travels by email: emails carry a link, not photos or entry text. Coordinates go to the owner only.
 4. **True.** The AI writes only from facts in the source data, never invented feelings or details. The family is trusting what they read.
 
-## Where it stands (2026-11-20)
+## Where it stands (2026-11-23)
 
 - **Calendar → AI entry:** works.
 - **Photos from that day, automatically:** blocked on the web. Google closed automatic library access on 2025-03-31. The remaining route is the phone app reading the camera roll (`design/11-mobile-app.md` M-1). Today photos are added by hand.
-- **Getting it to the family:** being designed (Phase 3 #19, diary sharing: viewers by invitation, email and phone notifications, a per-rule choice of how entries get shared).
+- **Getting it to the family:** sharing is built and deployed (2026-11-23, PR #93): family see the diary by invitation, as viewers or, on Family, editors. Still to come: email and phone notifications (with email verification), a per-rule choice of how entries get shared, and a co-parent's calendar feeding the diary.
 
 ## How to use this page
 
