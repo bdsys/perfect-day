@@ -282,8 +282,8 @@ end
   ([FortiOS 7.2.10](https://docs.fortinet.com/document/fortigate/7.2.10/administration-guide/713497/virtual-server-load-balance)).
   Flow is the default and `show` does not print it, so a missing `inspection-mode` line means
   flow-based.
-- **Open item: restrict `srcaddr` to Cloudflare** (backlog row 40). Until it's done, anyone who
-  knows the WAN IP can reach the origin directly; `dev.api.blacknight.bdsys.net` publishes it.
+- **Done 2026-11-23 (row 40): `srcaddr` is restricted to Cloudflare.** Andrew set policy 35's source to a FortiGate external threat feed of Cloudflare's addresses (`config system external-resource`, `type address`), which refreshes on its own ([FortiOS 7.2 threat feeds](https://docs.fortinet.com/document/fortigate/7.2.0/administration-guide/9463/threat-feeds)). The fixed address group below is the fallback if the feed is ever removed. The edge's trust of `CF-Connecting-IP` (tracker row 71) relies on this. Before it was done, anyone who
+  knew the WAN IP could reach the origin directly; `dev.api.blacknight.bdsys.net` publishes it.
   The commands, from Cloudflare's list as of 2026-11-16 (<https://www.cloudflare.com/ips-v4>,
   15 ranges; regenerate them if the list changes):
 

@@ -26,6 +26,14 @@ if [ -n "${IP}" ]; then
     fi
     sed "s|{{FORTIGATE_LAN_IP}}|${IP}|g" "${TMPL}" > "${OUT}"
     echo "  Caddyfile rendered: trusted_proxies static ${IP}"
+    # Traffic from Cloudflare reaches the NUC from the FortiGate, the NUC's default gateway.
+    # Trusting any other address makes every visitor look like one (tracker row 71).
+    GW="${PD_DEFAULT_GATEWAY:-$(ip route show default 2>/dev/null | awk '{print $3; exit}')}"
+    if [ -n "${GW}" ] && [ "${GW}" != "${IP}" ]; then
+        echo "  WARNING: FORTIGATE_LAN_IP is ${IP}, but this machine's default gateway is ${GW}." >&2
+        echo "           If the FortiGate is the gateway, set it with:" >&2
+        echo "           sudo python3 scripts/nuc/lib/envfile.py set /etc/perfect-day/app.env FORTIGATE_LAN_IP ${GW}" >&2
+    fi
 else
     sed "s|{{FORTIGATE_LAN_IP}}|private_ranges|g" "${TMPL}" > "${OUT}"
     echo "  Caddyfile rendered: trusted_proxies static private_ranges (FORTIGATE_LAN_IP not set — dev fallback)"

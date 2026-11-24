@@ -137,7 +137,7 @@ echo "The FortiGate LAN IP is used by Caddy to scope trusted upstream proxies."
 echo "Example: 192.168.1.1 (the IP FortiGate uses on your home LAN)."
 echo "Leave blank for local dev — Caddy will trust all RFC1918 ranges instead."
 echo ""
-FORTIGATE_LAN_IP=$(prompt_optional FORTIGATE_LAN_IP "FORTIGATE_LAN_IP (FortiGate LAN IP, e.g. 192.168.1.1)")
+FORTIGATE_LAN_IP=$(prompt_optional FORTIGATE_LAN_IP "FORTIGATE_LAN_IP (the FortiGate's address on the NUC's LAN, i.e. the NUC's default gateway, e.g. 192.168.1.1)")
 
 echo ""
 echo "--- Generating cryptographic secrets ---"
