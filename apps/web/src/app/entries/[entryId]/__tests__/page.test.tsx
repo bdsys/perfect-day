@@ -596,3 +596,30 @@ describe('entry page: a viewer', () => {
     expect(screen.getByText(/LLM draft was not available/)).toBeInTheDocument()
   })
 })
+
+describe('entry page: Source events', () => {
+  const ev = {
+    id: 'ev1', source: 'google_calendar', occurred_at: '2026-05-16T10:00:00Z', summary: 'Swim lesson',
+    description: '', location: '', start: { dateTime: '2026-05-16T10:00:00Z' }, end: {}, attendees: [], status: '',
+  }
+
+  beforeEach(() => {
+    ;(api.integrations.list as jest.Mock).mockResolvedValue([])
+    listForEntry.mockResolvedValue([])
+  })
+
+  it('a viewer does not see the Source events box (Andrew, 2026-11-23)', async () => {
+    get.mockResolvedValue({ ...entry([]), status: 'published', can_edit: false, events: [ev] })
+    render(<EntryDetailPage />)
+    await screen.findByText('Body')
+    expect(screen.queryByText(/Source events/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Swim lesson/)).not.toBeInTheDocument()
+  })
+
+  it('the owner or an editor still sees it', async () => {
+    get.mockResolvedValue({ ...entry([]), can_edit: true, events: [ev] })
+    render(<EntryDetailPage />)
+    expect(await screen.findByText('Source events (1)')).toBeInTheDocument()
+    expect(screen.getByText(/Swim lesson/)).toBeInTheDocument()
+  })
+})

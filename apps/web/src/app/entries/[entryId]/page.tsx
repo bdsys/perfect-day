@@ -678,7 +678,8 @@ function EntryDetailPageInner() {
               />
             )}
 
-            {entry.events && entry.events.length > 0 && (
+            {/* Owner and editors only: viewers read the entry, not what it was made from (Andrew, 2026-11-23). */}
+            {entry.can_edit && entry.events && entry.events.length > 0 && (
               <details open style={{ marginTop: '1.5rem' }}>
                 <summary style={{ cursor: 'pointer', fontWeight: '600', fontSize: '0.9rem', color: '#555', marginBottom: '0.5rem' }}>
                   Source events ({entry.events.length})
