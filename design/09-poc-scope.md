@@ -57,7 +57,7 @@ Phase 2 leftovers grouped by theme. Build after Phase 2 is stable.
 | 11 | **Apple Sign In + magic link** | Required before iOS App Store submission. |
 | 12 | **Facebook OAuth login** | Low priority; after Apple. |
 | 19 | **Diary sharing + invitations** | **Built** (PR #93, deployed 2026-11-23; Andrew's phone check passed): `diary_permissions`, `invitations`, accept flow, role-based visibility, per-plan people limits (Free 3, Plus 10, Family unlimited; editors Family only), invite by link (the owner sends it; no email yet), and the hand-over of a diary at account deletion. API: `design/03-api-surface.md` § Diary sharing; data: `design/02-data-model.md`; privacy: `design/08-security-privacy.md`. e2e: `apps/web/e2e/sharing.spec.ts`. |
-| 20 | **Notifications** | Expo push + SendGrid, `notifications` table, dispatcher, quiet hours (20:00–07:00), coalescing, per-diary mute. |
+| 20 | **Notifications** | Expo push + SendGrid, `notifications` table, dispatcher, quiet hours (20:00–07:00), coalescing, per-diary mute. Also, for invitations and wish lists (Andrew, 2026-11-23): invitations and reminders by email, "the party changed / is cancelled" to guests who RSVP'd, and new RSVPs, claims and guest photos to the parent (`docs/superpowers/specs/2026-11-23-invitations-and-wish-lists-design.md`). |
 | 21 | **Admin panel** | Web UI for admin endpoints: user CRUD (create/delete/list, tier changes), diary CRUD, entry CRUD, impersonate, force delete, LLM usage stats, scan fleet view. CLI data tools (`scripts/admin.sh`) are available now for local dev use. |
 
 ---
