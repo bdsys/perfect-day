@@ -169,7 +169,7 @@ The script will prompt for:
 - `GOOGLE_CLIENT_SECRET` — from [A3](#a3--google-cloud-create-a-project-and-oauth-credentials)
 - `SENDGRID_API_KEY` — from [A4](#a4--sendgrid-create-account-and-get-api-key)
 - `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ZONE_ID` — from [A2](#a2--cloudflare-create-app-dns-records-and-ddns-token) (optional, for DDNS sidecar)
-- `FORTIGATE_LAN_IP` — the NUC LAN IP that FortiGate forwards traffic to. Used by the Caddy edge `trusted_proxies` directive so client IPs in logs are real client IPs, not the FortiGate. Leave empty for local dev (falls back to RFC1918 `private_ranges`).
+- `FORTIGATE_LAN_IP` — the FortiGate's own address on the NUC's LAN: the address Cloudflare's traffic arrives from, which is the NUC's default gateway (`ip route show default`). Not the NUC's address. The Caddy edge trusts `CF-Connecting-IP` only from this address, and passes the visitor's address to the API, whose rate limits key on it (tracker row 71). A wrong value makes every visitor look like the FortiGate, so one person can use up everyone's login attempts; `render-caddyfile.sh` warns at each deploy if it isn't the default gateway. Change it with `sudo python3 scripts/nuc/lib/envfile.py set /etc/perfect-day/app.env FORTIGATE_LAN_IP <address>`, then deploy. Leave empty for local dev (falls back to RFC1918 `private_ranges`).
 
 Auto-generates all crypto keys. Output: `/etc/perfect-day/app.env` (mode 600).
 

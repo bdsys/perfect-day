@@ -166,6 +166,7 @@ Cross-diary photo check: the `photos` row and its stored objects are deleted onl
 
 - `/auth/login`, `/auth/register`, `/auth/magic-link/request`: 10 req/min per IP.
 - Magic link: max 3 requests per email per 10 minutes.
+- **"Per IP" means the visitor's address** (tracker row 71, 2026-11-23). Cloudflare puts it in `CF-Connecting-IP`; Caddy believes that header only from the FortiGate (`FORTIGATE_LAN_IP`, the NUC's default gateway) and passes exactly that address on in `X-Forwarded-For`; uvicorn believes `X-Forwarded-For` only from Docker's networks (`FORWARDED_ALLOW_IPS`). Until then every visitor shared one limit. It only holds while the FortiGate accepts nothing but Cloudflare's addresses (tracker row 40): a direct connection to the WAN IP could otherwise set `CF-Connecting-IP` itself.
 
 ## Magic link tokens
 

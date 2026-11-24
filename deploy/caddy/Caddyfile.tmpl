@@ -2,19 +2,30 @@
 	admin off
 	auto_https off
 	servers {
+		# The FortiGate is the only hop trusted to say who the visitor is (tracker row 71).
+		# Its address on the NUC's LAN is the NUC's default gateway.
 		trusted_proxies static {{FORTIGATE_LAN_IP}}
+		# Cloudflare puts exactly one address, the visitor's, in CF-Connecting-IP. The left
+		# end of X-Forwarded-For is whatever the visitor sent, so it is never read.
+		# https://developers.cloudflare.com/fundamentals/reference/http-headers/
+		client_ip_headers CF-Connecting-IP
 	}
 }
 
 :80 {
 	@diary host perfectday.andrewlass.com
 	handle @diary {
-		reverse_proxy web:3000
+		reverse_proxy web:3000 {
+			# Exactly one address, the one worked out above; anything the visitor sent is dropped.
+			header_up X-Forwarded-For {client_ip}
+		}
 	}
 
 	@api host perfectday-api.andrewlass.com
 	handle @api {
-		reverse_proxy api:8000
+		reverse_proxy api:8000 {
+			header_up X-Forwarded-For {client_ip}
+		}
 	}
 
 	handle {

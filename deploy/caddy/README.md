@@ -17,7 +17,7 @@ Any other `Host` value returns 404.
 
 ## Before deploying to the NUC
 
-Set `FORTIGATE_LAN_IP` when running `scripts/nuc/10-secrets.sh` (prompted automatically). The deploy scripts render `Caddyfile.tmpl` → `Caddyfile` at deploy time — you never need to edit the Caddyfile manually. For local dev, leave `FORTIGATE_LAN_IP` empty; Caddy will trust all RFC1918 ranges instead.
+Set `FORTIGATE_LAN_IP` when running `scripts/nuc/10-secrets.sh` (prompted automatically). It is the FortiGate's own address on the NUC's LAN, the NUC's default gateway, not the NUC's address. Caddy takes the visitor's address from Cloudflare's `CF-Connecting-IP` only when the request comes from that address, and hands the backends exactly that one address in `X-Forwarded-For` (tracker row 71; test: `scripts/nuc/tests/edge-client-ip.test.sh`). The deploy scripts render `Caddyfile.tmpl` → `Caddyfile` at deploy time — you never need to edit the Caddyfile manually. For local dev, leave `FORTIGATE_LAN_IP` empty; Caddy will trust all RFC1918 ranges instead.
 
 ---
 

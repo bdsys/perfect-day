@@ -83,6 +83,10 @@ services:
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/1
+      # uvicorn believes X-Forwarded-For only from Docker's own networks: in production
+      # that is the Caddy edge, which sets it to the visitor's address (tracker row 71).
+      # Port 8000 is never published on the NUC, so nothing else can reach it.
+      FORWARDED_ALLOW_IPS: "172.16.0.0/12"
       <<: *storage-env
     # No dependency on the photo store: /readyz reports it, and a dependency would
     # let a plain `up` block the app on a store it is not using (tracker row 41).
