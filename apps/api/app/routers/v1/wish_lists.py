@@ -25,9 +25,13 @@ from app.services.wish_lists import (
     WishListOut,
     WishListPatch,
     WishListSummaryOut,
+    claim_item,
+    coming_up,
     item_out,
     load_item,
+    load_item_full,
     load_list,
+    undo_claim,
     wish_list_out,
 )
 
@@ -333,3 +337,103 @@ async def link_new(
     out = await wish_list_out(db, wl, caller=user, manager=True)
     await db.commit()
     return out
+
+
+async def _claimable_item(
+    db: AsyncSession, item_id: uuid.UUID, user: User
+) -> tuple[WishListItem, str | None]:
+    """The item and the caller's role; 404 unless the list is published and visible.
+
+    Claiming is not a write to the diary, so read-only diaries are fine.
+    """
+    item = await load_item(db, item_id)
+    wl, role = await _open_list(db, item.wish_list_id, user)
+    if wl.status != "published":
+        raise HTTPException(status_code=404, detail="not_found")
+    return item, role
+
+
+@router.post("/wish-list-items/{item_id}/claim", response_model=ItemOut)
+async def claim(
+    item_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db, scope="function"),
+) -> ItemOut:
+    item, role = await _claimable_item(db, item_id, user)
+    await claim_item(db, item.id, user=user)
+    out = item_out(await load_item_full(db, item.id), caller_id=user.id, manager=role != "viewer")
+    await db.commit()
+    return out
+
+
+@router.delete("/wish-list-items/{item_id}/claim", response_model=ItemOut)
+async def unclaim(
+    item_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db, scope="function"),
+) -> ItemOut:
+    item, role = await _claimable_item(db, item_id, user)
+    mine = (
+        await db.execute(
+            select(WishListClaim.id).where(
+                WishListClaim.item_id == item.id, WishListClaim.user_id == user.id
+            )
+        )
+    ).scalar_one_or_none()
+    if mine is None:
+        raise HTTPException(status_code=404, detail="claim_not_found")
+    await undo_claim(db, mine, user=user)
+    out = item_out(await load_item_full(db, item.id), caller_id=user.id, manager=role != "viewer")
+    await db.commit()
+    return out
+
+
+@router.delete("/wish-list-claims/{claim_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def release_claim(
+    claim_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db, scope="function"),
+) -> Response:
+    item_id = (
+        await db.execute(select(WishListClaim.item_id).where(WishListClaim.id == claim_id))
+    ).scalar_one_or_none()
+    if item_id is None:
+        raise HTTPException(status_code=404, detail="claim_not_found")
+    # Releasing is allowed on read-only diaries, like unpublishing.
+    item = await load_item(db, item_id)
+    await _manage_list(db, item.wish_list_id, user, writable=False)
+    await db.execute(delete(WishListClaim).where(WishListClaim.id == claim_id))
+    await db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/diaries/{diary_id}/coming-up")
+async def get_coming_up(
+    diary_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db, scope="function"),
+) -> dict[str, list[WishListSummaryOut]]:
+    diary, _ = await _get_diary_or_404(diary_id, user, db)
+    lists = await coming_up(db, diary)
+    counts = dict(
+        (
+            await db.execute(
+                select(WishListItem.wish_list_id, func.count())
+                .where(WishListItem.wish_list_id.in_([w.id for w in lists]))
+                .group_by(WishListItem.wish_list_id)
+            )
+        ).all()
+    )
+    return {
+        "wish_lists": [
+            WishListSummaryOut(
+                id=w.id,
+                diary_id=w.diary_id,
+                title=w.title,
+                list_date=w.list_date,
+                status=w.status,
+                item_count=counts.get(w.id, 0),
+            )
+            for w in lists
+        ]
+    }
