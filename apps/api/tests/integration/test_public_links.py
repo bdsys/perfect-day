@@ -120,7 +120,7 @@ async def test_unhandled_500_on_public_path_carries_headers(client):
 
     app = create_app()
 
-    @app.get("/v1/public/boom")
+    @app.get("/v1/public/x/boom")
     async def boom():
         raise RuntimeError("boom")
 
@@ -130,7 +130,7 @@ async def test_unhandled_500_on_public_path_carries_headers(client):
 
     transport = ASGITransport(app=app, raise_app_exceptions=False)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        r = await ac.get("/v1/public/boom")
+        r = await ac.get("/v1/public/x/boom")
         assert r.status_code == 500
         assert r.headers["x-robots-tag"] == "noindex, nofollow"
         assert r.headers["referrer-policy"] == "no-referrer"

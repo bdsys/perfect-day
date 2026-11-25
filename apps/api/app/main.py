@@ -68,6 +68,7 @@ def create_app() -> FastAPI:
         photo_imports,
         photos,
         profile,
+        public,
         rules,
         scan,
         sharing,
@@ -80,6 +81,7 @@ def create_app() -> FastAPI:
     app.include_router(sharing.router, prefix="/v1")
     app.include_router(sharing.invitee_router, prefix="/v1")
     app.include_router(wish_lists.router, prefix="/v1")
+    app.include_router(public.router, prefix="/v1")
     app.include_router(entries.router, prefix="/v1")
     app.include_router(calendar_events.router, prefix="/v1")
     app.include_router(integrations.router, prefix="/v1")
