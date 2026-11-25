@@ -1,6 +1,15 @@
 {
 	admin off
 	auto_https off
+	# Caddy's own logger (reverse_proxy dial errors, upstream down) records the request URI
+	# too, so it gets the same redaction as the site's access log below.
+	log {
+		format filter {
+			request>uri regexp ^/(p|v1/public)/[^/?]+ /${1}/[redacted]
+			request>headers>Referer delete
+			wrap json
+		}
+	}
 	servers {
 		# The FortiGate is the only hop trusted to say who the visitor is (tracker row 71).
 		# Its address on the NUC's LAN is the NUC's default gateway.
