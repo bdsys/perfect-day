@@ -415,15 +415,12 @@ async def get_coming_up(
 ) -> dict[str, list[WishListSummaryOut]]:
     diary, _ = await _get_diary_or_404(diary_id, user, db)
     lists = await coming_up(db, diary)
-    counts = dict(
-        (
-            await db.execute(
-                select(WishListItem.wish_list_id, func.count())
-                .where(WishListItem.wish_list_id.in_([w.id for w in lists]))
-                .group_by(WishListItem.wish_list_id)
-            )
-        ).all()
+    rows = await db.execute(
+        select(WishListItem.wish_list_id, func.count())
+        .where(WishListItem.wish_list_id.in_([w.id for w in lists]))
+        .group_by(WishListItem.wish_list_id)
     )
+    counts: dict[uuid.UUID, int] = {row[0]: row[1] for row in rows.all()}
     return {
         "wish_lists": [
             WishListSummaryOut(
