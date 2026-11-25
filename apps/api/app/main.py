@@ -14,6 +14,7 @@ from app.core.errors import (
     unhandled_exception_handler,
 )
 from app.core.logging import configure_logging
+from app.middleware.public_headers import PublicHeadersMiddleware
 from app.middleware.rate_limit import limiter
 from app.middleware.request_id import RequestIDMiddleware
 from app.routers import health
@@ -36,6 +37,7 @@ def create_app() -> FastAPI:
 
     # Middleware (outermost first)
     app.add_middleware(RequestIDMiddleware)
+    app.add_middleware(PublicHeadersMiddleware)
     if settings.env != "test":
         app.add_middleware(SlowAPIMiddleware)
     app.add_middleware(
@@ -66,9 +68,11 @@ def create_app() -> FastAPI:
         photo_imports,
         photos,
         profile,
+        public,
         rules,
         scan,
         sharing,
+        wish_lists,
     )
 
     app.include_router(auth.router, prefix="/v1")
@@ -76,6 +80,8 @@ def create_app() -> FastAPI:
     app.include_router(diaries.router, prefix="/v1")
     app.include_router(sharing.router, prefix="/v1")
     app.include_router(sharing.invitee_router, prefix="/v1")
+    app.include_router(wish_lists.router, prefix="/v1")
+    app.include_router(public.router, prefix="/v1")
     app.include_router(entries.router, prefix="/v1")
     app.include_router(calendar_events.router, prefix="/v1")
     app.include_router(integrations.router, prefix="/v1")

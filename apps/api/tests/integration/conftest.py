@@ -281,6 +281,7 @@ async def client(
         with (
             patch.object(_rl.auth_limiter, "_check_request_limit", new=_noop_check),
             patch.object(_rl.limiter, "_check_request_limit", new=_noop_check),
+            patch.object(_rl.public_limiter, "_check_request_limit", new=_noop_check),
         ):
             from app.main import create_app
 

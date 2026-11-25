@@ -26,6 +26,8 @@ class ProfilePatch(BaseModel):
     model_config = {"extra": "forbid"}
 
     temperature_unit: Literal["F", "C"] | None = None
+    # The name a shared wish list shows ("shared by"). Cannot be blank or null.
+    display_name: str | None = None
     # Absent: no change. Explicit null: use my initial.
     avatar_icon: str | None = None
 
@@ -42,6 +44,14 @@ class ProfilePatch(BaseModel):
         if v is None:
             raise ValueError("temperature_unit cannot be null")
         return v
+
+    @field_validator("display_name")
+    @classmethod
+    def _name_not_blank(cls, v: str | None) -> str:
+        name = (v or "").strip()
+        if not name or len(name) > 100:
+            raise ValueError("display_name must be 1 to 100 characters")
+        return name
 
 
 async def _lock(db: AsyncSession, user: User) -> None:
@@ -73,6 +83,8 @@ async def patch_me(
         user.avatar_icon = body.avatar_icon
     if "temperature_unit" in fields and body.temperature_unit is not None:
         user.temperature_unit = body.temperature_unit
+    if "display_name" in fields and body.display_name is not None:
+        user.display_name = body.display_name
     await _commit_then_delete(db, old_key)
     return user_profile(user)
 

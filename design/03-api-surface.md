@@ -17,7 +17,7 @@ All endpoints prefixed `/v1/`. JSON. Auth via `Authorization: Bearer <jwt>` unle
 | POST | `/v1/auth/logout` | Revoke current refresh token. |
 | POST | `/v1/auth/logout-all` | Revoke all of the user's refresh tokens. |
 | GET | `/v1/auth/me` | Current user profile: `id`, `email`, `display_name`, `subscription_tier`, `is_admin`, `email_verified_at`, `temperature_unit` (`F`/`C`), `avatar` (`{kind: "photo"}`, `{kind: "icon", name}` or `{kind: "initial"}`) and `deletion_scheduled_for` (the deadline while the account is pending deletion, else null). Also served to an account pending deletion. |
-| PATCH | `/v1/auth/me` | Save profile choices: `temperature_unit` (`F`/`C`, not null) and `avatar_icon` (a preset name; explicit `null` = use my initial, which also removes a photo). Unknown fields are refused. Returns the profile. |
+| PATCH | `/v1/auth/me` | Save profile choices: `display_name` (1 to 100 characters after trimming, not null; the name a shared wish list shows), `temperature_unit` (`F`/`C`, not null) and `avatar_icon` (a preset name; explicit `null` = use my initial, which also removes a photo). Unknown fields are refused. Returns the profile. |
 | PUT | `/v1/auth/me/avatar` | Set the profile photo; the body is the raw image bytes (same types and size cap as `POST /v1/photos`). Replaces any icon. 413 over the cap, 415 `unsupported_mime`. Returns the profile. |
 | GET | `/v1/auth/me/avatar` | The caller's own profile photo as `image/jpeg` (`Cache-Control: private, no-store`); 404 `not_found` without one. |
 | DELETE | `/v1/auth/me/avatar` | Remove the photo or icon and go back to the initial. Returns the profile. |

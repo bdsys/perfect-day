@@ -108,5 +108,29 @@ check_absent "a match prints none" "WARNING" "${OUT}"
 OUT="$(FORTIGATE_LAN_IP= PD_DEFAULT_GATEWAY=192.0.2.254 bash "${REPO}/scripts/nuc/render-caddyfile.sh" 2>&1)"
 check_absent "the dev fallback prints none" "WARNING" "${OUT}"
 
+echo "Public link tokens stay out of the access log:"
+ask_path() { # ask_path <host> <path>
+    curl -s --max-time 5 -o /dev/null -H "Host: $1" "http://127.0.0.1:${PORT}$2"
+}
+ask_path "${WEB}" "/p/SECRETTOKEN?x=1"
+ask_path "${API}" "/v1/public/SECRETTOKEN/claims"
+for _ in $(seq 1 25); do
+    EDGE_LOG="$(docker logs "${NET}-edge" 2>&1)"
+    case "${EDGE_LOG}" in *'/v1/public/[redacted]'*) break ;; esac
+    sleep 0.2
+done
+check_absent "the access log never holds a public token" "SECRETTOKEN" "${EDGE_LOG}"
+check "the log still holds /p/[redacted]" "yes" "$(case "${EDGE_LOG}" in *'/p/[redacted]'*) echo yes ;; *) echo no ;; esac)"
+check "and /v1/public/[redacted]" "yes" "$(case "${EDGE_LOG}" in *'/v1/public/[redacted]'*) echo yes ;; *) echo no ;; esac)"
+
+echo "Public link tokens stay out of Caddy's error log (upstream down):"
+docker rm -f "${NET}-up" >/dev/null
+ask_path "${WEB}" "/p/SECRETTOKEN2?x=1"
+ask_path "${API}" "/v1/public/SECRETTOKEN2/x"
+sleep 1
+EDGE_LOG="$(docker logs "${NET}-edge" 2>&1)"
+check "the upstream errors were logged at all" "yes" "$(case "${EDGE_LOG}" in *'"level":"error"'*) echo yes ;; *) echo no ;; esac)"
+check_absent "an upstream error never holds a public token" "SECRETTOKEN2" "${EDGE_LOG}"
+
 echo
 if [ "${FAILS}" -eq 0 ]; then echo "All edge client-IP tests passed."; else echo "${FAILS} failed."; exit 1; fi

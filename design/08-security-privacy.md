@@ -97,7 +97,8 @@ Day 28:  deletion_grace notification.
 Day 30:  Celery process_hard_deletes():
            delete entry_photos, enrichments, events, llm_generations,
            entries, entry_edit_diffs, scan_runs, backfill_runs,
-           diary_permissions, invitations, diary_calendar_filters.
+           diary_permissions, invitations, diary_calendar_filters,
+           wish lists, their items, claims and public links.
            Photos deleted from the object store + photos table only if no other diary
            links them (cross-diary check: an entry_photos row on an
            entry in another diary keeps the photo).
@@ -116,6 +117,8 @@ Day 0:   deleted_at set, hard_delete_after = now() + 7d.
 Day 6:   deletion_grace notification (last chance).
 Day 7:   Celery process_hard_deletes():
            Hard delete all owned diaries (cascade per diary flow above).
+           Delete the account's signed-in wish-list claims on other people's
+           diaries (guest claims carry no account and stay with the list).
            Delete notifications, notification_preferences, social_identities,
            oauth_tokens, magic_link_tokens, refresh_tokens.
            Scrub the object store: delete everything under {user_id}/* prefix.
@@ -148,6 +151,35 @@ Cross-diary photo check: the `photos` row and its stored objects are deleted onl
 - **Link in the URL (decided: logged).** Invite links carry the raw token in the URL path (`/invite/{token}`), so it can appear in logs. Three places record it: the proxy's access log, uvicorn's own access log (`apps/api/Dockerfile` line 18 and `docker-compose.yml` line 94 run it with access logging on), and the API's error handler (`apps/api/app/core/errors.py`, which logs `request.url.path`). It is single-use, valid 7 days and bound to the invited email. It stays in these logs unredacted (Andrew, 2026-11-23: "it's OK to log").
 - **What people see.** Viewers see published entries and their photos only, with no AI badge. Coordinates go to the owner only. Removing a person, or a person leaving, ends access at once. While the owner's deletion is pending, other members see the chosen recipient's name (their email when the recipient has no display name) in the deletion notice.
 - **Limits and downgrade.** Enforced in the API, per diary, members plus pending invites: Free 3, Plus 10, Family unlimited; editors Family only. On a downgrade nobody loses access; an editor whose owner is not on Family acts as a viewer.
+
+## Tokens in logs (built 2026-11-24)
+
+Two kinds of token ride in a URL path. They get opposite rulings because they differ in how long and how widely they work.
+
+| | Diary invite (`/invite/{token}`, `/v1/invitations/{token}`) | Link-only page (`/p/{token}`, `/v1/public/{token}/...`) |
+|---|---|---|
+| Lifetime | One use, 7 days | Months |
+| Who can use it | One invited email | Anyone who has the link |
+| In logs | Logged unredacted (Andrew, 2026-11-23) | Redacted |
+
+A link-only token left in a log would be a working key for months, so none of the five places that record paths keeps it:
+
+- Caddy's access log rewrites `/p/{token}` and `/v1/public/{token}` to `.../[redacted]` (query string included) and drops the `Referer` header, in case a browser ignores `no-referrer`.
+- uvicorn's access log goes through `PublicTokenAccessFilter` (`apps/api/app/core/redact.py`).
+- `RequestIDMiddleware` binds the redacted path into every structlog line.
+- The unhandled-exception handler logs the redacted path.
+- slowapi's "ratelimit ... exceeded at endpoint" warning: the public limiter counts per route (`key_style="endpoint"`), so it names the view function, not the URL; the app-wide limiter still counts per URL, and `PublicTokenArgsFilter` on the `slowapi` logger redacts its path.
+
+`scripts/nuc/tests/edge-client-ip.test.sh`, `apps/api/tests/unit/test_redact.py` and `apps/api/tests/integration/test_public_rate_limit.py` check each place.
+
+## Link-only pages: data inventory (wish lists, built 2026-11-24)
+
+- **What is stored.** Wish lists (name, date, an optional link to a list kept elsewhere), their items (name, store link, note), and claims. A claim made by a guest who is not signed in holds the name the guest typed. A claim made by a signed-in person is linked to their account.
+- **Link tokens.** Each public link stores the SHA-256 hash of its token, used to look the link up, and the token itself as AES-GCM ciphertext, so the owner can see and copy the link again. The raw token exists in plain text only in the response that shows it to the owner and in the link itself.
+- **Claim secrets.** A guest's un-claim secret (kept in their browser) is stored only as a hash.
+- **Who sees what.** Anyone with the link sees lists and items, and for each item only "taken" (or a count for "as many as you like" items), never who. The owner and editors see every claim with its name.
+- **Deletion.** Diary hard delete removes the diary's lists, items, claims and public links. Deleting a claimer's account removes their signed-in claims. Guest claims carry no account, so only the list's deletion (or a parent releasing the claim) removes them.
+- **Logs and edge.** Tokens stay out of Caddy's, uvicorn's and the API's logs (above). The FortiGate and Cloudflare are reviewed by hand before each deploy: `deploy/cloudflare.md` and `deploy/nuc.md` § Public pages.
 
 ## GDPR/CCPA posture
 

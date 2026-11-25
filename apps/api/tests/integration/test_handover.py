@@ -948,3 +948,44 @@ async def test_display_sweep_does_not_point_a_moved_photo_at_the_old_prefix(
     r = await client.get(f"/v1/photos/{pid}", params={"kind": "full"}, headers=owner)
     assert r.status_code == 200, r.text
     assert r.headers["content-type"] == "image/jpeg"
+
+
+@pytest.mark.asyncio
+async def test_handover_keeps_wish_lists(client, db_session):
+    from app.services.public_links import resolve_link
+    from app.workers.hard_delete import hard_delete_user
+
+    owner, did = await _owner_with_diary(client, "t7wl@example.com")
+    await _add_member(client, owner, did, "t7wl-m@example.com")
+    from app.core.database import get_session_factory
+
+    async with get_session_factory()() as s:
+        await s.execute(
+            update(User).where(User.email == "t7wl@example.com").values(display_name="Mum")
+        )
+        await s.commit()
+    wl = (
+        await client.post(
+            f"/v1/diaries/{did}/wish-lists",
+            json={"title": "T", "list_date": "2026-12-14"},
+            headers=owner,
+        )
+    ).json()
+    r = await client.post(f"/v1/wish-lists/{wl['id']}/publish", headers=owner)
+    assert r.status_code == 200, r.text
+    token = r.json()["link"]["token"]
+    m = await _user(db_session, "t7wl-m@example.com")
+
+    await _delete_account(client, owner, {did: m.id})
+    owner_id = await _make_due(db_session, "t7wl@example.com")
+    await hard_delete_user(owner_id)
+
+    db_session.expire_all()
+    from app.models import WishList
+
+    kept = (
+        await db_session.execute(select(WishList).where(WishList.id == uuid.UUID(wl["id"])))
+    ).scalar_one()
+    assert str(kept.diary_id) == did
+    _, diary = await resolve_link(db_session, token)
+    assert diary.owner_user_id == m.id

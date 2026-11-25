@@ -5,6 +5,8 @@ import uuid
 import structlog
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from app.core.redact import redact_path
+
 
 class RequestIDMiddleware:
     def __init__(self, app: ASGIApp) -> None:
@@ -19,7 +21,9 @@ class RequestIDMiddleware:
         request_id = headers.get(b"x-request-id", b"").decode() or str(uuid.uuid4())
 
         structlog.contextvars.clear_contextvars()
-        structlog.contextvars.bind_contextvars(request_id=request_id, path=scope.get("path", ""))
+        structlog.contextvars.bind_contextvars(
+            request_id=request_id, path=redact_path(scope.get("path", ""))
+        )
 
         async def send_with_header(message):
             if message["type"] == "http.response.start":

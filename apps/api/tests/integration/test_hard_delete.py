@@ -109,3 +109,129 @@ class TestHardDeleteUser:
         me = await client.get("/v1/auth/me", headers=auth)
         assert me.status_code == 200
         assert me.json()["deletion_scheduled_for"] == r.json()["deletion_scheduled_for"]
+
+
+class TestHardDeleteWishLists:
+    async def test_hard_delete_removes_wish_lists_and_links(self, client, db_session):
+        import uuid
+
+        from sqlalchemy import func
+
+        from app.models import (
+            Diary,
+            PublicLink,
+            User,
+            WishList,
+            WishListClaim,
+            WishListItem,
+        )
+        from app.workers.hard_delete import hard_delete_diary
+
+        token, _ = await _register(client, "hdwl@example.com")
+        auth = {"Authorization": f"Bearer {token}"}
+        diary = (
+            await client.post("/v1/diaries", json={"name": "D", "timezone": "UTC"}, headers=auth)
+        ).json()
+        did = uuid.UUID(diary["id"])
+        await db_session.execute(
+            User.__table__.update()
+            .where(User.email == "hdwl@example.com")
+            .values(display_name="Mum")
+        )
+        await db_session.commit()
+        wl = (
+            await client.post(
+                f"/v1/diaries/{diary['id']}/wish-lists",
+                json={"title": "T", "list_date": "2026-12-14"},
+                headers=auth,
+            )
+        ).json()
+        item = (
+            await client.post(f"/v1/wish-lists/{wl['id']}/items", json={"name": "I"}, headers=auth)
+        ).json()
+        r = await client.post(f"/v1/wish-lists/{wl['id']}/publish", headers=auth)
+        assert r.status_code == 200, r.text
+        db_session.add(WishListClaim(item_id=uuid.UUID(item["id"]), name="Gran"))
+        await db_session.commit()
+
+        await client.delete(f"/v1/diaries/{diary['id']}", headers=auth)
+        await hard_delete_diary(did)
+
+        db_session.expire_all()
+        for model, col in (
+            (WishList, WishList.diary_id == did),
+            (PublicLink, PublicLink.diary_id == did),
+            (WishListItem, WishListItem.wish_list_id == uuid.UUID(wl["id"])),
+            (WishListClaim, WishListClaim.item_id == uuid.UUID(item["id"])),
+        ):
+            n = (
+                await db_session.execute(select(func.count()).select_from(model).where(col))
+            ).scalar_one()
+            assert n == 0, model.__name__
+        assert (
+            await db_session.execute(select(Diary).where(Diary.id == did))
+        ).scalar_one_or_none() is None
+
+
+class TestHardDeleteClaimer:
+    async def test_deleting_a_claimer_removes_only_their_claim(self, client, db_session):
+        import uuid
+
+        from sqlalchemy import update
+
+        from app.models import User, WishListClaim
+        from app.workers.hard_delete import hard_delete_user
+        from tests.fixtures.factories import mark_due_for_hard_delete
+        from tests.integration.sharing_helpers import accept, invite
+
+        otok, _ = await _register(client, "hdcl-o@example.com")
+        owner = {"Authorization": f"Bearer {otok}"}
+        vtok, _ = await _register(client, "hdcl-v@example.com")
+        viewer = {"Authorization": f"Bearer {vtok}"}
+        diary = (
+            await client.post("/v1/diaries", json={"name": "D", "timezone": "UTC"}, headers=owner)
+        ).json()
+        inv = await invite(client, owner, diary["id"], "hdcl-v@example.com")
+        assert (await accept(client, viewer, inv["token"])).status_code == 200
+        await db_session.execute(
+            update(User).where(User.email == "hdcl-o@example.com").values(display_name="Mum")
+        )
+        await db_session.commit()
+        wl = (
+            await client.post(
+                f"/v1/diaries/{diary['id']}/wish-lists",
+                json={"title": "T", "list_date": "2026-12-14"},
+                headers=owner,
+            )
+        ).json()
+        a = (
+            await client.post(f"/v1/wish-lists/{wl['id']}/items", json={"name": "A"}, headers=owner)
+        ).json()
+        b = (
+            await client.post(f"/v1/wish-lists/{wl['id']}/items", json={"name": "B"}, headers=owner)
+        ).json()
+        await client.post(f"/v1/wish-lists/{wl['id']}/publish", headers=owner)
+        v = (
+            await db_session.execute(select(User).where(User.email == "hdcl-v@example.com"))
+        ).scalar_one()
+        db_session.add_all(
+            [
+                WishListClaim(item_id=uuid.UUID(a["id"]), user_id=v.id),
+                WishListClaim(item_id=uuid.UUID(b["id"]), name="Gran"),
+            ]
+        )
+        await db_session.commit()
+
+        await client.delete("/v1/auth/account", headers=viewer)
+        await mark_due_for_hard_delete(db_session, v)
+        await hard_delete_user(v.id)
+
+        db_session.expire_all()
+        rows = (await db_session.execute(select(WishListClaim))).scalars().all()
+        assert [(str(c.item_id), c.name) for c in rows] == [(b["id"], "Gran")]
+        r = await client.get(f"/v1/wish-lists/{wl['id']}", headers=owner)
+        assert r.status_code == 200
+        items = {i["name"]: i for i in r.json()["items"]}
+        assert items["A"]["taken"] is False
+        assert items["A"]["claim_count"] == 0
+        assert items["B"]["claim_count"] == 1

@@ -249,6 +249,9 @@ class Diary(TimestampMixin, SoftDeleteMixin, Base):
     auto_creation_rules: Mapped[list[AutoCreationRule]] = relationship(
         back_populates="diary", cascade="all, delete-orphan"
     )
+    wish_lists: Mapped[list[WishList]] = relationship(
+        back_populates="diary", cascade="all, delete-orphan"
+    )
 
     __table_args__ = (
         UniqueConstraint("owner_user_id", "slug", name="uq_diaries_owner_slug"),
@@ -306,6 +309,120 @@ class Invitation(TimestampMixin, Base):
     diary: Mapped[Diary] = relationship(back_populates="invitations")
 
     __table_args__ = (CheckConstraint("role IN ('viewer','editor')", name="ck_invitations_role"),)
+
+
+class PublicLink(TimestampMixin, Base):
+    """A link-only public page. Only the token's SHA-256 is used for lookup; the
+    token itself is kept encrypted so the owner can copy the link again."""
+
+    __tablename__ = "public_links"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    diary_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("diaries.id", ondelete="CASCADE"), nullable=False
+    )
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    # Polymorphic target, so no FK: the target's own delete removes its links.
+    target_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    token_hash: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    token_encrypted: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        CheckConstraint("kind IN ('wish_list')", name="ck_public_links_kind"),
+        # One active link per target; also serves the active-link lookup.
+        Index(
+            "uq_public_links_active_target",
+            "kind",
+            "target_id",
+            unique=True,
+            postgresql_where=text("revoked_at IS NULL"),
+        ),
+    )
+
+
+class WishList(TimestampMixin, Base):
+    __tablename__ = "wish_lists"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    diary_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("diaries.id", ondelete="CASCADE"), nullable=False
+    )
+    title: Mapped[str] = mapped_column(String(120), nullable=False)
+    list_date: Mapped[date] = mapped_column(Date, nullable=False)
+    pasted_list_url: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(10), nullable=False, default="draft")
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+
+    diary: Mapped[Diary] = relationship(back_populates="wish_lists")
+    items: Mapped[list[WishListItem]] = relationship(
+        back_populates="wish_list",
+        cascade="all, delete-orphan",
+        order_by="WishListItem.position",
+    )
+
+    __table_args__ = (
+        CheckConstraint("status IN ('draft','published')", name="ck_wish_lists_status"),
+        Index("ix_wish_lists_diary_id", "diary_id"),
+    )
+
+
+class WishListItem(TimestampMixin, Base):
+    __tablename__ = "wish_list_items"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    wish_list_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("wish_lists.id", ondelete="CASCADE"), nullable=False
+    )
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    url: Mapped[str | None] = mapped_column(Text)
+    note: Mapped[str | None] = mapped_column(String(500))
+    many: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+
+    wish_list: Mapped[WishList] = relationship(back_populates="items")
+    claims: Mapped[list[WishListClaim]] = relationship(
+        back_populates="item", cascade="all, delete-orphan", order_by="WishListClaim.created_at"
+    )
+
+    __table_args__ = (Index("ix_wish_list_items_wish_list_id", "wish_list_id"),)
+
+
+class WishListClaim(Base):
+    __tablename__ = "wish_list_claims"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    item_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("wish_list_items.id", ondelete="CASCADE"), nullable=False
+    )
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE")
+    )
+    name: Mapped[str | None] = mapped_column(String(60))
+    secret_hash: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    item: Mapped[WishListItem] = relationship(back_populates="claims")
+    user: Mapped[User | None] = relationship()
+
+    __table_args__ = (
+        CheckConstraint("user_id IS NOT NULL OR name IS NOT NULL", name="ck_wish_list_claims_who"),
+        Index(
+            "uq_wish_list_claims_item_user",
+            "item_id",
+            "user_id",
+            unique=True,
+            postgresql_where=text("user_id IS NOT NULL"),
+        ),
+        Index("ix_wish_list_claims_item_id", "item_id"),
+    )
 
 
 # ---------------------------------------------------------------------------

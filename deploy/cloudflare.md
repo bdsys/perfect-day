@@ -224,6 +224,59 @@ Browsers do not trust it; only Cloudflare's edge does.
 
 ---
 
+## Public pages (`/p/`, `/v1/public/`): edge review before the wish-list deploy
+
+Wish lists are the app's first link-only public pages: web `/p/{token}` and API `/v1/public/{token}`. Anyone with the link can open them, and guests who are not signed in can claim items. The API counts per IP and per route: 60 page loads a minute, 20 claims an hour and 20 un-claims (undos) an hour, however many items or lists those requests touch. Those counters live in the API process's memory, so an API restart resets them. Request bodies on the public POSTs are tiny JSON (`{"name": "..."}`, a few hundred bytes). The app sends `Cache-Control: no-store`, `X-Robots-Tag` and `Referrer-Policy: no-referrer` on these pages, and keeps the token out of Caddy's and the API's logs (`design/08-security-privacy.md` § Tokens in logs).
+
+Work through this before the first deploy of the wish-list code. If it shows that strangers need stricter rules than family, the spec's fallback is its own hostname (Approach B, `docs/superpowers/specs/2026-11-23-invitations-and-wish-lists-design.md`).
+
+Do not rely on any rule count or limit written down here. Read what the free plan offers in the dashboard on the day.
+
+### Checklist (Cloudflare dashboard, zone `andrewlass.com`)
+
+- [ ] **WAF managed rules.** Security > WAF. Note which managed rule sets are on for this zone and whether any of them is set to block or challenge a `POST` with a small JSON body to `perfectday-api.andrewlass.com/v1/public/...`.
+  - Managed rules that are on today: ______________________
+- [ ] **Existing custom and rate-limiting rules.** List every rule that matches `/p/` or `/v1/public/` (or all paths on the two hostnames).
+  - Rules found: ______________________
+- [ ] **What the free plan offers today.** Read, from the dashboard, how many custom rules and rate-limiting rules this zone may have and what limits they allow (period, counting key).
+  - Offered on (date) ________: ______________________
+- [ ] **Rate-limit rule on `/v1/public/`?** Decide whether to add one ahead of the API's own limits. It would survive an API restart, which the API's in-memory counters do not.
+  - Decision and settings (path, rate, period, action): ______________________
+- [ ] **Nothing caches `/p/*` or `/v1/public/*`.** Rules > Cache Rules, plus any page rules and "Cache Everything" settings. The app sends `no-store`; a cache rule that overrides it would serve one guest's page, with claim state, to another.
+  - Cache rules found and what they match: ______________________
+- [ ] **Cloudflare does not strip `X-Robots-Tag` or `Referrer-Policy`.** Check the transform rules, then confirm with the `curl -sI` check below.
+  - Transform rules found: ______________________
+
+### After the deploy
+
+- [ ] On a phone on cellular (not the home Wi-Fi), open a `/p/` link and claim then un-claim an item.
+- [ ] `ssh-nuc 'docker logs perfect-day-edge-1 2>&1 | grep "/p/" | tail -5'` shows `/p/[redacted]` and no token.
+- [ ] **A refused request logs no token.** From a machine off the home network, load a public link 61 times in quick succession (a dead token is fine, e.g. `deadtoken123`), then read the API's log on the NUC:
+
+  ```bash
+  for i in $(seq 61); do curl -s -o /dev/null -w '%{http_code} ' 'https://perfectday-api.andrewlass.com/v1/public/deadtoken123'; done; echo
+  # Expect: 60 x 404, then 429 at the end.
+  ssh-nuc 'docker logs perfect-day-api-1 2>&1 | grep -c deadtoken123'
+  # Expect: 0. Any other number means the token reached the API's log.
+  ```
+
+  - Result: ______________________
+- [ ] Response headers, from a machine off the home network (use a real link):
+
+  ```bash
+  curl -sI 'https://perfectday.andrewlass.com/p/<token>' | grep -i -E 'cache-control|x-robots-tag|referrer-policy|cf-cache-status'
+  # Expect: Cache-Control: no-store; X-Robots-Tag with noindex; Referrer-Policy: no-referrer;
+  # cf-cache-status BYPASS or DYNAMIC (not HIT)
+  ```
+
+### Known items to weigh
+
+1. Google's sign-in script loads only on the pages with the Google button (login and register), not on `/p/` pages. The root layout still makes the app's own sign-in refresh call there (to the API, not to a third party).
+2. The per-IP limits live in API memory, so a restart resets them, and they are per process. The Cloudflare rule above is the only limit that survives a restart.
+   - What I decided about each: ______________________
+
+---
+
 ## Setup sequence summary (NUC)
 
 1. DNS: the three proxied A records in Section 1.

@@ -1,6 +1,11 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
+import Script from 'next/script'
+import { useCallback, useEffect, useRef } from 'react'
+
+// Loaded here, not in the root layout, so pages whose URL is a secret (/p/{token})
+// never load Google's script. Next loads a <Script> src once however often it mounts.
+const GSI_SRC = 'https://accounts.google.com/gsi/client'
 
 interface GoogleSignInButtonProps {
   onCredential: (idToken: string) => void
@@ -10,47 +15,53 @@ export default function GoogleSignInButton({ onCredential }: GoogleSignInButtonP
   const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID
   const divRef = useRef<HTMLDivElement>(null)
   const onCredentialRef = useRef(onCredential)
+  const renderedRef = useRef(false)
   useEffect(() => { onCredentialRef.current = onCredential }, [onCredential])
 
-  useEffect(() => {
-    if (!clientId || !divRef.current) return
+  // Renders Google's button once window.google is there; true when it has.
+  const tryRender = useCallback((): boolean => {
+    if (renderedRef.current) return true
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const google = (window as any).google
+    if (!clientId || !divRef.current || !google?.accounts?.id) return false
+    google.accounts.id.initialize({
+      client_id: clientId,
+      callback: (response: { credential: string }) => {
+        onCredentialRef.current(response.credential)
+      },
+    })
+    google.accounts.id.renderButton(divRef.current, {
+      type: 'standard',
+      theme: 'outline',
+      size: 'large',
+      text: 'continue_with',
+    })
+    renderedRef.current = true
+    return true
+  }, [clientId])
 
-    // Poll for window.google to be available (GSI script loads async)
+  useEffect(() => {
+    if (!clientId) return
+
+    // Poll for window.google too: onReady covers a load slower than this.
     const maxWaitMs = 3000
     const intervalMs = 100
     let elapsed = 0
 
     const timer = setInterval(() => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const google = (window as any).google
-      if (google?.accounts?.id) {
-        clearInterval(timer)
-        google.accounts.id.initialize({
-          client_id: clientId,
-          callback: (response: { credential: string }) => {
-            onCredentialRef.current(response.credential)
-          },
-        })
-        if (divRef.current) {
-          google.accounts.id.renderButton(divRef.current, {
-            type: 'standard',
-            theme: 'outline',
-            size: 'large',
-            text: 'continue_with',
-          })
-        }
-      } else {
-        elapsed += intervalMs
-        if (elapsed >= maxWaitMs) {
-          clearInterval(timer)
-        }
-      }
+      elapsed += intervalMs
+      if (tryRender() || elapsed >= maxWaitMs) clearInterval(timer)
     }, intervalMs)
 
     return () => clearInterval(timer)
-  }, [clientId])
+  }, [clientId, tryRender])
 
   if (!clientId) return null
 
-  return <div ref={divRef} style={{ width: '100%' }} />
+  return (
+    <>
+      <Script src={GSI_SRC} strategy="afterInteractive" onReady={() => { tryRender() }} />
+      <div ref={divRef} style={{ width: '100%' }} />
+    </>
+  )
 }

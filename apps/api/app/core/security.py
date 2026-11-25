@@ -99,3 +99,12 @@ def decrypt_oauth_token(ciphertext: bytes) -> str:
     key = _get_oauth_key()
     nonce, ct = ciphertext[:12], ciphertext[12:]
     return AESGCM(key).decrypt(nonce, ct, None).decode()
+
+
+def encrypt_secret(plain: str) -> bytes:
+    """Encrypt a short secret (e.g. a public link token) with the AES-GCM key."""
+    return encrypt_oauth_token(plain)
+
+
+def decrypt_secret(blob: bytes) -> str:
+    return decrypt_oauth_token(blob)
