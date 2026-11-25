@@ -51,7 +51,7 @@ B1 (NUC bootstrap) → B1.5 (deploy key) → B2 (secrets) → B3 (first deploy)
 
 ## Phase A — Third-party account setup
 
-Do these first. They unlock everything in Phase B. All API keys are stored only in your password manager and on the NUC at `/etc/perfect-day/app.env` (mode 600).
+Do these first. They unlock everything in Phase B. All API keys are stored only in your password manager and on the NUC at `/etc/perfect-day/app.env` (mode 640, owner `root:docker`, so Compose can read it).
 
 ### A1 — Cloudflare: hand over `andrewlass.com` and create DNS records
 
@@ -171,7 +171,7 @@ The script will prompt for:
 - `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ZONE_ID` — from [A2](#a2--cloudflare-create-app-dns-records-and-ddns-token) (optional, for DDNS sidecar)
 - `FORTIGATE_LAN_IP` — the FortiGate's own address on the NUC's LAN: the address Cloudflare's traffic arrives from, which is the NUC's default gateway (`ip route show default`). Not the NUC's address. The Caddy edge trusts `CF-Connecting-IP` only from this address, and passes the visitor's address to the API, whose rate limits key on it (tracker row 71). A wrong value makes every visitor look like the FortiGate, so one person can use up everyone's login attempts; `render-caddyfile.sh` warns at each deploy if it isn't the default gateway. Change it with `sudo python3 scripts/nuc/lib/envfile.py set /etc/perfect-day/app.env FORTIGATE_LAN_IP <address>`, then deploy. Leave empty for local dev (falls back to RFC1918 `private_ranges`).
 
-Auto-generates all crypto keys. Output: `/etc/perfect-day/app.env` (mode 600).
+Auto-generates all crypto keys. Output: `/etc/perfect-day/app.env` (mode 640, `root:docker`).
 
 > **⚠️ Back up `/etc/perfect-day/app.env` to your password manager immediately after this step.** If the disk dies without a backup, all encrypted OAuth tokens become permanently unreadable.
 
