@@ -145,6 +145,8 @@ services:
         NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${NEXT_PUBLIC_GOOGLE_CLIENT_ID:-}
     environment:
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+      # The server side of /p/[token] calls the API inside Docker, not through the public name.
+      API_INTERNAL_URL: http://api:8000
     depends_on:
       - api
     restart: unless-stopped
