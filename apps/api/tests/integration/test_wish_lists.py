@@ -248,6 +248,29 @@ async def test_link_not_returned_to_viewers(client):
     assert "token" not in r.text
 
 
+async def test_shared_by_returned_to_managers_only(client):
+    """Managers see the owner's name as people with the link see it; viewers never do."""
+    owner, did = await _owner(client, "wl9s-o@example.com", tier="family", name="  Mum Lass ")
+    editor = await _member(client, owner, did, "wl9s-e@example.com", role="editor")
+    await _set_display_name("wl9s-e@example.com", "Dad")
+    viewer = await _member(client, owner, did, "wl9s-v@example.com")
+    wl = await _new_list(client, owner, did)
+    await _add_item(client, owner, wl["id"])
+    r = await client.post(f"/v1/wish-lists/{wl['id']}/publish", headers=owner)
+    assert r.json()["shared_by"] == "Mum Lass"
+    token = await _token_of(client, owner, wl["id"])
+    public = (await client.get(f"/v1/public/{token}")).json()["wish_list"]["shared_by"]
+    for who in (owner, editor):
+        r = await client.get(f"/v1/wish-lists/{wl['id']}", headers=who)
+        assert r.json()["shared_by"] == public == "Mum Lass"
+    r = await client.get(f"/v1/wish-lists/{wl['id']}", headers=viewer)
+    assert r.json()["shared_by"] is None
+    assert "Mum Lass" not in r.text
+    await _set_display_name("wl9s-o@example.com", "   ")
+    r = await client.get(f"/v1/wish-lists/{wl['id']}", headers=owner)
+    assert r.json()["shared_by"] is None
+
+
 async def test_claims_serialized_by_role(client, db_session):
     owner, did = await _owner(client, "wl10-o@example.com")
     viewer = await _member(client, owner, did, "wl10-v@example.com")

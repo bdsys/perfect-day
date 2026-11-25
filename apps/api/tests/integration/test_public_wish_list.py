@@ -220,3 +220,15 @@ async def test_public_claim_name_validation(client, name):
     n = await client.get(f"/v1/public/{token}")
     assert n.json()["wish_list"]["items"][0]["claim_count"] == 0
     assert WishListClaim  # imported for clarity of the model under test
+
+
+async def test_public_claim_huge_name_refused_by_the_model(client):
+    """A body-size bound before the service's 1-60 rule: 10 000 characters never reach it."""
+    owner, did = await _owner(client, "pw7-huge@example.com")
+    _, (item,), token = await _published(client, owner, did, {"name": "Lego"})
+    r = await client.post(
+        f"/v1/public/{token}/items/{item['id']}/claims", json={"name": "x" * 10_000}
+    )
+    assert r.status_code == 422, r.text
+    assert r.json()["error"]["code"] == "validation_error"
+    _assert_headers(r)

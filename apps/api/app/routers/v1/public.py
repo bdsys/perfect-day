@@ -11,15 +11,14 @@ from datetime import date
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
-from pydantic import BaseModel
-from sqlalchemy import select
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.middleware.rate_limit import PUBLIC_READ_LIMIT, PUBLIC_WRITE_LIMIT, public_limiter
-from app.models import Diary, User, WishList
+from app.models import Diary, WishList
 from app.services.public_links import LINK_INACTIVE, link_expired, resolve_link
-from app.services.wish_lists import claim_item, load_list, undo_claim
+from app.services.wish_lists import claim_item, load_list, shared_by_name, undo_claim
 
 router = APIRouter(prefix="/public", tags=["public"])
 
@@ -48,7 +47,8 @@ class PublicPageOut(BaseModel):
 
 
 class PublicClaimIn(BaseModel):
-    name: str
+    # A body-size bound only; claim_item enforces 1-60 characters after trimming.
+    name: str = Field(max_length=200)
 
 
 class PublicClaimOut(BaseModel):
@@ -76,10 +76,7 @@ async def read_public_page(
     request: Request, token: str, db: AsyncSession = Depends(get_db, scope="function")
 ) -> PublicPageOut:
     wl, diary = await _live_list(db, token)
-    owner = (
-        await db.execute(select(User).where(User.id == diary.owner_user_id))
-    ).scalar_one_or_none()
-    shared_by = ((owner.display_name or "").strip() or None) if owner is not None else None
+    shared_by = await shared_by_name(db, diary.id)
     items = []
     for i in wl.items:
         n = len(i.claims)

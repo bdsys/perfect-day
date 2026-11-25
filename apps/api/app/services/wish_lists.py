@@ -115,6 +115,9 @@ class WishListOut(BaseModel):
     status: str
     items: list[ItemOut]
     link: LinkOut | None = None
+    # Managers only: the name people with the link see ("Shared by ..."), as on the
+    # public page. None for viewers, and when the owner has no name.
+    shared_by: str | None = None
 
 
 class WishListSummaryOut(BaseModel):
@@ -177,15 +180,29 @@ def item_out(item: WishListItem, *, caller_id: uuid.UUID, manager: bool) -> Item
     )
 
 
+async def shared_by_name(db: AsyncSession, diary_id: uuid.UUID) -> str | None:
+    """The diary owner's name as people with a link see it. Never an email address."""
+    name = (
+        await db.execute(
+            select(User.display_name)
+            .join(Diary, Diary.owner_user_id == User.id)
+            .where(Diary.id == diary_id)
+        )
+    ).scalar_one_or_none()
+    return (name or "").strip() or None
+
+
 async def wish_list_out(
     db: AsyncSession, wl: WishList, *, caller: User, manager: bool
 ) -> WishListOut:
     link = None
+    shared_by = None
     if manager:
         row = await active_link(db, kind="wish_list", target_id=wl.id)
         if row is not None:
             token = link_token(row)
             link = LinkOut(token=token, path=f"/p/{token}")
+        shared_by = await shared_by_name(db, wl.diary_id)
     return WishListOut(
         id=wl.id,
         diary_id=wl.diary_id,
@@ -195,6 +212,7 @@ async def wish_list_out(
         status=wl.status,
         items=[item_out(i, caller_id=caller.id, manager=manager) for i in wl.items],
         link=link,
+        shared_by=shared_by,
     )
 
 
