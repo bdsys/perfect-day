@@ -31,6 +31,21 @@ async def test_patch_unit(client: AsyncClient) -> None:
     assert (await client.get(ME, headers=headers)).json()["temperature_unit"] == "C"
 
 
+async def test_patch_display_name(client: AsyncClient) -> None:
+    headers = await register_and_login(client, "profile-name@example.com")
+    r = await client.patch(ME, json={"display_name": "  Andrew L  "}, headers=headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["display_name"] == "Andrew L"
+    assert (await client.get(ME, headers=headers)).json()["display_name"] == "Andrew L"
+
+
+@pytest.mark.parametrize("name", [None, "", "   ", "x" * 101])
+async def test_patch_display_name_rejects(client: AsyncClient, name: object) -> None:
+    headers = await register_and_login(client, "profile-name-bad@example.com")
+    r = await client.patch(ME, json={"display_name": name}, headers=headers)
+    assert r.status_code == 422, r.text
+
+
 async def test_patch_icon_then_initial(client: AsyncClient) -> None:
     headers = await register_and_login(client, "profile-icon@example.com")
     r = await client.patch(ME, json={"avatar_icon": "panda"}, headers=headers)
