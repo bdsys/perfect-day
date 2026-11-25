@@ -11,6 +11,20 @@ import { useAuth } from '@/lib/auth-context'
 import { formatListDate } from '@/lib/date'
 import { readOnlyBanner } from '@/lib/plan'
 
+const ERROR_COPY: Record<string, string> = {
+  item_taken: "Someone else just said they're getting this.",
+  already_claimed: "You're already getting this.",
+  item_claims_full: "This item can't take anyone else.",
+  claim_not_found: 'That was already removed.',
+  wish_list_full: 'This list has the most items it can hold (100).',
+  wish_list_not_published: 'Publish the list first.',
+}
+
+function errorMessage(e: unknown): string {
+  if (e instanceof ApiError) return (e.code && ERROR_COPY[e.code]) || 'Something went wrong'
+  return e instanceof Error ? e.message : 'Something went wrong'
+}
+
 const EMPTY_ITEM = { name: '', url: '', note: '', many: false }
 
 function pastedListHost(url: string): string {
@@ -64,13 +78,15 @@ export default function WishListPage() {
     })()
   }, [user, diaryId, listId, take])
 
-  async function run(action: () => Promise<void>) {
+  async function run(action: () => Promise<void>): Promise<boolean> {
     setError('')
     setBusy(true)
     try {
       await action()
+      return true
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Something went wrong')
+      setError(errorMessage(e))
+      return false
     } finally {
       setBusy(false)
     }
@@ -135,10 +151,15 @@ export default function WishListPage() {
     })
   }
 
+  // Reload even when the call fails: the list may have changed under us (two people
+  // claiming the same item), and the screen should show what is true now.
   const reloadAfter = (call: () => Promise<unknown>) =>
     run(async () => {
-      await call()
-      await reload()
+      try {
+        await call()
+      } finally {
+        await reload().catch(() => undefined)
+      }
     })
 
   const removeList = () => {
@@ -204,7 +225,7 @@ export default function WishListPage() {
                 </div>
 
                 {needsName === 'editor' && (
-                  <p role="status">{`Ask ${diary?.owner_name ?? 'the owner'} to add their name in Profile first.`}</p>
+                  <p role="status">{`Ask ${diary?.owner_name ?? 'the owner'} to publish this list. Perfect Day will ask them for their name.`}</p>
                 )}
                 {needsName === 'owner' && (
                   <form onSubmit={saveNameAndPublish} style={{ marginBottom: '1rem' }}>

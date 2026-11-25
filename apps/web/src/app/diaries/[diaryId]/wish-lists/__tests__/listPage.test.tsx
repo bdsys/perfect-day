@@ -132,7 +132,7 @@ describe('WishListPage', () => {
     )
     render(<WishListPage />)
     fireEvent.click(await screen.findByRole('button', { name: 'Publish' }))
-    expect(await screen.findByText('Ask Sam to add their name in Profile first.')).toBeInTheDocument()
+    expect(await screen.findByText('Ask Sam to publish this list. Perfect Day will ask them for their name.')).toBeInTheDocument()
     expect(screen.queryByLabelText('Your name, as people with the link will see it')).not.toBeInTheDocument()
   })
 
@@ -218,5 +218,55 @@ describe('WishListPage', () => {
     await waitFor(() =>
       expect(api.wishLists.addItem).toHaveBeenCalledWith('list-1', { name: 'Bike', url: null, note: null, many: false }),
     )
+  })
+
+  it('a failed claim shows a plain sentence and reloads the list', async () => {
+    const open = list({ status: 'published', items: [item()] })
+    const taken = list({ status: 'published', items: [item({ taken: true, claim_count: 1 })] })
+    setup(open, diary({ role: 'viewer', plan: null }))
+    ;(api.wishLists.get as jest.Mock).mockResolvedValueOnce(open).mockResolvedValueOnce(taken)
+    ;(api.wishLists.claim as jest.Mock).mockRejectedValue(new ApiError(409, 'item_taken', 'item_taken'))
+    render(<WishListPage />)
+    fireEvent.click(await screen.findByRole('button', { name: "I'm getting this" }))
+    expect(await screen.findByText("Someone else just said they're getting this.")).toBeInTheDocument()
+    expect(screen.queryByText('item_taken')).not.toBeInTheDocument()
+    expect(await screen.findByText('Taken')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: "I'm getting this" })).not.toBeInTheDocument()
+  })
+
+  it('a failed release shows a plain sentence and reloads the list', async () => {
+    const claimed = list({
+      status: 'published',
+      items: [item({ taken: true, claim_count: 1, claims: [{ id: 'c1', name: 'Gran', signed_in: false, created_at: 'x' }] })],
+    })
+    setup(claimed)
+    ;(api.wishLists.get as jest.Mock).mockResolvedValueOnce(claimed).mockResolvedValueOnce(list({ status: 'published' }))
+    ;(api.wishLists.release as jest.Mock).mockRejectedValue(new ApiError(404, 'claim_not_found', 'claim_not_found'))
+    render(<WishListPage />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Release' }))
+    expect(await screen.findByText('That was already removed.')).toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByText('Gran')).not.toBeInTheDocument())
+  })
+
+  it('an unknown error shows the generic message, not the code', async () => {
+    setup(list({ status: 'published', items: [item()] }), diary({ role: 'viewer', plan: null }))
+    ;(api.wishLists.claim as jest.Mock).mockRejectedValue(new ApiError(500, 'weird_code', 'weird_code'))
+    render(<WishListPage />)
+    fireEvent.click(await screen.findByRole('button', { name: "I'm getting this" }))
+    expect(await screen.findByText('Something went wrong')).toBeInTheDocument()
+    expect(screen.queryByText('weird_code')).not.toBeInTheDocument()
+  })
+
+  it('a failed item save keeps the form open with the typed text', async () => {
+    setup(list())
+    ;(api.wishLists.updateItem as jest.Mock).mockRejectedValue(new ApiError(422, 'invalid', 'invalid'))
+    render(<WishListPage />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit Lego set' }))
+    const form = screen.getByRole('form', { name: 'Edit Lego set' })
+    fireEvent.change(within(form).getByLabelText('Item'), { target: { value: 'Lego castle' } })
+    fireEvent.click(within(form).getByRole('button', { name: 'Save item' }))
+    expect(await screen.findByText('Something went wrong')).toBeInTheDocument()
+    expect(screen.getByRole('form', { name: 'Edit Lego set' })).toBeInTheDocument()
+    expect(screen.getByDisplayValue('Lego castle')).toBeInTheDocument()
   })
 })

@@ -50,7 +50,8 @@ interface Props {
   onClaim: () => void
   onUnclaim: () => void
   onRelease: (claimId: string) => void
-  onSave: (fields: WishListItemFields) => Promise<void>
+  /** Resolves true when saved; false keeps the form open. */
+  onSave: (fields: WishListItemFields) => Promise<boolean>
   onDelete: () => void
 }
 
@@ -67,8 +68,7 @@ export default function WishListItemRow({
 
   async function save(ev: React.FormEvent) {
     ev.preventDefault()
-    await onSave(itemFieldsToBody(draft))
-    setEditing(false)
+    if (await onSave(itemFieldsToBody(draft))) setEditing(false)
   }
 
   if (editing) {
