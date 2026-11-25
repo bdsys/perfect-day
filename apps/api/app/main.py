@@ -14,6 +14,7 @@ from app.core.errors import (
     unhandled_exception_handler,
 )
 from app.core.logging import configure_logging
+from app.middleware.public_headers import PublicHeadersMiddleware
 from app.middleware.rate_limit import limiter
 from app.middleware.request_id import RequestIDMiddleware
 from app.routers import health
@@ -36,6 +37,7 @@ def create_app() -> FastAPI:
 
     # Middleware (outermost first)
     app.add_middleware(RequestIDMiddleware)
+    app.add_middleware(PublicHeadersMiddleware)
     if settings.env != "test":
         app.add_middleware(SlowAPIMiddleware)
     app.add_middleware(

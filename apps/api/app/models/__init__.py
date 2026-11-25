@@ -308,6 +308,29 @@ class Invitation(TimestampMixin, Base):
     __table_args__ = (CheckConstraint("role IN ('viewer','editor')", name="ck_invitations_role"),)
 
 
+class PublicLink(TimestampMixin, Base):
+    """A link-only public page. Only the token's SHA-256 is used for lookup; the
+    token itself is kept encrypted so the owner can copy the link again."""
+
+    __tablename__ = "public_links"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    diary_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("diaries.id", ondelete="CASCADE"), nullable=False
+    )
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    # Polymorphic target, so no FK: the target's own delete removes its links.
+    target_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    token_hash: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    token_encrypted: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        CheckConstraint("kind IN ('wish_list')", name="ck_public_links_kind"),
+        Index("ix_public_links_kind_target_id", "kind", "target_id"),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Entries & events
 # ---------------------------------------------------------------------------
