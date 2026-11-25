@@ -24,6 +24,8 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     : 'Perfect Day'
   return {
     title,
+    // null clears the root layout's description, so a preview shows title and date only.
+    description: null,
     robots: { index: false, follow: false },
     referrer: 'no-referrer',
     openGraph: { title },

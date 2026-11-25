@@ -39,13 +39,18 @@ describe('metadata', () => {
     expect(m.robots).toEqual({ index: false, follow: false })
     expect(m.referrer).toBe('no-referrer')
     expect(m.openGraph).toEqual({ title: "Wish list: Emma's 6th birthday · Sat 14 Mar" })
-    expect(m.description).toBeUndefined()
+    // null (not undefined) resets the root layout's description in Next's merge.
+    expect(m.description).toBeNull()
+    expect(m.openGraph).not.toHaveProperty('description')
+    expect(m.openGraph).not.toHaveProperty('images')
     expect(mockFetchPublicPage).toHaveBeenCalledWith('tok', '203.0.113.9')
   })
 
   it('is just Perfect Day for a dead link', async () => {
     mockFetchPublicPage.mockResolvedValue(null)
-    expect((await generateMetadata({ params })).title).toBe('Perfect Day')
+    const m = await generateMetadata({ params })
+    expect(m.title).toBe('Perfect Day')
+    expect(m.description).toBeNull()
   })
 })
 
@@ -143,7 +148,8 @@ describe('PublicWishList', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     expect(await screen.findByRole('alert')).toHaveTextContent("Someone else just said they're getting this.")
 
-    ;(global.fetch as jest.Mock).mockResolvedValueOnce(jsonRes(404, { error: { code: 'http_error', message: 'link_inactive' } }))
+    const dead = jsonRes(404, { error: { code: 'http_error', message: 'link_inactive' } })
+    ;(global.fetch as jest.Mock).mockResolvedValueOnce(dead).mockResolvedValueOnce(dead)
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(screen.getByText('This link is no longer active')).toBeInTheDocument())
     expect(screen.queryByText('Lego set')).not.toBeInTheDocument()
@@ -156,5 +162,30 @@ describe('PublicWishList', () => {
     fireEvent.change(screen.getByLabelText('Your name'), { target: { value: 'Pat' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('Too many tries. Please wait a little and try again.')
+  })
+
+  it('claim link_inactive but the list still loads: item gone, not the dead view', async () => {
+    const without = { ...data, wish_list: { ...list, items: [list.items[1]] } }
+    ;(global.fetch as jest.Mock)
+      .mockResolvedValueOnce(jsonRes(404, { error: { code: 'http_error', message: 'link_inactive' } }))
+      .mockResolvedValueOnce(jsonRes(200, without))
+    render(<PublicWishList token="tok" initial={list} />)
+    fireEvent.click(screen.getAllByRole('button', { name: "I'm getting this" })[0])
+    fireEvent.change(screen.getByLabelText('Your name'), { target: { value: 'Pat' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(screen.queryByText('Lego set')).not.toBeInTheDocument())
+    expect(screen.getByText('Books')).toBeInTheDocument()
+    expect(screen.queryByText('This link is no longer active')).not.toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent('Something went wrong. Please try again.')
+  })
+
+  it('claim link_inactive and the list is 404: dead view', async () => {
+    const dead = jsonRes(404, { error: { code: 'http_error', message: 'link_inactive' } })
+    ;(global.fetch as jest.Mock).mockResolvedValueOnce(dead).mockResolvedValueOnce(dead)
+    render(<PublicWishList token="tok" initial={list} />)
+    fireEvent.click(screen.getAllByRole('button', { name: "I'm getting this" })[0])
+    fireEvent.change(screen.getByLabelText('Your name'), { target: { value: 'Pat' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    expect(await screen.findByText('This link is no longer active')).toBeInTheDocument()
   })
 })

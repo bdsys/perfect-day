@@ -95,13 +95,10 @@ export default function PublicWishList({
     try {
       await action()
     } catch (e) {
-      if (isInactive(e)) {
-        setDead(true)
-        return
-      }
       setError({ itemId, text: errorCopy(e) })
       const code = e instanceof ApiError ? (e.code ?? e.message) : ''
-      if (refetchOn.includes(code)) {
+      // The API also says link_inactive when the item was deleted; only a 404 on the list itself means the link is dead.
+      if (isInactive(e) || refetchOn.includes(code)) {
         try {
           await reload()
         } catch (e2) {
@@ -232,6 +229,10 @@ export default function PublicWishList({
           )
         })}
       </ul>
+      {/* The item an error belongs to may be gone after a refresh. */}
+      {error && !list.items.some((i) => i.id === error.itemId) && (
+        <p role="alert" className="error-message">{error.text}</p>
+      )}
     </main>
   )
 }
