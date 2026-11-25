@@ -52,8 +52,11 @@ export default function WishListPage() {
     take(await api.wishLists.get(listId))
   }, [listId, take])
 
+  // Keyed on the person, not the user object: refreshUser (after a name change) hands out
+  // a new object, and re-running this load mid-publish wrote the old Draft over the result.
+  const userId = user?.id
   useEffect(() => {
-    if (!user || !diaryId || !listId) return
+    if (!userId || !diaryId || !listId) return
     ;(async () => {
       try {
         const [d, l] = await Promise.all([api.diaries.get(diaryId), api.wishLists.get(listId)])
@@ -65,7 +68,7 @@ export default function WishListPage() {
         setLoading(false)
       }
     })()
-  }, [user, diaryId, listId, take])
+  }, [userId, diaryId, listId, take])
 
   async function run(action: () => Promise<void>): Promise<boolean> {
     setError('')

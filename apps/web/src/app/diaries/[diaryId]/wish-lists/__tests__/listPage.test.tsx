@@ -29,10 +29,14 @@ jest.mock('@/lib/api', () => {
 })
 
 const mockRefreshUser = jest.fn()
-jest.mock('@/lib/auth-context', () => {
-  const value = { user: { id: 'u1', email: 'a@b.com' }, loading: false, refreshUser: () => Promise.resolve(mockRefreshUser()) }
-  return { useAuth: () => value }
+const mockSignedIn = () => ({
+  user: { id: 'u1', email: 'a@b.com' },
+  loading: false,
+  refreshUser: () => Promise.resolve(mockRefreshUser()),
 })
+// A variable, so a test can hand out a new user object the way refreshUser does.
+let mockAuth = mockSignedIn()
+jest.mock('@/lib/auth-context', () => ({ useAuth: () => mockAuth }))
 
 jest.mock('next/navigation', () => {
   const router = { push: jest.fn(), replace: jest.fn() }
@@ -58,6 +62,7 @@ function setup(l: WishList, d: object = diary()) {
 
 beforeEach(() => {
   jest.resetAllMocks()
+  mockAuth = mockSignedIn()
 })
 
 describe('WishListPage', () => {
@@ -126,6 +131,35 @@ describe('WishListPage', () => {
     expect(await screen.findByRole('button', { name: 'Unpublish' })).toBeInTheDocument()
     // The header shows the new name too.
     await waitFor(() => expect(mockRefreshUser).toHaveBeenCalled())
+  })
+
+  it('refreshing the header after Save and publish does not reload the list over it', async () => {
+    const draft = list()
+    setup(draft)
+    // A second GET would still see the draft (it raced the publish in the e2e run).
+    ;(api.wishLists.get as jest.Mock).mockResolvedValueOnce(draft).mockResolvedValue(draft)
+    ;(api.wishLists.publish as jest.Mock)
+      .mockRejectedValueOnce(new ApiError(409, 'display_name_required', 'display_name_required', { caller_is_owner: true }))
+      .mockResolvedValueOnce(list({ status: 'published', link: { token: 't', path: '/p/t' } }))
+    ;(api.auth.updateProfile as jest.Mock).mockResolvedValue({})
+    // Like auth-context's applyProfile: same person, a new user object.
+    mockRefreshUser.mockImplementation(() => {
+      mockAuth = { ...mockAuth, user: { ...mockAuth.user } }
+    })
+    render(<WishListPage />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Publish' }))
+    fireEvent.change(await screen.findByLabelText('Your name, as people with the link will see it'), {
+      target: { value: 'Andrew' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Save and publish' }))
+    expect(await screen.findByRole('button', { name: 'Turn link off' })).toBeInTheDocument()
+    expect(mockRefreshUser).toHaveBeenCalled()
+    // Let any effect the new user object would trigger run and settle.
+    await new Promise((r) => setTimeout(r, 50))
+    expect(screen.getByRole('button', { name: 'Turn link off' })).toBeInTheDocument()
+    expect(screen.getByText(/Published/)).toBeInTheDocument()
+    expect(api.wishLists.get).toHaveBeenCalledTimes(1)
+    expect(api.diaries.get).toHaveBeenCalledTimes(1)
   })
 
   it("tells an editor to ask the owner when the owner has no name", async () => {
