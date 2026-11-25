@@ -46,9 +46,17 @@ def upgrade() -> None:
         ),
         sa.CheckConstraint("kind IN ('wish_list')", name="ck_public_links_kind"),
     )
-    op.create_index("ix_public_links_kind_target_id", "public_links", ["kind", "target_id"])
+    # One active link per target (closes the concurrent create_link race). It also serves
+    # the active-link lookup, so there is no plain (kind, target_id) index.
+    op.create_index(
+        "uq_public_links_active_target",
+        "public_links",
+        ["kind", "target_id"],
+        unique=True,
+        postgresql_where=sa.text("revoked_at IS NULL"),
+    )
 
 
 def downgrade() -> None:
-    op.drop_index("ix_public_links_kind_target_id", table_name="public_links")
+    op.drop_index("uq_public_links_active_target", table_name="public_links")
     op.drop_table("public_links")

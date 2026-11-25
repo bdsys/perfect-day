@@ -327,7 +327,14 @@ class PublicLink(TimestampMixin, Base):
 
     __table_args__ = (
         CheckConstraint("kind IN ('wish_list')", name="ck_public_links_kind"),
-        Index("ix_public_links_kind_target_id", "kind", "target_id"),
+        # One active link per target; also serves the active-link lookup.
+        Index(
+            "uq_public_links_active_target",
+            "kind",
+            "target_id",
+            unique=True,
+            postgresql_where=text("revoked_at IS NULL"),
+        ),
     )
 
 

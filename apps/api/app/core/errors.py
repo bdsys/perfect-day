@@ -75,8 +75,14 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 
     log = structlog.get_logger()
     log.error("unhandled_exception", exc=exc, path=redact_path(request.url.path))
-    return error_response(
+    from app.middleware.public_headers import PUBLIC_HEADERS, is_public_path
+
+    response = error_response(
         code="internal_error",
         message="An unexpected error occurred",
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
     )
+    # ServerErrorMiddleware sits outside user middleware, so add them here too.
+    if is_public_path(request.url.path):
+        response.headers.update(PUBLIC_HEADERS)
+    return response

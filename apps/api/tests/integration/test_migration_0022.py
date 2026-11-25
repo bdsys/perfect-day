@@ -47,7 +47,7 @@ def test_upgrade_creates_public_links_and_downgrade_drops(scratch_db_url):
             "created_at",
             "updated_at",
         } <= cols
-        assert "ix_public_links_kind_target_id" in {
+        assert "uq_public_links_active_target" in {
             i["name"] for i in insp.get_indexes("public_links")
         }
     finally:

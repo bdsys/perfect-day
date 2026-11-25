@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import UTC, date, datetime, timedelta
 
@@ -109,3 +110,70 @@ async def test_public_headers_on_errors(client):
     assert r.headers["cache-control"] == "no-store"
     other = await client.get("/healthz")
     assert "x-robots-tag" not in other.headers
+
+
+@pytest.mark.asyncio
+async def test_unhandled_500_on_public_path_carries_headers(client):
+    from httpx import ASGITransport, AsyncClient
+
+    from app.main import create_app
+
+    app = create_app()
+
+    @app.get("/v1/public/boom")
+    async def boom():
+        raise RuntimeError("boom")
+
+    @app.get("/v1/other-boom")
+    async def other_boom():
+        raise RuntimeError("boom")
+
+    transport = ASGITransport(app=app, raise_app_exceptions=False)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        r = await ac.get("/v1/public/boom")
+        assert r.status_code == 500
+        assert r.headers["x-robots-tag"] == "noindex, nofollow"
+        assert r.headers["referrer-policy"] == "no-referrer"
+        assert r.headers["cache-control"] == "no-store"
+        o = await ac.get("/v1/other-boom")
+        assert o.status_code == 500
+        assert "x-robots-tag" not in o.headers
+        assert "referrer-policy" not in o.headers
+
+
+@pytest.mark.asyncio
+async def test_concurrent_create_link_leaves_one_active(
+    db_engine, db_session, make_user, make_diary_for_user
+):
+    from sqlalchemy import text
+    from sqlalchemy.exc import IntegrityError
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    user = await make_user()
+    diary = await make_diary_for_user(user)
+    target = uuid.uuid4()
+    async with AsyncSession(db_engine) as s1, AsyncSession(db_engine) as s2:
+        # Both revoke (nothing to revoke) before either inserts. s2's insert waits on
+        # s1's uncommitted row, then fails once s1 commits.
+        await create_link(s1, diary_id=diary.id, kind="wish_list", target_id=target)
+        second = asyncio.create_task(
+            create_link(s2, diary_id=diary.id, kind="wish_list", target_id=target)
+        )
+        await asyncio.sleep(0.5)
+        await s1.commit()
+        results = ["ok"]
+        try:
+            await second
+            await s2.commit()
+            results.append("ok")
+        except IntegrityError:
+            await s2.rollback()
+            results.append("integrity")
+    assert sorted(results) == ["integrity", "ok"]
+    n = (
+        await db_session.execute(
+            text("SELECT count(*) FROM public_links WHERE revoked_at IS NULL AND target_id=:t"),
+            {"t": target},
+        )
+    ).scalar_one()
+    assert n == 1
