@@ -65,3 +65,42 @@ async def test_unhandled_exception_logs_redacted_path():
         await unhandled_exception_handler(request, RuntimeError("boom"))  # type: ignore[arg-type]
     assert logs
     assert all("SECRET" not in str(v) for entry in logs for v in entry.values())
+
+
+def _slowapi_warning() -> logging.LogRecord:
+    # The exact call in slowapi 0.1.10 extension.py __evaluate_limits.
+    return logging.LogRecord(
+        "slowapi",
+        logging.WARNING,
+        __file__,
+        1,
+        "ratelimit %s (%s) exceeded at endpoint: %s",
+        ("20 per 1 hour", "198.51.100.1", "/v1/public/SECRET/items/A/claims:POST"),
+        None,
+    )
+
+
+def test_slowapi_filter_redacts_string_args():
+    from app.core.redact import PublicTokenArgsFilter
+
+    record = _slowapi_warning()
+    assert PublicTokenArgsFilter().filter(record) is True
+    assert "SECRET" not in record.getMessage()
+    assert "/v1/public/[redacted]" in record.getMessage()
+    assert "198.51.100.1" in record.getMessage()
+
+
+def test_configure_logging_filters_slowapi_once(caplog, monkeypatch):
+    from app.core.logging import configure_logging
+    from app.core.redact import PublicTokenArgsFilter
+
+    configure_logging("test")
+    configure_logging("test")
+    slowapi_logger = logging.getLogger("slowapi")
+    # alembic's fileConfig (integration migrations) disables loggers that already exist.
+    monkeypatch.setattr(slowapi_logger, "disabled", False)
+    assert sum(isinstance(f, PublicTokenArgsFilter) for f in slowapi_logger.filters) == 1
+    with caplog.at_level(logging.WARNING, logger="slowapi"):
+        slowapi_logger.handle(_slowapi_warning())
+    assert caplog.records
+    assert "SECRET" not in caplog.text

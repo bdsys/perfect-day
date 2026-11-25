@@ -6,7 +6,7 @@ import structlog
 import structlog.stdlib
 from structlog.types import Processor
 
-from app.core.redact import PublicTokenAccessFilter
+from app.core.redact import PublicTokenAccessFilter, PublicTokenArgsFilter
 
 # httpx logs every request URL at INFO. Google Photos base URLs grant access to
 # a photo for an hour and picker session ids sit in request paths, so these
@@ -24,6 +24,11 @@ def configure_logging(env: str = "dev") -> None:
     access = logging.getLogger("uvicorn.access")
     if not any(isinstance(f, PublicTokenAccessFilter) for f in access.filters):
         access.addFilter(PublicTokenAccessFilter())
+    # slowapi's "limit exceeded" warning names the request path for URL-keyed limiters
+    # (the app-wide `limiter` covers /v1/public/ too).
+    slowapi_logger = logging.getLogger("slowapi")
+    if not any(isinstance(f, PublicTokenArgsFilter) for f in slowapi_logger.filters):
+        slowapi_logger.addFilter(PublicTokenArgsFilter())
     processors: list[Processor] = [
         structlog.contextvars.merge_contextvars,
         structlog.stdlib.add_log_level,

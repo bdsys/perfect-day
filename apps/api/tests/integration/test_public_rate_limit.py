@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 import os
+import uuid
 from unittest.mock import patch
 
 import httpx
@@ -10,7 +12,8 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.middleware.rate_limit import PUBLIC_READ_LIMIT, public_limiter
+from app.middleware.rate_limit import PUBLIC_READ_LIMIT, PUBLIC_WRITE_LIMIT, public_limiter
+from tests.integration.wish_list_helpers import _add_item, _new_list, _owner, _token_of
 
 
 @pytest_asyncio.fixture
@@ -73,3 +76,67 @@ async def test_public_reads_limited_per_ip(limited_app):
         assert r.headers["x-robots-tag"] == "noindex, nofollow"
         assert (await b.get("/v1/public/nope")).status_code == 404
     assert httpx  # transport module used above
+
+
+async def test_refused_request_logs_no_token(limited_app, caplog, monkeypatch):
+    """slowapi warns on every refused request; the link token must not be in it."""
+    # The migrations fixture runs alembic's fileConfig, which disables loggers that
+    # already exist (slowapi's among them). uvicorn's own config leaves them on.
+    monkeypatch.setattr(logging.getLogger("slowapi"), "disabled", False)
+    token = "SECRETTOKENxyz"  # noqa: S105
+    async with _client(limited_app, "198.51.100.9") as a:
+        with caplog.at_level(logging.DEBUG, logger="slowapi"):
+            for _ in range(61):
+                r = await a.get(f"/v1/public/{token}")
+            assert r.status_code == 429
+            r = await a.post(f"/v1/public/{token}/items/{uuid.uuid4()}/claims", json={"name": "x"})
+    assert any(rec.name == "slowapi" for rec in caplog.records)
+    assert token not in caplog.text
+    for rec in caplog.records:
+        assert token not in rec.getMessage()
+
+
+async def _live_list_with_items(app, n: int) -> tuple[str, list[str]]:
+    """A published list with `n` items, set up from an address no limit test uses."""
+    async with _client(app, "203.0.113.250") as seed:
+        owner, did = await _owner(seed, "rl-o@example.com")
+        wl = await _new_list(seed, owner, did)
+        items = [(await _add_item(seed, owner, wl["id"], name=f"Item {i}"))["id"] for i in range(n)]
+        r = await seed.post(f"/v1/wish-lists/{wl['id']}/publish", headers=owner)
+        assert r.status_code == 200, r.text
+        return await _token_of(seed, owner, wl["id"]), items
+
+
+async def test_public_writes_limited_per_ip_across_items_and_claims(limited_app):
+    """20 claims an hour per address in all, not per item; undos have their own 20."""
+    assert PUBLIC_WRITE_LIMIT == "20/hour"
+    token, items = await _live_list_with_items(limited_app, 22)
+    async with _client(limited_app, "198.51.100.3") as a, _client(limited_app, "198.51.100.4") as b:
+        claims = []
+        for item in items[:20]:
+            r = await a.post(f"/v1/public/{token}/items/{item}/claims", json={"name": "Sam"})
+            assert r.status_code == 201, r.text
+            claims.append(r.json())
+        r = await a.post(f"/v1/public/{token}/items/{items[20]}/claims", json={"name": "Sam"})
+        assert r.status_code == 429
+        r = await b.post(f"/v1/public/{token}/items/{items[20]}/claims", json={"name": "Jo"})
+        assert r.status_code == 201, r.text
+        b_claim = r.json()
+
+        # Undo is counted apart from claims, and across every claim's URL.
+        for c in claims:
+            r = await a.delete(
+                f"/v1/public/{token}/claims/{c['claim_id']}",
+                headers={"X-Claim-Secret": c["secret"]},
+            )
+            assert r.status_code == 204, r.text
+        r = await a.delete(
+            f"/v1/public/{token}/claims/{b_claim['claim_id']}",
+            headers={"X-Claim-Secret": b_claim["secret"]},
+        )
+        assert r.status_code == 429
+        r = await b.delete(
+            f"/v1/public/{token}/claims/{b_claim['claim_id']}",
+            headers={"X-Claim-Secret": b_claim["secret"]},
+        )
+        assert r.status_code == 204, r.text
