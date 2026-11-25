@@ -85,7 +85,7 @@ def upgrade() -> None:
         sa.Column(
             "user_id",
             postgresql.UUID(as_uuid=True),
-            sa.ForeignKey("users.id", ondelete="SET NULL"),
+            sa.ForeignKey("users.id", ondelete="CASCADE"),
             nullable=True,
         ),
         sa.Column("name", sa.String(60), nullable=True),

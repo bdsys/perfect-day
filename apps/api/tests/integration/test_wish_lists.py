@@ -370,3 +370,44 @@ async def test_patch_list_and_items_positions(client):
     await client.delete(f"/v1/wish-list-items/{a['id']}", headers=owner)
     r = await client.get(f"/v1/wish-lists/{wl['id']}", headers=owner)
     assert [i["id"] for i in r.json()["items"]] == [b["id"]]
+
+
+async def test_publish_twice_keeps_the_same_link(client, db_session):
+    owner, did = await _owner(client, "wl13-o@example.com")
+    wl = await _new_list(client, owner, did)
+    first = (await client.post(f"/v1/wish-lists/{wl['id']}/publish", headers=owner)).json()
+    r = await client.post(f"/v1/wish-lists/{wl['id']}/publish", headers=owner)
+    assert r.status_code == 200
+    assert r.json()["link"]["token"] == first["link"]["token"]
+    db_session.expire_all()
+    await resolve_link(db_session, first["link"]["token"])
+    # A link turned off stays off on re-publish; link/new is what makes a new one.
+    await client.post(f"/v1/wish-lists/{wl['id']}/link/off", headers=owner)
+    r = await client.post(f"/v1/wish-lists/{wl['id']}/publish", headers=owner)
+    assert r.status_code == 200
+    assert r.json()["link"] is None
+    # No display-name check on a no-op re-publish.
+    await _set_display_name("wl13-o@example.com", None)
+    assert (
+        await client.post(f"/v1/wish-lists/{wl['id']}/publish", headers=owner)
+    ).status_code == 200
+
+
+async def test_patch_item_with_signed_in_claim(client, db_session):
+    from sqlalchemy import select
+
+    owner, did = await _owner(client, "wl14-o@example.com")
+    await _member(client, owner, did, "wl14-v@example.com")
+    wl = await _new_list(client, owner, did)
+    item = await _add_item(client, owner, wl["id"], "One")
+    v = (
+        await db_session.execute(select(User).where(User.email == "wl14-v@example.com"))
+    ).scalar_one()
+    db_session.add(WishListClaim(item_id=uuid.UUID(item["id"]), user_id=v.id))
+    await db_session.commit()
+    r = await client.patch(
+        f"/v1/wish-list-items/{item['id']}", json={"note": "blue"}, headers=owner
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["claims"][0]["name"] == "wl14-v@example.com"
+    assert r.json()["claims"][0]["signed_in"] is True

@@ -12,7 +12,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.auth import get_current_user
 from app.core.database import get_db
-from app.models import PublicLink, User, WishList, WishListItem
+from app.models import PublicLink, User, WishList, WishListClaim, WishListItem
 from app.routers.v1.diaries import _get_diary_or_404
 from app.services.public_links import create_link, revoke_links
 from app.services.read_only import ensure_diary_writable
@@ -206,7 +206,7 @@ async def add_item(
         await db.execute(
             select(WishListItem)
             .where(WishListItem.id == item.id)
-            .options(selectinload(WishListItem.claims))
+            .options(selectinload(WishListItem.claims).selectinload(WishListClaim.user))
             .execution_options(populate_existing=True)
         )
     ).scalar_one()
@@ -243,7 +243,7 @@ async def patch_item(
         await db.execute(
             select(WishListItem)
             .where(WishListItem.id == item.id)
-            .options(selectinload(WishListItem.claims))
+            .options(selectinload(WishListItem.claims).selectinload(WishListClaim.user))
             .execution_options(populate_existing=True)
         )
     ).scalar_one()
@@ -271,20 +271,22 @@ async def publish_wish_list(
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> WishListOut:
     wl, diary, role = await _manage_list(db, wish_list_id, user, lock=True)
-    owner = (await db.execute(select(User).where(User.id == diary.owner_user_id))).scalar_one()
-    if not (owner.display_name or "").strip():
-        # The public page names who shared it, so the owner needs a name first.
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "display_name_required",
-                "details": {"caller_is_owner": role is None},
-            },
-        )
-    wl.status = "published"
-    if wl.published_at is None:
+    if wl.status != "published":
+        owner = (await db.execute(select(User).where(User.id == diary.owner_user_id))).scalar_one()
+        if not (owner.display_name or "").strip():
+            # The public page names who shared it, so the owner needs a name first.
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "display_name_required",
+                    "details": {"caller_is_owner": role is None},
+                },
+            )
+        wl.status = "published"
         wl.published_at = datetime.now(tz=UTC)
-    await create_link(db, diary_id=wl.diary_id, kind="wish_list", target_id=wl.id)
+        await create_link(db, diary_id=wl.diary_id, kind="wish_list", target_id=wl.id)
+    # Already published: leave the link alone (it may be in a group chat); link/new
+    # is the only way to replace it.
     out = await wish_list_out(db, wl, caller=user, manager=True)
     await db.commit()
     return out

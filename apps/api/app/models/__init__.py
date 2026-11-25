@@ -401,7 +401,7 @@ class WishListClaim(Base):
         UUID(as_uuid=True), ForeignKey("wish_list_items.id", ondelete="CASCADE"), nullable=False
     )
     user_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE")
     )
     name: Mapped[str | None] = mapped_column(String(60))
     secret_hash: Mapped[str | None] = mapped_column(Text)
