@@ -97,7 +97,8 @@ Day 28:  deletion_grace notification.
 Day 30:  Celery process_hard_deletes():
            delete entry_photos, enrichments, events, llm_generations,
            entries, entry_edit_diffs, scan_runs, backfill_runs,
-           diary_permissions, invitations, diary_calendar_filters.
+           diary_permissions, invitations, diary_calendar_filters,
+           wish lists, their items, claims and public links.
            Photos deleted from the object store + photos table only if no other diary
            links them (cross-diary check: an entry_photos row on an
            entry in another diary keeps the photo).
@@ -116,6 +117,8 @@ Day 0:   deleted_at set, hard_delete_after = now() + 7d.
 Day 6:   deletion_grace notification (last chance).
 Day 7:   Celery process_hard_deletes():
            Hard delete all owned diaries (cascade per diary flow above).
+           Delete the account's signed-in wish-list claims on other people's
+           diaries (guest claims carry no account and stay with the list).
            Delete notifications, notification_preferences, social_identities,
            oauth_tokens, magic_link_tokens, refresh_tokens.
            Scrub the object store: delete everything under {user_id}/* prefix.
@@ -167,6 +170,15 @@ A link-only token left in a log would be a working key for months, so none of th
 - The unhandled-exception handler logs the redacted path.
 
 `scripts/nuc/tests/edge-client-ip.test.sh` and `apps/api/tests/unit/test_redact.py` check each place.
+
+## Link-only pages: data inventory (wish lists, built 2026-11-24)
+
+- **What is stored.** Wish lists (name, date, an optional link to a list kept elsewhere), their items (name, store link, note), and claims. A claim made by a guest who is not signed in holds the name the guest typed. A claim made by a signed-in person is linked to their account.
+- **Link tokens.** Each public link stores the SHA-256 hash of its token, used to look the link up, and the token itself as AES-GCM ciphertext, so the owner can see and copy the link again. The raw token exists in plain text only in the response that shows it to the owner and in the link itself.
+- **Claim secrets.** A guest's un-claim secret (kept in their browser) is stored only as a hash.
+- **Who sees what.** Anyone with the link sees lists and items, and for each item only "taken" (or a count for "as many as you like" items), never who. The owner and editors see every claim with its name.
+- **Deletion.** Diary hard delete removes the diary's lists, items, claims and public links. Deleting a claimer's account removes their signed-in claims. Guest claims carry no account, so only the list's deletion (or a parent releasing the claim) removes them.
+- **Logs and edge.** Tokens stay out of Caddy's, uvicorn's and the API's logs (above). The FortiGate and Cloudflare are reviewed by hand before each deploy: `deploy/cloudflare.md` and `deploy/nuc.md` § Public pages.
 
 ## GDPR/CCPA posture
 

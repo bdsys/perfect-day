@@ -448,6 +448,30 @@ docker compose --profile nuc up -d edge
 > config-only change — no application code changes required. Port `8443` is reserved in `PORTS.md`
 > for this purpose.
 
+## Public pages: FortiGate review before the wish-list deploy
+
+Wish-list pages are link-only: `GET /p/{token}` on `perfectday.andrewlass.com` and `GET`, `POST` and `DELETE` on `perfectday-api.andrewlass.com/v1/public/{token}/...`. The POSTs carry tiny JSON (`{"name": "..."}`, a few hundred bytes, well under 1 KB). The Cloudflare half of the review is in `deploy/cloudflare.md` § Public pages. Policy 35 has IPS and antivirus profiles and no WAF profile (see Edge, above); confirm that is still true.
+
+- [ ] **The profiles on policy 35 today.** `show firewall policy 35`; note every `ips-sensor`, `av-profile`, `waf-profile` and `utm-status` line.
+  - Profiles: ______________________
+- [ ] **A small JSON POST passes.** From off the home network (phone hotspot), with a real link and item id:
+
+  ```bash
+  curl -s -o /dev/null -w '%{http_code}\n' -X POST -H 'Content-Type: application/json' \
+    -d '{"name":"Test guest"}' 'https://perfectday-api.andrewlass.com/v1/public/<token>/items/<item-id>/claims'
+  # Expect: 201 (or a 4xx from the app, such as 404 for a wrong id). A FortiGate block usually
+  # shows as a reset connection, a 403 with a Fortinet page, or a 5xx from the firewall.
+  ```
+
+  - Result: ______________________
+- [ ] **The `GET` of `/p/<token>` passes** in a phone browser, with the page's script and fonts loading.
+  - Result: ______________________
+- [ ] **The Security Fabric logs.** Check `Log & Report > Forward Traffic` and the UTM logs for the two tests above: were they allowed, and did IPS or antivirus log a signature?
+  - Result: ______________________
+- [ ] **Does the FortiGate log full URLs anywhere?** HTTP URLs show in UTM web-filter logs and in traffic logs when `log-http-transaction`-style options or a web-filter profile are on; here the hop is plain HTTP after decryption, so check. If any log holds the full URL, it holds link tokens (the app and Caddy redact theirs, the FortiGate does not).
+  - Where, and how long it is kept (local disk, FortiAnalyzer, syslog): ______________________
+  - What I decided (turn the URL logging off, shorten retention, or accept): ______________________
+
 ## Single point of failure
 
 Power outage, ISP outage, disk failure, OS reboot, or accidental power loss all take the diary offline. There is no HA story on this deployment. Mitigations:
