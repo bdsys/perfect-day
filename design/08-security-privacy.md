@@ -162,14 +162,15 @@ Two kinds of token ride in a URL path. They get opposite rulings because they di
 | Who can use it | One invited email | Anyone who has the link |
 | In logs | Logged unredacted (Andrew, 2026-11-23) | Redacted |
 
-A link-only token left in a log would be a working key for months, so none of the four places that record paths keeps it:
+A link-only token left in a log would be a working key for months, so none of the five places that record paths keeps it:
 
 - Caddy's access log rewrites `/p/{token}` and `/v1/public/{token}` to `.../[redacted]` (query string included) and drops the `Referer` header, in case a browser ignores `no-referrer`.
 - uvicorn's access log goes through `PublicTokenAccessFilter` (`apps/api/app/core/redact.py`).
 - `RequestIDMiddleware` binds the redacted path into every structlog line.
 - The unhandled-exception handler logs the redacted path.
+- slowapi's "ratelimit ... exceeded at endpoint" warning: the public limiter counts per route (`key_style="endpoint"`), so it names the view function, not the URL; the app-wide limiter still counts per URL, and `PublicTokenArgsFilter` on the `slowapi` logger redacts its path.
 
-`scripts/nuc/tests/edge-client-ip.test.sh` and `apps/api/tests/unit/test_redact.py` check each place.
+`scripts/nuc/tests/edge-client-ip.test.sh`, `apps/api/tests/unit/test_redact.py` and `apps/api/tests/integration/test_public_rate_limit.py` check each place.
 
 ## Link-only pages: data inventory (wish lists, built 2026-11-24)
 

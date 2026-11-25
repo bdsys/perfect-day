@@ -226,7 +226,7 @@ Browsers do not trust it; only Cloudflare's edge does.
 
 ## Public pages (`/p/`, `/v1/public/`): edge review before the wish-list deploy
 
-Wish lists are the app's first link-only public pages: web `/p/{token}` and API `/v1/public/{token}`. Anyone with the link can open them, and guests who are not signed in can claim items. The API limits each IP to 60 page loads a minute and 20 claim or un-claim requests an hour. Those counters live in the API process's memory, so an API restart resets them. Request bodies on the public POSTs are tiny JSON (`{"name": "..."}`, a few hundred bytes). The app sends `Cache-Control: no-store`, `X-Robots-Tag` and `Referrer-Policy: no-referrer` on these pages, and keeps the token out of Caddy's and the API's logs (`design/08-security-privacy.md` § Tokens in logs).
+Wish lists are the app's first link-only public pages: web `/p/{token}` and API `/v1/public/{token}`. Anyone with the link can open them, and guests who are not signed in can claim items. The API counts per IP and per route: 60 page loads a minute, 20 claims an hour and 20 un-claims (undos) an hour, however many items or lists those requests touch. Those counters live in the API process's memory, so an API restart resets them. Request bodies on the public POSTs are tiny JSON (`{"name": "..."}`, a few hundred bytes). The app sends `Cache-Control: no-store`, `X-Robots-Tag` and `Referrer-Policy: no-referrer` on these pages, and keeps the token out of Caddy's and the API's logs (`design/08-security-privacy.md` § Tokens in logs).
 
 Work through this before the first deploy of the wish-list code. If it shows that strangers need stricter rules than family, the spec's fallback is its own hostname (Approach B, `docs/superpowers/specs/2026-11-23-invitations-and-wish-lists-design.md`).
 
@@ -251,6 +251,16 @@ Do not rely on any rule count or limit written down here. Read what the free pla
 
 - [ ] On a phone on cellular (not the home Wi-Fi), open a `/p/` link and claim then un-claim an item.
 - [ ] `ssh-nuc 'docker logs perfect-day-edge-1 2>&1 | grep "/p/" | tail -5'` shows `/p/[redacted]` and no token.
+- [ ] **A refused request logs no token.** From a machine off the home network, load a public link 61 times in quick succession (a dead token is fine, e.g. `deadtoken123`), then read the API's log on the NUC:
+
+  ```bash
+  for i in $(seq 61); do curl -s -o /dev/null -w '%{http_code} ' 'https://perfectday-api.andrewlass.com/v1/public/deadtoken123'; done; echo
+  # Expect: 60 x 404, then 429 at the end.
+  ssh-nuc 'docker logs perfect-day-api-1 2>&1 | grep -c deadtoken123'
+  # Expect: 0. Any other number means the token reached the API's log.
+  ```
+
+  - Result: ______________________
 - [ ] Response headers, from a machine off the home network (use a real link):
 
   ```bash
@@ -261,7 +271,7 @@ Do not rely on any rule count or limit written down here. Read what the free pla
 
 ### Known items to weigh
 
-1. The root layout still loads Google's sign-in script and the sign-in refresh call on `/p/` pages. No token goes to Google (`Referrer-Policy: no-referrer`), but a guest's browser does contact Google.
+1. Google's sign-in script loads only on the pages with the Google button (login and register), not on `/p/` pages. The root layout still makes the app's own sign-in refresh call there (to the API, not to a third party).
 2. The per-IP limits live in API memory, so a restart resets them, and they are per process. The Cloudflare rule above is the only limit that survives a restart.
    - What I decided about each: ______________________
 

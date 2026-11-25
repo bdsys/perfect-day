@@ -463,7 +463,18 @@ Wish-list pages are link-only: `GET /p/{token}` on `perfectday.andrewlass.com` a
   # shows as a reset connection, a 403 with a Fortinet page, or a 5xx from the firewall.
   ```
 
+  A 201 is a real claim by "Test guest". To check the DELETE path too, drop `-o /dev/null -w ...` from the command above to see the JSON it returns, then undo with that `claim_id` and `secret`:
+
+  ```bash
+  curl -s -o /dev/null -w '%{http_code}\n' -X DELETE -H 'X-Claim-Secret: <secret>' \
+    'https://perfectday-api.andrewlass.com/v1/public/<token>/claims/<claim_id>'
+  # Expect: 204.
+  ```
+
+  Either way, open the list in the app as its owner afterwards: if "Test guest" is still there, press **Release** next to it.
+
   - Result: ______________________
+  - "Test guest" gone from the list (undone or released): ______________________
 - [ ] **The `GET` of `/p/<token>` passes** in a phone browser, with the page's script and fonts loading.
   - Result: ______________________
 - [ ] **The Security Fabric logs.** Check `Log & Report > Forward Traffic` and the UTM logs for the two tests above: were they allowed, and did IPS or antivirus log a signature?
