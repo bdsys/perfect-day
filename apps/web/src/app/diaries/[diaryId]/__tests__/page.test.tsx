@@ -22,6 +22,7 @@ jest.mock('@/lib/api', () => {
       entries: { list: jest.fn(), get: jest.fn(), aiStatus: jest.fn() },
       sharing: { remove: jest.fn(), decline: jest.fn() },
       integrations: { list: jest.fn(), getGoogleAuthUrl: jest.fn() },
+      wishLists: { comingUp: jest.fn() },
     },
   }
 })
@@ -84,6 +85,7 @@ beforeEach(() => {
   ;(api.diaries.listScanRuns as jest.Mock).mockResolvedValue([])
   ;(api.entries.list as jest.Mock).mockResolvedValue([])
   ;(api.integrations.list as jest.Mock).mockResolvedValue([])
+  ;(api.wishLists.comingUp as jest.Mock).mockResolvedValue({ wish_lists: [] })
 })
 
 describe('DiaryDetailPage backfill status', () => {
@@ -636,5 +638,23 @@ describe('DiaryDetailPage roles', () => {
     )
     render(<DiaryDetailPage />)
     expect(await screen.findByText(/Sam is deleting their account\. Emma diary will be deleted on/)).toBeInTheDocument()
+  })
+})
+
+describe('DiaryDetailPage wish lists', () => {
+  it('links to the wish lists and shows Coming up only when it has rows', async () => {
+    ;(api.wishLists.comingUp as jest.Mock).mockResolvedValue({
+      wish_lists: [{ id: 'wl1', diary_id: 'diary-1', title: "Emma's 6th birthday", list_date: '2026-03-14', status: 'published', item_count: 2 }],
+    })
+    render(<DiaryDetailPage />)
+    const row = await screen.findByRole('link', { name: "Wish list · Emma's 6th birthday · Sat 14 Mar" })
+    expect(row).toHaveAttribute('href', '/diaries/diary-1/wish-lists/wl1')
+    expect(screen.getByRole('link', { name: 'Wish lists' })).toHaveAttribute('href', '/diaries/diary-1/wish-lists')
+  })
+
+  it('hides Coming up when it is empty', async () => {
+    render(<DiaryDetailPage />)
+    await screen.findByRole('link', { name: 'Wish lists' })
+    expect(screen.queryByText('Coming up')).not.toBeInTheDocument()
   })
 })

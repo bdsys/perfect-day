@@ -15,6 +15,7 @@ import { useResetOnBfcacheRestore } from '@/lib/useResetOnBfcacheRestore'
 import PlanBadge from '@/components/PlanBadge'
 import LimitNote from '@/components/LimitNote'
 import DeletionNotice from '@/components/DeletionNotice'
+import ComingUp from '@/components/ComingUp'
 import { BACKFILL_LIMIT_NOTE, formatResetDate, limitMessage, readOnlyBanner } from '@/lib/plan'
 
 // Must match the API's default page size for GET /v1/diaries/{id}/entries.
@@ -481,6 +482,7 @@ export default function DiaryDetailPage() {
             {isDiaryOwner && (
               <Link href={`/diaries/${diaryId}/sharing`} className="btn btn-secondary">Share</Link>
             )}
+            <Link href={`/diaries/${diaryId}/wish-lists`} className="btn btn-secondary">Wish lists</Link>
             {isMember && (
               <button type="button" className="btn btn-secondary" onClick={handleLeaveDiary} disabled={leaving}>
                 {leaving ? 'Leaving…' : 'Leave diary'}
@@ -782,6 +784,8 @@ export default function DiaryDetailPage() {
             {cancelling ? 'Cancelling…' : 'Cancel backfill'}
           </button>
         )}
+
+        <ComingUp diaryId={diaryId} />
 
         {!isViewer && <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
           {['', 'draft', 'published'].map((f) => (

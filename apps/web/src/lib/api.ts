@@ -576,6 +576,58 @@ export const UPLOAD_TIMEOUT_MS = 600000
 /** An upload with no progress (or no server answer) for this long is a dead connection. */
 export const UPLOAD_STALL_MS = 60000
 
+/** A person's claim on a wish-list item. Only managers get these. */
+export interface WishListClaim {
+  id: string
+  name: string
+  signed_in: boolean
+  created_at: string
+}
+
+export interface WishListItem {
+  id: string
+  name: string
+  url: string | null
+  note: string | null
+  many: boolean
+  taken: boolean
+  claim_count: number
+  mine: boolean
+  /** Managers only; viewers get null. */
+  claims: WishListClaim[] | null
+}
+
+export interface WishListLink {
+  token: string
+  /** "/p/{token}": join it to the site's origin. */
+  path: string
+}
+
+export interface WishListSummary {
+  id: string
+  diary_id: string
+  title: string
+  /** YYYY-MM-DD */
+  list_date: string
+  status: 'draft' | 'published'
+  item_count: number
+}
+
+export interface WishList {
+  id: string
+  diary_id: string
+  title: string
+  list_date: string
+  pasted_list_url: string | null
+  status: 'draft' | 'published'
+  items: WishListItem[]
+  /** Managers only, while the list is published and its link is on. */
+  link: WishListLink | null
+}
+
+export type WishListFields = { title?: string; list_date?: string; pasted_list_url?: string | null }
+export type WishListItemFields = { name?: string; url?: string | null; note?: string | null; many?: boolean }
+
 export const api = {
   auth: {
     async register(email: string, password: string, displayName?: string): Promise<TokenPair> {
@@ -604,6 +656,7 @@ export const api = {
       return apiFetch('/v1/auth/me')
     },
     async updateProfile(p: {
+      display_name?: string
       temperature_unit?: TemperatureUnit
       avatar_icon?: AvatarIconName | null
     }): Promise<UserProfile> {
@@ -678,6 +731,58 @@ export const api = {
     },
     async decline(diaryId: string): Promise<void> {
       return apiFetch(`/v1/diaries/${diaryId}/handover/decline`, { method: 'POST' })
+    },
+  },
+
+  wishLists: {
+    async list(diaryId: string): Promise<WishListSummary[]> {
+      return apiFetch(`/v1/diaries/${diaryId}/wish-lists`)
+    },
+    async create(diaryId: string, data: WishListFields & { title: string; list_date: string }): Promise<WishList> {
+      return apiFetch(`/v1/diaries/${diaryId}/wish-lists`, { method: 'POST', body: JSON.stringify(data) })
+    },
+    async get(id: string): Promise<WishList> {
+      return apiFetch(`/v1/wish-lists/${id}`)
+    },
+    async update(id: string, data: WishListFields): Promise<WishList> {
+      return apiFetch(`/v1/wish-lists/${id}`, { method: 'PATCH', body: JSON.stringify(data) })
+    },
+    async remove(id: string): Promise<void> {
+      return apiFetch(`/v1/wish-lists/${id}`, { method: 'DELETE' })
+    },
+    async addItem(id: string, data: WishListItemFields & { name: string }): Promise<WishListItem> {
+      return apiFetch(`/v1/wish-lists/${id}/items`, { method: 'POST', body: JSON.stringify(data) })
+    },
+    async updateItem(itemId: string, data: WishListItemFields): Promise<WishListItem> {
+      return apiFetch(`/v1/wish-list-items/${itemId}`, { method: 'PATCH', body: JSON.stringify(data) })
+    },
+    async removeItem(itemId: string): Promise<void> {
+      return apiFetch(`/v1/wish-list-items/${itemId}`, { method: 'DELETE' })
+    },
+    async publish(id: string): Promise<WishList> {
+      return apiFetch(`/v1/wish-lists/${id}/publish`, { method: 'POST' })
+    },
+    async unpublish(id: string): Promise<WishList> {
+      return apiFetch(`/v1/wish-lists/${id}/unpublish`, { method: 'POST' })
+    },
+    async linkOff(id: string): Promise<WishList> {
+      return apiFetch(`/v1/wish-lists/${id}/link/off`, { method: 'POST' })
+    },
+    async newLink(id: string): Promise<WishList> {
+      return apiFetch(`/v1/wish-lists/${id}/link/new`, { method: 'POST' })
+    },
+    async claim(itemId: string): Promise<WishListItem> {
+      return apiFetch(`/v1/wish-list-items/${itemId}/claim`, { method: 'POST' })
+    },
+    async unclaim(itemId: string): Promise<WishListItem> {
+      return apiFetch(`/v1/wish-list-items/${itemId}/claim`, { method: 'DELETE' })
+    },
+    /** A manager removes someone else's claim. */
+    async release(claimId: string): Promise<void> {
+      return apiFetch(`/v1/wish-list-claims/${claimId}`, { method: 'DELETE' })
+    },
+    async comingUp(diaryId: string): Promise<{ wish_lists: WishListSummary[] }> {
+      return apiFetch(`/v1/diaries/${diaryId}/coming-up`)
     },
   },
 
