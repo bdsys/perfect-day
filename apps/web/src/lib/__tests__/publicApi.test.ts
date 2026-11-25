@@ -26,8 +26,13 @@ describe('fetchPublicPage', () => {
     expect(init2.headers['X-Forwarded-For']).toBeUndefined()
   })
 
-  it('throws on other failures', async () => {
-    ;(global.fetch as jest.Mock).mockResolvedValue({ status: 500, ok: false, json: async () => ({}) })
-    await expect(fetchPublicPage('boom', null)).rejects.toThrow()
+  it.each([429, 500, 502, 503])('says unavailable (does not throw) on HTTP %i', async (status) => {
+    ;(global.fetch as jest.Mock).mockResolvedValue({ status, ok: false, json: async () => ({}) })
+    await expect(fetchPublicPage(`busy-${status}`, null)).resolves.toBe('unavailable')
+  })
+
+  it('says unavailable when the API cannot be reached', async () => {
+    ;(global.fetch as jest.Mock).mockRejectedValue(new TypeError('fetch failed'))
+    await expect(fetchPublicPage('down', null)).resolves.toBe('unavailable')
   })
 })

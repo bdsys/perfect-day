@@ -24,19 +24,28 @@ export interface PublicWishListData {
 
 export type PublicPage = { kind: 'wish_list'; wish_list: PublicWishListData }
 
+/** The API is busy (429), failing (5xx) or out of reach: the link may still be fine. */
+export const UNAVAILABLE = 'unavailable'
+
+/** The page, null for a dead link (404), or UNAVAILABLE. Never throws on a bad answer. */
 export async function fetchPublicPageUncached(
   token: string,
   visitorIp: string | null,
-): Promise<PublicPage | null> {
+): Promise<PublicPage | null | typeof UNAVAILABLE> {
   const base = process.env.API_INTERNAL_URL ?? process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
   const headers: Record<string, string> = {}
   if (visitorIp) headers['X-Forwarded-For'] = visitorIp
-  const res = await fetch(`${base}/v1/public/${encodeURIComponent(token)}`, {
-    cache: 'no-store',
-    headers,
-  })
+  let res: Response
+  try {
+    res = await fetch(`${base}/v1/public/${encodeURIComponent(token)}`, {
+      cache: 'no-store',
+      headers,
+    })
+  } catch {
+    return UNAVAILABLE
+  }
   if (res.status === 404) return null
-  if (!res.ok) throw new Error(`Public page fetch failed: HTTP ${res.status}`)
+  if (!res.ok) return UNAVAILABLE
   return (await res.json()) as PublicPage
 }
 

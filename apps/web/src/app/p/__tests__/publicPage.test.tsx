@@ -3,7 +3,10 @@ import PublicPage, { generateMetadata } from '../[token]/page'
 import PublicWishList from '../[token]/PublicWishList'
 
 const mockFetchPublicPage = jest.fn()
-jest.mock('@/lib/publicApi', () => ({ fetchPublicPage: (...a: unknown[]) => mockFetchPublicPage(...a) }))
+jest.mock('@/lib/publicApi', () => ({
+  UNAVAILABLE: 'unavailable',
+  fetchPublicPage: (...a: unknown[]) => mockFetchPublicPage(...a),
+}))
 jest.mock('next/headers', () => ({
   headers: async () => new Headers({ 'x-forwarded-for': '203.0.113.9, 10.0.0.1' }),
 }))
@@ -46,6 +49,14 @@ describe('metadata', () => {
     expect(mockFetchPublicPage).toHaveBeenCalledWith('tok', '203.0.113.9')
   })
 
+  it('is just Perfect Day while the API is unavailable', async () => {
+    mockFetchPublicPage.mockResolvedValue('unavailable')
+    const m = await generateMetadata({ params })
+    expect(m.title).toBe('Perfect Day')
+    expect(m.openGraph).toEqual({ title: 'Perfect Day' })
+    expect(m.description).toBeNull()
+  })
+
   it('is just Perfect Day for a dead link', async () => {
     mockFetchPublicPage.mockResolvedValue(null)
     const m = await generateMetadata({ params })
@@ -55,6 +66,14 @@ describe('metadata', () => {
 })
 
 describe('the page', () => {
+  it('an unavailable API asks to try again, with no list', async () => {
+    mockFetchPublicPage.mockResolvedValue('unavailable')
+    render(await PublicPage({ params }))
+    expect(screen.getByText('Please try again in a minute.')).toBeInTheDocument()
+    expect(screen.queryByText('This link is no longer active')).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading')).not.toBeInTheDocument()
+  })
+
   it('dead link shows the inactive message', async () => {
     mockFetchPublicPage.mockResolvedValue(null)
     render(await PublicPage({ params }))

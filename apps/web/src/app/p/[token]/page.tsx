@@ -1,6 +1,6 @@
 import type { Metadata } from 'next'
 import { headers } from 'next/headers'
-import { fetchPublicPage } from '@/lib/publicApi'
+import { fetchPublicPage, UNAVAILABLE } from '@/lib/publicApi'
 import { formatListDate } from '@/lib/date'
 import PublicWishList from './PublicWishList'
 
@@ -19,9 +19,10 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { token } = await params
   const page = await fetchPublicPage(token, await visitorIp())
   // Chat apps fetch this from their own servers: title and date only, no image.
-  const title = page
-    ? `Wish list: ${page.wish_list.title} · ${formatListDate(page.wish_list.list_date)}`
-    : 'Perfect Day'
+  const title =
+    page && page !== UNAVAILABLE
+      ? `Wish list: ${page.wish_list.title} · ${formatListDate(page.wish_list.list_date)}`
+      : 'Perfect Day'
   return {
     title,
     // null clears the root layout's description, so a preview shows title and date only.
@@ -35,5 +36,13 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 export default async function PublicWishListPage({ params }: Props) {
   const { token } = await params
   const page = await fetchPublicPage(token, await visitorIp())
+  if (page === UNAVAILABLE) {
+    // Not "no longer active": the link may be fine, the API is busy or down.
+    return (
+      <main className="container" style={{ padding: '2rem 1rem' }}>
+        <p>Please try again in a minute.</p>
+      </main>
+    )
+  }
   return <PublicWishList token={token} initial={page?.wish_list ?? null} />
 }
