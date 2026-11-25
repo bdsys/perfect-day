@@ -86,8 +86,12 @@ async def hard_delete_diary(diary_id: uuid.UUID) -> None:
         Invitation,
         LLMGeneration,
         Photo,
+        PublicLink,
         ScanJob,
         ScanRun,
+        WishList,
+        WishListClaim,
+        WishListItem,
     )
 
     log.info("hard_delete_diary_start", diary_id=str(diary_id))
@@ -152,6 +156,12 @@ async def hard_delete_diary(diary_id: uuid.UUID) -> None:
             await db.execute(delete(Event).where(Event.entry_id.in_(entry_ids)))
             await db.execute(delete(Entry).where(Entry.diary_id == diary_id))
 
+        list_ids = select(WishList.id).where(WishList.diary_id == diary_id)
+        item_ids = select(WishListItem.id).where(WishListItem.wish_list_id.in_(list_ids))
+        await db.execute(delete(WishListClaim).where(WishListClaim.item_id.in_(item_ids)))
+        await db.execute(delete(WishListItem).where(WishListItem.wish_list_id.in_(list_ids)))
+        await db.execute(delete(WishList).where(WishList.diary_id == diary_id))
+        await db.execute(delete(PublicLink).where(PublicLink.diary_id == diary_id))
         await db.execute(delete(ScanRun).where(ScanRun.diary_id == diary_id))
         await db.execute(delete(BackfillRun).where(BackfillRun.diary_id == diary_id))
         await db.execute(
@@ -203,9 +213,7 @@ async def hard_delete_user(user_id: uuid.UUID) -> None:
         # blocking the KEY SHARE lock foreign-key inserts take, so a refresh-token
         # rotation running at the same time cannot deadlock against it.
         account = (
-            await db.execute(
-                select(User).where(User.id == user_id).with_for_update(key_share=True)
-            )
+            await db.execute(select(User).where(User.id == user_id).with_for_update(key_share=True))
         ).scalar_one_or_none()
         if account is not None and not (
             account.deleted_at is not None

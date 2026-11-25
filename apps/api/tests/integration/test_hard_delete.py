@@ -109,3 +109,65 @@ class TestHardDeleteUser:
         me = await client.get("/v1/auth/me", headers=auth)
         assert me.status_code == 200
         assert me.json()["deletion_scheduled_for"] == r.json()["deletion_scheduled_for"]
+
+
+class TestHardDeleteWishLists:
+    async def test_hard_delete_removes_wish_lists_and_links(self, client, db_session):
+        import uuid
+
+        from sqlalchemy import func
+
+        from app.models import (
+            Diary,
+            PublicLink,
+            User,
+            WishList,
+            WishListClaim,
+            WishListItem,
+        )
+        from app.workers.hard_delete import hard_delete_diary
+
+        token, _ = await _register(client, "hdwl@example.com")
+        auth = {"Authorization": f"Bearer {token}"}
+        diary = (
+            await client.post("/v1/diaries", json={"name": "D", "timezone": "UTC"}, headers=auth)
+        ).json()
+        did = uuid.UUID(diary["id"])
+        await db_session.execute(
+            User.__table__.update()
+            .where(User.email == "hdwl@example.com")
+            .values(display_name="Mum")
+        )
+        await db_session.commit()
+        wl = (
+            await client.post(
+                f"/v1/diaries/{diary['id']}/wish-lists",
+                json={"title": "T", "list_date": "2026-12-14"},
+                headers=auth,
+            )
+        ).json()
+        item = (
+            await client.post(f"/v1/wish-lists/{wl['id']}/items", json={"name": "I"}, headers=auth)
+        ).json()
+        r = await client.post(f"/v1/wish-lists/{wl['id']}/publish", headers=auth)
+        assert r.status_code == 200, r.text
+        db_session.add(WishListClaim(item_id=uuid.UUID(item["id"]), name="Gran"))
+        await db_session.commit()
+
+        await client.delete(f"/v1/diaries/{diary['id']}", headers=auth)
+        await hard_delete_diary(did)
+
+        db_session.expire_all()
+        for model, col in (
+            (WishList, WishList.diary_id == did),
+            (PublicLink, PublicLink.diary_id == did),
+            (WishListItem, WishListItem.wish_list_id == uuid.UUID(wl["id"])),
+            (WishListClaim, WishListClaim.item_id == uuid.UUID(item["id"])),
+        ):
+            n = (
+                await db_session.execute(select(func.count()).select_from(model).where(col))
+            ).scalar_one()
+            assert n == 0, model.__name__
+        assert (
+            await db_session.execute(select(Diary).where(Diary.id == did))
+        ).scalar_one_or_none() is None
