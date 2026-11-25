@@ -149,6 +149,25 @@ Cross-diary photo check: the `photos` row and its stored objects are deleted onl
 - **What people see.** Viewers see published entries and their photos only, with no AI badge. Coordinates go to the owner only. Removing a person, or a person leaving, ends access at once. While the owner's deletion is pending, other members see the chosen recipient's name (their email when the recipient has no display name) in the deletion notice.
 - **Limits and downgrade.** Enforced in the API, per diary, members plus pending invites: Free 3, Plus 10, Family unlimited; editors Family only. On a downgrade nobody loses access; an editor whose owner is not on Family acts as a viewer.
 
+## Tokens in logs (built 2026-11-24)
+
+Two kinds of token ride in a URL path. They get opposite rulings because they differ in how long and how widely they work.
+
+| | Diary invite (`/invite/{token}`, `/v1/invitations/{token}`) | Link-only page (`/p/{token}`, `/v1/public/{token}/...`) |
+|---|---|---|
+| Lifetime | One use, 7 days | Months |
+| Who can use it | One invited email | Anyone who has the link |
+| In logs | Logged unredacted (Andrew, 2026-11-23) | Redacted |
+
+A link-only token left in a log would be a working key for months, so none of the four places that record paths keeps it:
+
+- Caddy's access log rewrites `/p/{token}` and `/v1/public/{token}` to `.../[redacted]` (query string included) and drops the `Referer` header, in case a browser ignores `no-referrer`.
+- uvicorn's access log goes through `PublicTokenAccessFilter` (`apps/api/app/core/redact.py`).
+- `RequestIDMiddleware` binds the redacted path into every structlog line.
+- The unhandled-exception handler logs the redacted path.
+
+`scripts/nuc/tests/edge-client-ip.test.sh` and `apps/api/tests/unit/test_redact.py` check each place.
+
 ## GDPR/CCPA posture
 
 | Item | PoC status | Pre-public action required |

@@ -71,8 +71,10 @@ async def request_validation_handler(request: Request, exc: Exception) -> JSONRe
 async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     import structlog
 
+    from app.core.redact import redact_path
+
     log = structlog.get_logger()
-    log.error("unhandled_exception", exc=exc, path=request.url.path)
+    log.error("unhandled_exception", exc=exc, path=redact_path(request.url.path))
     return error_response(
         code="internal_error",
         message="An unexpected error occurred",

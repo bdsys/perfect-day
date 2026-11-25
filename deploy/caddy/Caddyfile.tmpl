@@ -34,6 +34,10 @@
 
 	log {
 		output stdout
-		format json
+		format filter {
+			request>uri regexp ^/(p|v1/public)/[^/?]+ /${1}/[redacted]
+			request>headers>Referer delete
+			wrap json
+		}
 	}
 }

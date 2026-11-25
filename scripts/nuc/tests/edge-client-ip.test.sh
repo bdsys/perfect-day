@@ -108,5 +108,17 @@ check_absent "a match prints none" "WARNING" "${OUT}"
 OUT="$(FORTIGATE_LAN_IP= PD_DEFAULT_GATEWAY=192.0.2.254 bash "${REPO}/scripts/nuc/render-caddyfile.sh" 2>&1)"
 check_absent "the dev fallback prints none" "WARNING" "${OUT}"
 
+echo "Public link tokens stay out of the access log:"
+ask_path() { # ask_path <host> <path>
+    curl -s --max-time 5 -o /dev/null -H "Host: $1" "http://127.0.0.1:${PORT}$2"
+}
+ask_path "${WEB}" "/p/SECRETTOKEN?x=1"
+ask_path "${API}" "/v1/public/SECRETTOKEN/claims"
+sleep 0.5
+EDGE_LOG="$(docker logs "${NET}-edge" 2>&1)"
+check_absent "the access log never holds a public token" "SECRETTOKEN" "${EDGE_LOG}"
+check "the log still holds /p/[redacted]" "yes" "$(case "${EDGE_LOG}" in *'/p/[redacted]'*) echo yes ;; *) echo no ;; esac)"
+check "and /v1/public/[redacted]" "yes" "$(case "${EDGE_LOG}" in *'/v1/public/[redacted]'*) echo yes ;; *) echo no ;; esac)"
+
 echo
 if [ "${FAILS}" -eq 0 ]; then echo "All edge client-IP tests passed."; else echo "${FAILS} failed."; exit 1; fi

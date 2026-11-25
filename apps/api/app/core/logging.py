@@ -6,6 +6,8 @@ import structlog
 import structlog.stdlib
 from structlog.types import Processor
 
+from app.core.redact import PublicTokenAccessFilter
+
 # httpx logs every request URL at INFO. Google Photos base URLs grant access to
 # a photo for an hour and picker session ids sit in request paths, so these
 # loggers only speak up at WARNING, in the API and in the worker.
@@ -19,6 +21,9 @@ def quiet_http_loggers() -> None:
 
 def configure_logging(env: str = "dev") -> None:
     quiet_http_loggers()
+    access = logging.getLogger("uvicorn.access")
+    if not any(isinstance(f, PublicTokenAccessFilter) for f in access.filters):
+        access.addFilter(PublicTokenAccessFilter())
     processors: list[Processor] = [
         structlog.contextvars.merge_contextvars,
         structlog.stdlib.add_log_level,
