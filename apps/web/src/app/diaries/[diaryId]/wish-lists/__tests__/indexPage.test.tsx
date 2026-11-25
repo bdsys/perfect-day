@@ -1,6 +1,6 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import WishListsPage from '../page'
-import { api } from '@/lib/api'
+import { api, ApiError } from '@/lib/api'
 
 jest.mock('@/lib/api', () => {
   const actual = jest.requireActual('@/lib/api')
@@ -56,5 +56,23 @@ describe('WishListsPage', () => {
     ;(api.diaries.get as jest.Mock).mockResolvedValue({ id: 'diary-1', name: 'Emma diary', role: 'owner', plan: { read_only: true, plan_name: 'Free' } })
     render(<WishListsPage />)
     expect(await screen.findByRole('button', { name: 'New wish list' })).toBeDisabled()
+  })
+
+  it('a diary that is gone says so in words', async () => {
+    ;(api.diaries.get as jest.Mock).mockRejectedValue(new ApiError(404, 'not_found', 'not_found'))
+    render(<WishListsPage />)
+    expect(await screen.findByText("This diary isn't available any more.")).toBeInTheDocument()
+    expect(screen.queryByText('not_found')).not.toBeInTheDocument()
+  })
+
+  it('a failed create shows the generic message, not the code', async () => {
+    ;(api.wishLists.create as jest.Mock).mockRejectedValue(new ApiError(422, 'validation_error', 'validation_error'))
+    render(<WishListsPage />)
+    fireEvent.click(await screen.findByRole('button', { name: 'New wish list' }))
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Christmas' } })
+    fireEvent.change(screen.getByLabelText('Date'), { target: { value: '2026-12-25' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Make list' }))
+    expect(await screen.findByText('Something went wrong')).toBeInTheDocument()
+    expect(screen.queryByText('validation_error')).not.toBeInTheDocument()
   })
 })

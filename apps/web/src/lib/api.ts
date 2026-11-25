@@ -623,6 +623,8 @@ export interface WishList {
   items: WishListItem[]
   /** Managers only, while the list is published and its link is on. */
   link: WishListLink | null
+  /** Managers only: the owner's name as people with the link see it ("Shared by ..."). */
+  shared_by?: string | null
 }
 
 export type WishListFields = { title?: string; list_date?: string; pasted_list_url?: string | null }

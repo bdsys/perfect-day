@@ -28,8 +28,9 @@ jest.mock('@/lib/api', () => {
   }
 })
 
+const mockRefreshUser = jest.fn()
 jest.mock('@/lib/auth-context', () => {
-  const value = { user: { id: 'u1', email: 'a@b.com' }, loading: false }
+  const value = { user: { id: 'u1', email: 'a@b.com' }, loading: false, refreshUser: () => Promise.resolve(mockRefreshUser()) }
   return { useAuth: () => value }
 })
 
@@ -123,6 +124,8 @@ describe('WishListPage', () => {
     await waitFor(() => expect(api.auth.updateProfile).toHaveBeenCalledWith({ display_name: 'Andrew' }))
     await waitFor(() => expect(api.wishLists.publish).toHaveBeenCalledTimes(2))
     expect(await screen.findByRole('button', { name: 'Unpublish' })).toBeInTheDocument()
+    // The header shows the new name too.
+    await waitFor(() => expect(mockRefreshUser).toHaveBeenCalled())
   })
 
   it("tells an editor to ask the owner when the owner has no name", async () => {
@@ -268,5 +271,51 @@ describe('WishListPage', () => {
     expect(await screen.findByText('Something went wrong')).toBeInTheDocument()
     expect(screen.getByRole('form', { name: 'Edit Lego set' })).toBeInTheDocument()
     expect(screen.getByDisplayValue('Lego castle')).toBeInTheDocument()
+  })
+
+  it('owner sees the Shared by name and can change it', async () => {
+    const published = list({ status: 'published', link: { token: 'tok', path: '/p/tok' }, shared_by: 'Andrew Lass' })
+    setup(published)
+    ;(api.wishLists.get as jest.Mock)
+      .mockResolvedValueOnce(published)
+      .mockResolvedValueOnce({ ...published, shared_by: 'Andrew' })
+    ;(api.auth.updateProfile as jest.Mock).mockResolvedValue({})
+    render(<WishListPage />)
+    expect(await screen.findByText('People with the link see: Shared by Andrew Lass')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Change' }))
+    const field = screen.getByLabelText('Your name, as people with the link will see it')
+    expect(field).toHaveValue('Andrew Lass')
+    fireEvent.change(field, { target: { value: ' Andrew ' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save name' }))
+    await waitFor(() => expect(api.auth.updateProfile).toHaveBeenCalledWith({ display_name: 'Andrew' }))
+    expect(await screen.findByText('People with the link see: Shared by Andrew')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Your name, as people with the link will see it')).not.toBeInTheDocument()
+    expect(mockRefreshUser).toHaveBeenCalled()
+  })
+
+  it('an editor sees the Shared by name but cannot change it', async () => {
+    setup(
+      list({ status: 'published', link: { token: 'tok', path: '/p/tok' }, shared_by: 'Sam' }),
+      diary({ role: 'editor', owner_name: 'Sam' }),
+    )
+    render(<WishListPage />)
+    expect(await screen.findByText('People with the link see: Shared by Sam')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Change' })).not.toBeInTheDocument()
+  })
+
+  it('a list that is gone says so in words', async () => {
+    ;(api.diaries.get as jest.Mock).mockResolvedValue(diary())
+    ;(api.wishLists.get as jest.Mock).mockRejectedValue(new ApiError(404, 'not_found', 'not_found'))
+    render(<WishListPage />)
+    expect(await screen.findByText("This list isn't available any more.")).toBeInTheDocument()
+    expect(screen.queryByText('not_found')).not.toBeInTheDocument()
+  })
+
+  it('any other load failure shows the generic message, not the code', async () => {
+    ;(api.diaries.get as jest.Mock).mockResolvedValue(diary())
+    ;(api.wishLists.get as jest.Mock).mockRejectedValue(new ApiError(500, 'weird_code', 'weird_code'))
+    render(<WishListPage />)
+    expect(await screen.findByText('Failed to load the wish list')).toBeInTheDocument()
+    expect(screen.queryByText('weird_code')).not.toBeInTheDocument()
   })
 })

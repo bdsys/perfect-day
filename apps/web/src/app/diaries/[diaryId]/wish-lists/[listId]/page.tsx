@@ -4,26 +4,16 @@ import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
 import AppHeader from '@/components/AppHeader'
+import DisplayNameForm from '@/components/DisplayNameForm'
 import WishListItemRow, { WishListItemFormFields, itemFieldsToBody } from '@/components/WishListItemRow'
 import WishListLinkBox from '@/components/WishListLinkBox'
 import { api, ApiError, type Diary, type WishList, type WishListItemFields } from '@/lib/api'
 import { useAuth } from '@/lib/auth-context'
 import { formatListDate } from '@/lib/date'
 import { readOnlyBanner } from '@/lib/plan'
+import { wishListErrorMessage } from '@/lib/wishListErrors'
 
-const ERROR_COPY: Record<string, string> = {
-  item_taken: "Someone else just said they're getting this.",
-  already_claimed: "You're already getting this.",
-  item_claims_full: "This item can't take anyone else.",
-  claim_not_found: 'That was already removed.',
-  wish_list_full: 'This list has the most items it can hold (100).',
-  wish_list_not_published: 'Publish the list first.',
-}
-
-function errorMessage(e: unknown): string {
-  if (e instanceof ApiError) return (e.code && ERROR_COPY[e.code]) || 'Something went wrong'
-  return e instanceof Error ? e.message : 'Something went wrong'
-}
+const LOAD_ERROR_COPY = { not_found: "This list isn't available any more." }
 
 const EMPTY_ITEM = { name: '', url: '', note: '', many: false }
 
@@ -37,7 +27,7 @@ function pastedListHost(url: string): string {
 
 export default function WishListPage() {
   const { diaryId, listId } = useParams<{ diaryId: string; listId: string }>()
-  const { user, loading: authLoading } = useAuth()
+  const { user, loading: authLoading, refreshUser } = useAuth()
   const router = useRouter()
   const [diary, setDiary] = useState<Diary | null>(null)
   const [list, setList] = useState<WishList | null>(null)
@@ -48,7 +38,6 @@ export default function WishListPage() {
   const [newItem, setNewItem] = useState(EMPTY_ITEM)
   // 'owner': the signed-in owner is asked for a name; 'editor': told to ask the owner.
   const [needsName, setNeedsName] = useState<'owner' | 'editor' | null>(null)
-  const [name, setName] = useState('')
 
   useEffect(() => {
     if (!authLoading && !user) router.replace('/login')
@@ -71,7 +60,7 @@ export default function WishListPage() {
         setDiary(d)
         take(l)
       } catch (e: unknown) {
-        setError(e instanceof Error ? e.message : 'Failed to load the wish list')
+        setError(wishListErrorMessage(e, 'Failed to load the wish list', LOAD_ERROR_COPY))
       } finally {
         setLoading(false)
       }
@@ -85,7 +74,7 @@ export default function WishListPage() {
       await action()
       return true
     } catch (e: unknown) {
-      setError(errorMessage(e))
+      setError(wishListErrorMessage(e))
       return false
     } finally {
       setBusy(false)
@@ -106,14 +95,24 @@ export default function WishListPage() {
       }
     })
 
-  const saveNameAndPublish = (ev: React.FormEvent) => {
-    ev.preventDefault()
-    return run(async () => {
-      await api.auth.updateProfile({ display_name: name.trim() })
+  // The header shows the signed-in user's name: refresh it after the name changes.
+  // Best effort: the name is saved either way, and the next page load shows it.
+  const refreshHeader = () => refreshUser().catch(() => undefined)
+
+  const saveNameAndPublish = (name: string) =>
+    run(async () => {
+      await api.auth.updateProfile({ display_name: name })
+      void refreshHeader()
       take(await api.wishLists.publish(listId))
       setNeedsName(null)
     })
-  }
+
+  const changeName = (name: string) =>
+    run(async () => {
+      await api.auth.updateProfile({ display_name: name })
+      void refreshHeader()
+      await reload()
+    })
 
   const saveDetails = (ev: React.FormEvent) => {
     ev.preventDefault()
@@ -228,15 +227,7 @@ export default function WishListPage() {
                   <p role="status">{`Ask ${diary?.owner_name ?? 'the owner'} to publish this list. Perfect Day will ask them for their name.`}</p>
                 )}
                 {needsName === 'owner' && (
-                  <form onSubmit={saveNameAndPublish} style={{ marginBottom: '1rem' }}>
-                    <label>
-                      Your name, as people with the link will see it
-                      <input type="text" required maxLength={100} value={name} onChange={(e) => setName(e.target.value)} />
-                    </label>
-                    <button type="submit" className="btn btn-primary" disabled={busy || !name.trim()}>
-                      Save and publish
-                    </button>
-                  </form>
+                  <DisplayNameForm submitLabel="Save and publish" busy={busy} onSubmit={saveNameAndPublish} />
                 )}
 
                 {published && (
@@ -247,6 +238,7 @@ export default function WishListPage() {
                     onLinkOff={() => reloadAfter(() => api.wishLists.linkOff(listId))}
                     onNewLink={() => reloadAfter(() => api.wishLists.newLink(listId))}
                     onError={setError}
+                    onChangeName={diary?.role === 'owner' ? changeName : undefined}
                   />
                 )}
 

@@ -8,6 +8,10 @@ import { api, type Diary, type WishListSummary } from '@/lib/api'
 import { useAuth } from '@/lib/auth-context'
 import { formatListDate } from '@/lib/date'
 import { readOnlyBanner } from '@/lib/plan'
+import { wishListErrorMessage } from '@/lib/wishListErrors'
+
+// On this page a 404 is the diary itself (gone, or no longer shared with you).
+const LOAD_ERROR_COPY = { not_found: "This diary isn't available any more." }
 
 export default function WishListsPage() {
   const { diaryId } = useParams<{ diaryId: string }>()
@@ -33,7 +37,7 @@ export default function WishListsPage() {
         setDiary(d)
         setLists(l)
       } catch (e: unknown) {
-        setError(e instanceof Error ? e.message : 'Failed to load wish lists')
+        setError(wishListErrorMessage(e, 'Failed to load wish lists', LOAD_ERROR_COPY))
       } finally {
         setLoading(false)
       }
@@ -52,7 +56,7 @@ export default function WishListsPage() {
       })
       router.push(`/diaries/${diaryId}/wish-lists/${made.id}`)
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Something went wrong')
+      setError(wishListErrorMessage(e, 'Something went wrong', LOAD_ERROR_COPY))
       setBusy(false)
     }
   }
